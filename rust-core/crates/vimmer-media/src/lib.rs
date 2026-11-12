@@ -13,7 +13,7 @@ pub use image_norm::{letterbox, normalize_image};
 pub use speech::{default_voice_for, SaySpeech, Speech};
 pub use transcribe::{
     guess_language, TranscribeRequest, Transcriber, WhisperCli, DEFAULT_MODEL_IN_HOME,
-    ENV_WHISPER_CLI, ENV_WHISPER_MODEL,
+    ENV_WHISPER_CLI, ENV_WHISPER_DTW, ENV_WHISPER_GPU, ENV_WHISPER_MODEL,
 };
 
 #[derive(Debug, thiserror::Error)]

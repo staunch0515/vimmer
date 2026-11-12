@@ -180,9 +180,13 @@ cd rust-core && cargo run -p vimmer-cli -- ../fixtures/word-subtitles-demo.json 
   `~/.local/share/vimmer/models/ggml-large-v3-turbo-q5_0.bin`. Language: `--whisper-language`
   (`zh`, `en`, `ja`, … or `auto`); by default it is guessed from each scene's text (kana → ja,
   other ideographs → zh, Latin → en). The scene text is also passed as whisper's prompt.
-- **Timing**: `-ojf` token timestamps, refined with DTW (`-dtw <preset>` picked from the model
-  file name; if whisper rejects it, plain token timestamps are used). Results are cached next
-  to the narration WAV in `public/generated/tts/`.
+- **Timing**: `-ojf` token timestamps. `VIMMER_WHISPER_DTW=1` adds DTW token timing (with
+  flash attention off); it is off by default because on an Intel Mac it nearly doubled
+  recognition time with no visible gain on TTS speech. On Intel Macs whisper runs CPU-only
+  (`-ng`): the Metal backend returned garbage there (`VIMMER_WHISPER_GPU=1/0` overrides).
+  Results are cached next to the narration WAV in `public/generated/tts/`. Expect roughly
+  40 s per clip with large-v3-turbo on a 4-core Intel CPU; a smaller model
+  (`--whisper-model …/ggml-small.bin`) is much faster.
 - **Alignment**: the script is cut into units (an English word with its punctuation; one
   Chinese character; one Japanese mora, so `きょ` stays together). Recognized words are cut the
   same way and the two sequences are aligned by edit distance, where pairing two different

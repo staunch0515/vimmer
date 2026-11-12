@@ -1,8 +1,9 @@
 //! Local speech recognition with whisper.cpp's `whisper-cli`, run as a child process like `say`.
 //!
-//! `whisper-cli -ojf` writes a JSON file with every decoded token and its timing. With `--dtw`
-//! (a model-specific preset) each token also gets a cross-attention-aligned time, which tracks
-//! speech much more closely than the default token timestamps, so it is used when available.
+//! `whisper-cli -ojf` writes a JSON file with every decoded token and its timing (`offsets`).
+//! Optionally (`$VIMMER_WHISPER_DTW`), `--dtw` adds a cross-attention-aligned time per token;
+//! see [`dtw_from_env`] for why it is off by default. On Intel Macs whisper runs CPU-only
+//! (`-ng`), because the Metal backend returned garbage there.
 //! The JSON is read with a small byte-level parser: whisper writes token text as raw bytes, and
 //! a CJK character is often split across two tokens, so strings must survive invalid UTF-8.
 
@@ -17,6 +18,11 @@ use crate::MediaError;
 pub const ENV_WHISPER_CLI: &str = "VIMMER_WHISPER_CLI";
 /// Environment variable naming the whisper model file.
 pub const ENV_WHISPER_MODEL: &str = "VIMMER_WHISPER_MODEL";
+/// Environment variable forcing GPU use on (`1`) or off (`0`) for whisper.
+pub const ENV_WHISPER_GPU: &str = "VIMMER_WHISPER_GPU";
+/// Environment variable enabling DTW token timing: `1`/`auto` picks the preset from the model
+/// name, any other non-empty value is used as the preset, `0` (or unset) disables it.
+pub const ENV_WHISPER_DTW: &str = "VIMMER_WHISPER_DTW";
 /// Model used when nothing else is configured, relative to the home directory.
 pub const DEFAULT_MODEL_IN_HOME: &str = ".local/share/vimmer/models/ggml-large-v3-turbo-q5_0.bin";
 
@@ -95,6 +101,19 @@ pub fn dtw_preset_for_model(model: &Path) -> Option<&'static str> {
         .map(|(_, preset)| *preset)
 }
 
+/// The DTW preset requested by `$VIMMER_WHISPER_DTW` (see [`ENV_WHISPER_DTW`]).
+///
+/// Off by default: measured on an Intel Mac (large-v3-turbo, CPU), DTW needs flash attention
+/// off and nearly doubled recognition time (71 s vs 39 s for a 4.6 s clip), while on clean
+/// TTS speech the plain token timestamps already followed pauses as closely.
+pub fn dtw_from_env(value: Option<&str>, model: &Path) -> Option<String> {
+    match value.map(str::trim) {
+        None | Some("" | "0" | "off" | "false") => None,
+        Some("1" | "on" | "true" | "auto") => dtw_preset_for_model(model).map(String::from),
+        Some(preset) => Some(preset.to_string()),
+    }
+}
+
 /// whisper.cpp command-line engine.
 #[derive(Debug, Clone)]
 pub struct WhisperCli {
@@ -102,8 +121,20 @@ pub struct WhisperCli {
     pub model: PathBuf,
     pub ffmpeg: PathBuf,
     pub threads: usize,
-    /// `--dtw` preset. `None` uses whisper's plain token timestamps.
+    /// `--dtw` preset. `None` (the default) uses whisper's plain token timestamps.
     pub dtw: Option<String>,
+    /// Let whisper use the GPU. Off by default on Intel Macs, where the Metal backend was seen
+    /// to return garbage; `$VIMMER_WHISPER_GPU` (`1`/`0`) overrides.
+    pub gpu: bool,
+}
+
+/// Default for [`WhisperCli::gpu`]: `$VIMMER_WHISPER_GPU` when set, else on except on x86_64.
+pub fn default_gpu() -> bool {
+    match std::env::var(ENV_WHISPER_GPU).ok().as_deref() {
+        Some("0" | "false" | "off") => false,
+        Some("1" | "true" | "on") => true,
+        _ => !cfg!(target_arch = "x86_64"),
+    }
 }
 
 impl WhisperCli {
@@ -142,13 +173,14 @@ impl WhisperCli {
         let threads = std::thread::available_parallelism()
             .map(|n| n.get().min(8))
             .unwrap_or(4);
-        let dtw = dtw_preset_for_model(&model).map(String::from);
+        let dtw = dtw_from_env(std::env::var(ENV_WHISPER_DTW).ok().as_deref(), &model);
         Ok(Self {
             binary,
             model,
             ffmpeg: PathBuf::from("ffmpeg"),
             threads,
             dtw,
+            gpu: default_gpu(),
         })
     }
 
@@ -159,8 +191,8 @@ impl WhisperCli {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         fnv1a(&format!(
-            "v1\n{model_name}\n{:?}\n{:?}\n{:?}",
-            request.language, request.prompt, self.dtw
+            "v1\n{model_name}\n{:?}\n{:?}\n{:?}\ngpu={}",
+            request.language, request.prompt, self.dtw, self.gpu
         ))
     }
 
@@ -185,8 +217,12 @@ impl WhisperCli {
         if let Some(prompt) = request.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
             cmd.arg("--prompt").arg(prompt);
         }
+        if !self.gpu {
+            cmd.arg("-ng");
+        }
         if let Some(preset) = dtw {
-            cmd.arg("-dtw").arg(preset);
+            // whisper.cpp silently skips DTW while flash attention is on.
+            cmd.arg("-nfa").arg("-dtw").arg(preset);
         }
         let out = cmd.output()?;
         if out.status.success() {
@@ -739,6 +775,15 @@ mod tests {
         assert_eq!(guess_language("안녕하세요"), Some("ko"));
         assert_eq!(guess_language("Hello"), Some("en"));
         assert_eq!(guess_language("123 !!"), None);
+    }
+
+    #[test]
+    fn dtw_is_opt_in() {
+        let m = Path::new("ggml-large-v3-turbo-q5_0.bin");
+        assert_eq!(dtw_from_env(None, m), None);
+        assert_eq!(dtw_from_env(Some("0"), m), None);
+        assert_eq!(dtw_from_env(Some("1"), m).as_deref(), Some("large.v3.turbo"));
+        assert_eq!(dtw_from_env(Some("base.en"), m).as_deref(), Some("base.en"));
     }
 
     #[test]
