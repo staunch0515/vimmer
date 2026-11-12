@@ -1,0 +1,16 @@
+# Rust
+rust-core/target/
+
+# Node / Remotion
+remotion-renderer/node_modules/
+remotion-renderer/out/
+remotion-renderer/build/
+
+# Render outputs and scratch
+renders/
+*.mp4
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

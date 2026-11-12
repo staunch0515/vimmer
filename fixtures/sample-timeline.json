@@ -1,0 +1,18 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "scenes": [
+    {
+      "id": "scene-01",
+      "duration_ms": 15000,
+      "text": "Turn any idea into a polished video in minutes",
+      "highlights": ["polished", "minutes"],
+      "image": "assets/sample.png",
+      "motion": "zoom_in",
+      "audio": null
+    }
+  ]
+}

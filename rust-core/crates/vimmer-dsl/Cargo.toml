@@ -1,0 +1,12 @@
+[package]
+name = "vimmer-dsl"
+description = "JSON DSL schema, validation and frame math for the video timeline"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
