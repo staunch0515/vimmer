@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use vimmer_dsl::{SubtitleCue, VideoTimeline};
+use vimmer_dsl::{SubtitleCue, VideoTimeline, WordTiming};
 
 /// Default target length of one render chunk. Chunks render in parallel, then get concatenated.
 pub const DEFAULT_CHUNK_MS: u64 = 30_000;
@@ -46,7 +46,9 @@ pub fn plan_chunks(timeline: &VideoTimeline, max_chunk_ms: u64) -> Vec<Chunk> {
 
 /// Builds the self-contained timeline for one chunk. Subtitle cues are clipped to the
 /// chunk's frame range and rebased so the chunk starts at 0 ms. Cues that straddle a
-/// boundary appear in both chunks, each for its own part.
+/// boundary appear in both chunks, each for its own part. Their words are rebased the same way
+/// and clamped into the clipped cue, so every word stays (the line reads the same in both
+/// chunks); words outside the chunk become zero-length at its edge, already said or not yet.
 pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline {
     let fps = timeline.fps;
     let chunk_start = chunk.start_frame;
@@ -60,10 +62,27 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
         .filter_map(|cue| {
             let start = to_frame(cue.start_ms).max(chunk_start);
             let end = to_frame(cue.end_ms).min(chunk_end);
-            (start < end).then(|| SubtitleCue {
-                start_ms: to_ms(start - chunk_start),
-                end_ms: to_ms(end - chunk_start),
+            if start >= end {
+                return None;
+            }
+            let start_ms = to_ms(start - chunk_start);
+            let end_ms = to_ms(end - chunk_start);
+            let base_ms = to_ms(chunk_start);
+            let rebase = |ms: u64| ms.saturating_sub(base_ms).clamp(start_ms, end_ms);
+            let words = cue
+                .words
+                .iter()
+                .map(|w| WordTiming {
+                    text: w.text.clone(),
+                    start_ms: rebase(w.start_ms),
+                    end_ms: rebase(w.end_ms),
+                })
+                .collect();
+            Some(SubtitleCue {
+                start_ms,
+                end_ms,
                 text: cue.text.clone(),
+                words,
             })
         })
         .collect();
@@ -177,16 +196,19 @@ mod tests {
                 start_ms: 1_000,
                 end_ms: 2_000,
                 text: "first".into(),
+                words: Vec::new(),
             },
             SubtitleCue {
                 start_ms: 9_000,
                 end_ms: 11_000,
                 text: "straddles".into(),
+                words: Vec::new(),
             },
             SubtitleCue {
                 start_ms: 15_000,
                 end_ms: 16_000,
                 text: "second".into(),
+                words: Vec::new(),
             },
         ];
         let chunks = plan_chunks(&t, 10_000);
@@ -198,7 +220,8 @@ mod tests {
             SubtitleCue {
                 start_ms: 9_000,
                 end_ms: 10_000,
-                text: "straddles".into()
+                text: "straddles".into(),
+                words: Vec::new(),
             }
         );
         assert_eq!(b.subtitles.len(), 2);
@@ -207,7 +230,8 @@ mod tests {
             SubtitleCue {
                 start_ms: 0,
                 end_ms: 1_000,
-                text: "straddles".into()
+                text: "straddles".into(),
+                words: Vec::new(),
             }
         );
         assert_eq!(
@@ -215,10 +239,52 @@ mod tests {
             SubtitleCue {
                 start_ms: 5_000,
                 end_ms: 6_000,
-                text: "second".into()
+                text: "second".into(),
+                words: Vec::new(),
             }
         );
         assert_eq!(b.total_duration_ms(), 10_000);
+    }
+
+    #[test]
+    fn chunk_timeline_rebases_and_clamps_words() {
+        use vimmer_dsl::{validate, WordTiming};
+        let word = |text: &str, start_ms: u64, end_ms: u64| WordTiming {
+            text: text.into(),
+            start_ms,
+            end_ms,
+        };
+        let mut t = timeline(&[3_000, 3_000]);
+        let mut cue = SubtitleCue::new(2_000, 4_500, "一二三四");
+        cue.words = vec![
+            word("一", 2_000, 2_600),
+            word("二", 2_600, 3_200),
+            word("三", 3_400, 4_000),
+            word("四", 4_000, 4_500),
+        ];
+        t.subtitles = vec![cue];
+        let chunks = plan_chunks(&t, 3_000);
+        assert_eq!(chunks.len(), 2);
+        let a = chunk_timeline(&t, &chunks[0]);
+        let b = chunk_timeline(&t, &chunks[1]);
+        let spans = |c: &SubtitleCue| -> Vec<(u64, u64)> {
+            c.words.iter().map(|w| (w.start_ms, w.end_ms)).collect()
+        };
+        assert_eq!((a.subtitles[0].start_ms, a.subtitles[0].end_ms), (2_000, 3_000));
+        assert_eq!(
+            spans(&a.subtitles[0]),
+            vec![(2_000, 2_600), (2_600, 3_000), (3_000, 3_000), (3_000, 3_000)],
+            "later words wait at the chunk end"
+        );
+        assert_eq!((b.subtitles[0].start_ms, b.subtitles[0].end_ms), (0, 1_500));
+        assert_eq!(
+            spans(&b.subtitles[0]),
+            vec![(0, 0), (0, 200), (400, 1_000), (1_000, 1_500)],
+            "earlier words are already said at the chunk start"
+        );
+        assert_eq!(b.subtitles[0].words.len(), 4, "the whole line is kept");
+        assert_eq!(validate(&a), Ok(()));
+        assert_eq!(validate(&b), Ok(()));
     }
 
     #[test]

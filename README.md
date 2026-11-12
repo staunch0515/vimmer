@@ -151,10 +151,60 @@ show without a rebuild. Typing a path still works in both the browser and the de
 
 A scene with **Narrate the text** checked (Inspector, Audio) gets its speech generated
 when you render: its `text` is synthesized with macOS `say` (Samantha for English, Tingting
-for Chinese; or pick a voice) and converted to WAV. The scene is stretched to fit the speech,
+for Chinese, Kyoko for Japanese; or pick a voice) and converted to WAV. The scene is stretched to fit the speech,
 plus 300 ms. Files are cached in `remotion-renderer/public/generated/tts/`, keyed by voice and
 text. A scene that already has its own audio file keeps it. The preview stays silent until
 you render. Local narration needs macOS.
+
+## Word-by-word subtitles (local speech recognition)
+
+After narration is synthesized, each clip is recognized again with
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`whisper-cli`, run as a child process,
+fully offline) and the result is aligned back to the scene text. Subtitles always show the
+script, never the recognizer's spelling; recognition only supplies the timing. Chinese,
+English and Japanese are supported (any language whisper knows works).
+
+```bash
+brew install whisper-cpp
+mkdir -p ~/.local/share/vimmer/models
+curl -L -o ~/.local/share/vimmer/models/ggml-large-v3-turbo-q5_0.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
+cd rust-core && cargo run -p vimmer-cli -- ../fixtures/word-subtitles-demo.json -o /tmp/words.mp4 --remotion-dir ../remotion-renderer
+```
+
+- **On by default** (`--word-subtitles on|off`). It only touches scenes whose narration is
+  synthesized. When `whisper-cli` or the model is missing, the render prints one warning and
+  the subtitles stay exactly as they were.
+- **Engine**: `whisper-cli` from PATH, or `--whisper-cli` / `$VIMMER_WHISPER_CLI`. Model:
+  `--whisper-model` / `$VIMMER_WHISPER_MODEL`, default
+  `~/.local/share/vimmer/models/ggml-large-v3-turbo-q5_0.bin`. Language: `--whisper-language`
+  (`zh`, `en`, `ja`, … or `auto`); by default it is guessed from each scene's text (kana → ja,
+  other ideographs → zh, Latin → en). The scene text is also passed as whisper's prompt.
+- **Timing**: `-ojf` token timestamps, refined with DTW (`-dtw <preset>` picked from the model
+  file name; if whisper rejects it, plain token timestamps are used). Results are cached next
+  to the narration WAV in `public/generated/tts/`.
+- **Alignment**: the script is cut into units (an English word with its punctuation; one
+  Chinese character; one Japanese mora, so `きょ` stays together). Recognized words are cut the
+  same way and the two sequences are aligned by edit distance, where pairing two different
+  words costs their character distance. Misheard words keep their slot, missed words are
+  interpolated between neighbours by length, extra words are ignored.
+- **Cues**: subtitle cues overlapping a narrated clip get `words` for their own text. When no
+  cue covers the clip, cues are generated from the script: a sentence end closes a line, and a
+  long line breaks at a comma or before the word that overflows.
+
+Each cue can carry absolute word times, which must lie inside the cue, in order and without
+overlap (zero-length words are allowed). Empty `words` is omitted from the JSON, and cues
+without words render exactly as before:
+
+```json
+{ "start_ms": 1000, "end_ms": 2600, "text": "你好世界。",
+  "words": [ { "text": "你", "start_ms": 1000, "end_ms": 1200 }, { "text": "好", "start_ms": 1200, "end_ms": 1500 },
+             { "text": "世", "start_ms": 1500, "end_ms": 1800 }, { "text": "界。", "start_ms": 1800, "end_ms": 2100 } ] }
+```
+
+The renderer shows the spoken word in yellow, words already said in white and words to come
+dimmed. Chunked renders clip words with their cue: words outside a chunk become zero-length at
+its edge, so a line split across two chunks reads the same in both.
 
 ## Studio (editor)
 

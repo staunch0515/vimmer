@@ -1,0 +1,67 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "scenes": [
+    {
+      "id": "en",
+      "duration_ms": 5000,
+      "text": "Every word lights up as it is spoken.",
+      "highlights": [
+        "spoken"
+      ],
+      "image": "assets/sample.png",
+      "motion": "zoom_in",
+      "audio": null,
+      "narration": {
+        "voice": "Samantha"
+      }
+    },
+    {
+      "id": "pause",
+      "duration_ms": 1500,
+      "text": null,
+      "highlights": [],
+      "image": "assets/quizbuks-taker-cover-center.png",
+      "motion": "static",
+      "audio": null
+    },
+    {
+      "id": "zh",
+      "duration_ms": 3000,
+      "text": "在西安的钟楼下，每一个字都会在念到时亮起来。",
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "pan_left",
+      "audio": null,
+      "narration": {
+        "voice": "Tingting"
+      },
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 500
+      }
+    },
+    {
+      "id": "ja",
+      "duration_ms": 3000,
+      "text": "日本語のナレーションも、話している言葉に合わせて光ります。",
+      "highlights": [],
+      "image": "assets/sample.jpeg",
+      "motion": "zoom_out",
+      "audio": null,
+      "narration": {
+        "voice": "Kyoko"
+      }
+    }
+  ],
+  "subtitles": [
+    {
+      "start_ms": 0,
+      "end_ms": 6000,
+      "text": "Every word lights up as it is spoken."
+    }
+  ]
+}

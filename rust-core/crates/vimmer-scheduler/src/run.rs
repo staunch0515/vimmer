@@ -11,6 +11,7 @@ use vimmer_media::{normalize_image, AudioProbe, MediaError, Speech};
 use crate::control::{Progress, RenderContext};
 use crate::narrate::narrate_scenes;
 use crate::plan::{chunk_timeline, plan_chunks, Chunk, DEFAULT_CHUNK_MS};
+use crate::wordsubs::{add_word_subtitles, WordSubtitleConfig};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SchedulerError {
@@ -59,6 +60,8 @@ pub struct SchedulerConfig {
     pub ffmpeg: PathBuf,
     /// PATH for child processes. Set this when the parent's PATH is minimal (e.g. a GUI app).
     pub child_path: Option<String>,
+    /// Word-by-word subtitle timing for synthesized narration (on by default).
+    pub word_subtitles: WordSubtitleConfig,
 }
 
 impl SchedulerConfig {
@@ -74,6 +77,7 @@ impl SchedulerConfig {
             render_concurrency: 2,
             ffmpeg: PathBuf::from("ffmpeg"),
             child_path: None,
+            word_subtitles: WordSubtitleConfig::default(),
         }
     }
 }
@@ -130,6 +134,13 @@ pub async fn render_timeline_with(
     )
     .await?;
     if narrated > 0 {
+        validate(&timeline).map_err(SchedulerError::Invalid)?;
+    }
+
+    // Recognize the narration again to time subtitles word by word. Without an engine this
+    // only warns, and subtitles stay as they were.
+    let timed = add_word_subtitles(&mut timeline, &cfg, probe.clone(), &ctx, &mut warnings).await?;
+    if timed > 0 {
         validate(&timeline).map_err(SchedulerError::Invalid)?;
     }
 

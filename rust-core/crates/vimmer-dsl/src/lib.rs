@@ -9,7 +9,7 @@ pub mod validation;
 
 pub use model::{
     AudioMapping, Easing, Keyframe, MotionType, Music, Narration, Resolution, Scene, SubtitleCue,
-    Transition, TransitionKind, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
+    Transition, TransitionKind, VideoTimeline, WordTiming, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
 };
 pub use srt::{parse_srt, SrtError};
 pub use validation::{validate, ValidationError};
