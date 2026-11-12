@@ -192,7 +192,7 @@ export const App = () => {
   const select = (selection: Selection) => {
     dispatch({ type: "select", selection });
     if (selection.kind === "subtitle") setTab("subtitles");
-    if (selection.kind === "scene") setTab("scene");
+    if (selection.kind === "scene" || selection.kind === "keyframe") setTab("scene");
     if (selection.kind === "music") setTab("music");
   };
 

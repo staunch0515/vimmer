@@ -1,4 +1,4 @@
-import type { Music, Scene, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import type { Keyframe, Music, Scene, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
 import { emptyScene, type Selection } from "./model";
 
 export type EditorState = {
@@ -16,6 +16,11 @@ export type Action =
   | { type: "deleteScene"; index: number }
   | { type: "duplicateScene"; index: number }
   | { type: "moveScene"; index: number; delta: -1 | 1 }
+  | { type: "setTransition"; index: number; transition: Transition | null }
+  | { type: "addKeyframe"; sceneIndex: number; keyframe: Keyframe }
+  | { type: "patchKeyframe"; sceneIndex: number; index: number; patch: Partial<Keyframe> }
+  | { type: "moveKeyframe"; sceneIndex: number; index: number; atMs: number }
+  | { type: "deleteKeyframe"; sceneIndex: number; index: number }
   | { type: "patchSubtitle"; index: number; patch: Partial<SubtitleCue> }
   | { type: "addSubtitle"; startMs: number }
   | { type: "deleteSubtitle"; index: number }
@@ -33,6 +38,40 @@ const commit = (state: EditorState, timeline: VideoTimeline, selection = state.s
   future: [],
 });
 
+// Keeps scene-local motion valid after structural edits (resize, reorder, delete):
+// no transition on the first scene, transitions and keyframes stay inside the scene.
+const normalizeScenes = (scenes: Scene[]): Scene[] =>
+  scenes.map((s, i) => {
+    let next = s;
+    if (next.transition_in) {
+      if (i === 0) {
+        const { transition_in: _drop, ...rest } = next;
+        next = rest;
+      } else if (next.transition_in.duration_ms > next.duration_ms) {
+        next = { ...next, transition_in: { ...next.transition_in, duration_ms: next.duration_ms } };
+      }
+    }
+    if (next.keyframes?.some((k) => k.at_ms > next.duration_ms)) {
+      const kept: Keyframe[] = [];
+      for (const k of next.keyframes) {
+        const at = Math.min(k.at_ms, next.duration_ms);
+        if (kept.length && kept[kept.length - 1].at_ms >= at) continue; // would duplicate: drop
+        kept.push({ ...k, at_ms: at });
+      }
+      next = { ...next, keyframes: kept };
+    }
+    return next;
+  });
+
+const withScene = (t: VideoTimeline, i: number, fn: (s: Scene) => Scene): VideoTimeline => ({
+  ...t,
+  scenes: t.scenes.map((s, j) => (j === i ? fn(s) : s)),
+});
+
+// Removes optional keys whose value is undefined so they are not written to the JSON.
+const compactKeyframe = (k: Keyframe): Keyframe =>
+  Object.fromEntries(Object.entries(k).filter(([, v]) => v !== undefined)) as Keyframe;
+
 export const reducer = (state: EditorState, action: Action): EditorState => {
   const t = state.timeline;
   switch (action.type) {
@@ -42,7 +81,65 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
       return { ...state, selection: action.selection };
     case "patchScene": {
       const scenes = t.scenes.map((s, i) => (i === action.index ? { ...s, ...action.patch } : s));
-      return commit(state, { ...t, scenes });
+      return commit(state, { ...t, scenes: normalizeScenes(scenes) });
+    }
+    case "setTransition": {
+      if (action.index === 0 && action.transition) return state;
+      return commit(
+        state,
+        withScene(t, action.index, (s) => {
+          const { transition_in: _old, ...rest } = s;
+          if (!action.transition) return rest;
+          const ms = Math.max(1, Math.min(Math.round(action.transition.duration_ms), s.duration_ms));
+          return { ...rest, transition_in: { kind: action.transition.kind, duration_ms: ms } };
+        }),
+      );
+    }
+    case "addKeyframe": {
+      const scene = t.scenes[action.sceneIndex];
+      if (!scene) return state;
+      const existing = scene.keyframes ?? [];
+      const at = Math.max(0, Math.min(Math.round(action.keyframe.at_ms), scene.duration_ms));
+      if (existing.some((k) => k.at_ms === at)) return state;
+      const list = [...existing, compactKeyframe({ ...action.keyframe, at_ms: at })].sort((a, b) => a.at_ms - b.at_ms);
+      const index = list.findIndex((k) => k.at_ms === at);
+      return commit(state, withScene(t, action.sceneIndex, (s) => ({ ...s, keyframes: list })), {
+        kind: "keyframe", sceneIndex: action.sceneIndex, index,
+      });
+    }
+    case "patchKeyframe": {
+      const scene = t.scenes[action.sceneIndex];
+      const kf = scene?.keyframes?.[action.index];
+      if (!scene || !kf) return state;
+      const list = scene.keyframes!.map((k, i) => (i === action.index ? compactKeyframe({ ...k, ...action.patch, at_ms: k.at_ms }) : k));
+      return commit(state, withScene(t, action.sceneIndex, (s) => ({ ...s, keyframes: list })));
+    }
+    case "moveKeyframe": {
+      const scene = t.scenes[action.sceneIndex];
+      const list = scene?.keyframes;
+      if (!scene || !list?.[action.index]) return state;
+      // Stay strictly between the neighbours (order kept, no duplicates) and inside the scene.
+      const lo = action.index > 0 ? list[action.index - 1].at_ms + 1 : 0;
+      const hi = action.index < list.length - 1 ? list[action.index + 1].at_ms - 1 : scene.duration_ms;
+      if (lo > hi) return state;
+      const at = Math.max(lo, Math.min(Math.round(action.atMs), hi));
+      if (at === list[action.index].at_ms) return state;
+      const next = list.map((k, i) => (i === action.index ? { ...k, at_ms: at } : k));
+      return commit(state, withScene(t, action.sceneIndex, (s) => ({ ...s, keyframes: next })));
+    }
+    case "deleteKeyframe": {
+      const scene = t.scenes[action.sceneIndex];
+      if (!scene?.keyframes) return state;
+      const next = scene.keyframes.filter((_, i) => i !== action.index);
+      return commit(
+        state,
+        withScene(t, action.sceneIndex, (s) => {
+          if (next.length > 0) return { ...s, keyframes: next };
+          const { keyframes: _k, ...rest } = s;
+          return rest;
+        }),
+        { kind: "scene", index: action.sceneIndex },
+      );
     }
     case "addScene": {
       const scene = emptyScene(t.scenes.length);
@@ -50,7 +147,7 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
     }
     case "deleteScene": {
       const scenes = t.scenes.filter((_, i) => i !== action.index);
-      return commit(state, { ...t, scenes }, { kind: "none" });
+      return commit(state, { ...t, scenes: normalizeScenes(scenes) }, { kind: "none" });
     }
     case "duplicateScene": {
       const src = t.scenes[action.index];
@@ -63,7 +160,7 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
       if (target < 0 || target >= t.scenes.length) return state;
       const scenes = [...t.scenes];
       [scenes[action.index], scenes[target]] = [scenes[target], scenes[action.index]];
-      return commit(state, { ...t, scenes }, { kind: "scene", index: target });
+      return commit(state, { ...t, scenes: normalizeScenes(scenes) }, { kind: "scene", index: target });
     }
     case "patchSubtitle": {
       const subtitles = t.subtitles.map((c, i) => (i === action.index ? { ...c, ...action.patch } : c));

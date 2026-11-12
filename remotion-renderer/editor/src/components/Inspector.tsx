@@ -1,9 +1,12 @@
 import type { Dispatch } from "react";
-import type { Scene, SubtitleCue, VideoTimeline } from "../../../src/types/timeline";
-import { timecode, type Selection, sortCues } from "../model";
+import type { Keyframe, Scene, SubtitleCue, TransitionKind, VideoTimeline } from "../../../src/types/timeline";
+import {
+  DEFAULT_TRANSITION_MS, EASINGS, TRANSITION_KINDS, keyframeFieldError, timecode, type Selection, sortCues,
+} from "../model";
+import { sampleKeyframes } from "../../../src/motion/keyframes";
 import type { Action } from "../state";
 import { canChooseMedia, chooseAndImport, type MediaKind } from "../media";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Props = {
   timeline: VideoTimeline;
@@ -42,11 +45,11 @@ export const Inspector = (props: Props) => {
   );
 };
 
-const SceneEditor = ({ timeline, selection, dispatch }: Props) => {
-  if (selection.kind !== "scene") {
+const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
+  if (selection.kind !== "scene" && selection.kind !== "keyframe") {
     return <Empty title="No scene selected" hint="Click a scene block on the timeline to edit it." />;
   }
-  const index = selection.index;
+  const index = selection.kind === "scene" ? selection.index : selection.sceneIndex;
   const scene = timeline.scenes[index];
   if (!scene) return <Empty title="Scene not found" hint="It may have been deleted." />;
   const patch = (p: Partial<Scene>) => dispatch({ type: "patchScene", index, patch: p });
@@ -91,6 +94,56 @@ const SceneEditor = ({ timeline, selection, dispatch }: Props) => {
           ))}
         </select>
       </Field>
+      <div className="section-title">Transition in</div>
+      {index === 0 ? (
+        <div className="dim">The first scene has nothing to transition from.</div>
+      ) : (
+        <>
+          <Field label="Type">
+            <select
+              value={scene.transition_in?.kind ?? "none"}
+              onChange={(e) => {
+                const v = e.target.value;
+                dispatch({
+                  type: "setTransition",
+                  index,
+                  transition: v === "none" ? null : {
+                    kind: v as TransitionKind,
+                    duration_ms: Math.min(scene.transition_in?.duration_ms ?? DEFAULT_TRANSITION_MS, scene.duration_ms),
+                  },
+                });
+              }}
+            >
+              <option value="none">none</option>
+              {TRANSITION_KINDS.map((k) => (
+                <option key={k} value={k}>{k.replace("_", " ")}</option>
+              ))}
+            </select>
+          </Field>
+          {scene.transition_in && (
+            <NumField
+              label="Duration"
+              suffix="ms"
+              hint={`max ${scene.duration_ms}`}
+              value={scene.transition_in.duration_ms}
+              step={100}
+              validate={(v) =>
+                !Number.isInteger(v) || v <= 0 ? "Must be a whole number above 0."
+                : v > scene.duration_ms ? `Cannot be longer than the scene (${scene.duration_ms} ms).` : null}
+              onCommit={(v) => dispatch({ type: "setTransition", index, transition: { ...scene.transition_in!, duration_ms: v } })}
+            />
+          )}
+        </>
+      )}
+      <div className="section-title">Keyframes</div>
+      <KeyframeEditor
+        scene={scene}
+        sceneIndex={index}
+        selectedIndex={selection.kind === "keyframe" ? selection.index : -1}
+        sceneStartMs={timeline.scenes.slice(0, index).reduce((a, s) => a + s.duration_ms, 0)}
+        playheadMs={playheadMs}
+        dispatch={dispatch}
+      />
       <div className="section-title">Audio</div>
       <label className="check">
         <input
@@ -299,5 +352,120 @@ const MusicEditor = ({ timeline, dispatch }: Props) => {
       </div>
       <button className="btn danger small" onClick={() => dispatch({ type: "setMusic", music: null })}>Remove music</button>
     </div>
+  );
+};
+
+/** Number input that only commits values passing `validate`; otherwise it shows the reason. */
+const NumField = ({
+  label, suffix, hint, value, step, validate, onCommit,
+}: {
+  label: string; suffix?: string; hint?: string; value: number; step: number;
+  validate: (v: number) => string | null; onCommit: (v: number) => void;
+}) => {
+  const [text, setText] = useState(String(value));
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setText(String(value));
+    setError(null);
+  }, [value]);
+  return (
+    <Field label={label} suffix={suffix} hint={hint}>
+      <input
+        type="number"
+        step={step}
+        value={text}
+        aria-invalid={error ? true : undefined}
+        onChange={(e) => {
+          setText(e.target.value);
+          const v = e.target.value.trim() === "" ? NaN : Number(e.target.value);
+          const err = Number.isFinite(v) ? validate(v) : "Enter a number.";
+          setError(err);
+          if (!err) onCommit(v);
+        }}
+        onBlur={() => {
+          setText(String(value));
+          setError(null);
+        }}
+      />
+      {error && <span className="field-error">{error}</span>}
+    </Field>
+  );
+};
+
+const KeyframeEditor = ({
+  scene, sceneIndex, selectedIndex, sceneStartMs, playheadMs, dispatch,
+}: {
+  scene: Scene; sceneIndex: number; selectedIndex: number; sceneStartMs: number; playheadMs: number;
+  dispatch: Dispatch<Action>;
+}) => {
+  const list = scene.keyframes ?? [];
+  const rel = Math.round(playheadMs - sceneStartMs);
+  const inScene = rel >= 0 && rel <= scene.duration_ms;
+  const taken = list.some((k) => k.at_ms === rel);
+  const kf: Keyframe | undefined = list[selectedIndex];
+  const add = () => {
+    const r = (v: number) => Math.round(v * 1000) / 1000;
+    const p = sampleKeyframes(list, rel);
+    const keyframe: Keyframe = list.length === 0
+      ? { at_ms: rel }
+      : { at_ms: rel, scale: r(p.scale), x: r(p.x), y: r(p.y), opacity: r(p.opacity), rotation: r(p.rotation) };
+    dispatch({ type: "addKeyframe", sceneIndex, keyframe });
+  };
+  const patch = (p: Partial<Keyframe>) => dispatch({ type: "patchKeyframe", sceneIndex, index: selectedIndex, patch: p });
+  const num = (field: "scale" | "x" | "y" | "opacity" | "rotation", fallback: number, label: string, step: number, suffix?: string) => (
+    <NumField
+      label={label}
+      suffix={suffix}
+      value={kf![field] ?? fallback}
+      step={step}
+      validate={(v) => keyframeFieldError(field, v)}
+      onCommit={(v) => patch({ [field]: v })}
+    />
+  );
+  return (
+    <>
+      <button className="btn primary small full" disabled={!inScene || taken} onClick={add}
+        title={!inScene ? "Move the playhead into this scene" : taken ? "A keyframe already exists at the playhead" : undefined}>
+        + Keyframe at playhead ({inScene ? `${rel} ms` : "outside scene"})
+      </button>
+      {list.length > 0 && <div className="dim">A non-empty keyframe list replaces the scene's Motion.</div>}
+      <ul className="cue-list">
+        {list.map((k, i) => (
+          <li key={i}>
+            <button
+              className={i === selectedIndex ? "cue active" : "cue"}
+              onClick={() => dispatch({ type: "select", selection: { kind: "keyframe", sceneIndex, index: i } })}
+            >
+              <span className="mono dim">{k.at_ms} ms</span>
+              <span className="cue-text">scale {k.scale ?? 1} · {k.ease ?? "ease_in_out"}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {kf && (
+        <>
+          <div className="section-title">Keyframe at {kf.at_ms} ms</div>
+          <div className="two-col">
+            {num("scale", 1, "Scale", 0.05)}
+            {num("opacity", 1, "Opacity", 0.1)}
+          </div>
+          <div className="two-col">
+            {num("x", 0, "X", 1, "%")}
+            {num("y", 0, "Y", 1, "%")}
+          </div>
+          {num("rotation", 0, "Rotation", 1, "°")}
+          <Field label="Ease" hint="into the next keyframe">
+            <select value={kf.ease ?? "ease_in_out"} onChange={(e) => patch({ ease: e.target.value as Keyframe["ease"] })}>
+              {EASINGS.map((e) => (
+                <option key={e} value={e}>{e.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+          </Field>
+          <button className="btn danger small" onClick={() => dispatch({ type: "deleteKeyframe", sceneIndex, index: selectedIndex })}>
+            Delete keyframe
+          </button>
+        </>
+      )}
+    </>
   );
 };

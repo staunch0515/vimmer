@@ -1,4 +1,4 @@
-import type { Scene, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import type { Easing, Keyframe, Scene, SubtitleCue, TransitionKind, VideoTimeline } from "../../src/types/timeline";
 import { totalFrames } from "../../src/layout";
 
 export const MAX_DURATION_MS = 200_000;
@@ -35,6 +35,7 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
     ids.add(s.id);
     if (s.duration_ms <= 0) problems.push(`Scene “${s.id}” has zero duration.`);
     if (!s.text?.trim() && !s.image) problems.push(`Scene “${s.id}” needs text or an image.`);
+    problems.push(...checkSceneMotion(s, t.scenes.indexOf(s)));
   }
   const total = totalMs(t);
   if (total > MAX_DURATION_MS) problems.push(`Timeline is ${(total / 1000).toFixed(1)} s; the limit is 200 s.`);
@@ -66,8 +67,45 @@ export const frameToMs = (frame: number, fps: number): number => Math.round((fra
 export type Selection =
   | { kind: "scene"; index: number }
   | { kind: "subtitle"; index: number }
+  | { kind: "keyframe"; sceneIndex: number; index: number }
   | { kind: "music" }
   | { kind: "none" };
 
 export const sortCues = (cues: SubtitleCue[]): SubtitleCue[] =>
   [...cues].sort((a, b) => a.start_ms - b.start_ms);
+
+export const TRANSITION_KINDS: TransitionKind[] = [
+  "fade", "slide_left", "slide_right", "slide_up", "slide_down", "zoom_in", "wipe_left",
+];
+export const EASINGS: Easing[] = ["linear", "ease_in", "ease_out", "ease_in_out"];
+export const DEFAULT_TRANSITION_MS = 500;
+
+/** Mirrors vimmer-dsl validate_transition / validate_keyframes. */
+export const checkSceneMotion = (s: Scene, index: number): string[] => {
+  const out: string[] = [];
+  const tr = s.transition_in;
+  if (tr) {
+    if (index === 0) out.push(`Scene “${s.id}” is the first scene, so it cannot have a transition.`);
+    if (!(tr.duration_ms > 0)) out.push(`Scene “${s.id}” has a zero-length transition.`);
+    else if (tr.duration_ms > s.duration_ms) {
+      out.push(`Scene “${s.id}” transition (${tr.duration_ms} ms) is longer than the scene (${s.duration_ms} ms).`);
+    }
+  }
+  (s.keyframes ?? []).forEach((k, i, all) => {
+    if (k.at_ms < 0 || k.at_ms > s.duration_ms) out.push(`Scene “${s.id}” keyframe ${i + 1} is outside the scene.`);
+    if (k.scale !== undefined && !(Number.isFinite(k.scale) && k.scale > 0)) out.push(`Scene “${s.id}” keyframe ${i + 1}: scale must be above 0.`);
+    if (k.opacity !== undefined && !(k.opacity >= 0 && k.opacity <= 1)) out.push(`Scene “${s.id}” keyframe ${i + 1}: opacity must be between 0 and 1.`);
+    if (i > 0 && k.at_ms <= all[i - 1].at_ms) out.push(`Scene “${s.id}” keyframes must be in increasing time order without duplicates.`);
+  });
+  return out;
+};
+
+/** Returns an error message for a keyframe field value, or null when it is acceptable. */
+export const keyframeFieldError = (field: "scale" | "x" | "y" | "opacity" | "rotation", v: number): string | null => {
+  if (!Number.isFinite(v)) return "Enter a number.";
+  if (field === "scale" && v <= 0) return "Scale must be above 0.";
+  if (field === "opacity" && (v < 0 || v > 1)) return "Opacity must be between 0 and 1.";
+  return null;
+};
+
+export const sortedKeyframes = (s: Scene): Keyframe[] => s.keyframes ?? [];

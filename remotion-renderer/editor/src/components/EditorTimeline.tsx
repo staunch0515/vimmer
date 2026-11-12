@@ -19,6 +19,7 @@ type Props = {
 
 type Drag =
   | { kind: "scrub" }
+  | { kind: "keyframe"; sceneIndex: number; index: number; atMs: number; moved: boolean }
   | { kind: "resize"; index: number; sceneStartMs: number; startX: number; startDuration: number; duration: number };
 
 // Magnetic snapping: a point within SNAP_PX of a boundary pulls onto it and shows a guide.
@@ -83,6 +84,15 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
       scrubTo(e.clientX);
       return;
     }
+    if (drag.kind === "keyframe") {
+      const scene = timeline.scenes[drag.sceneIndex];
+      const list = scene.keyframes ?? [];
+      const lo = drag.index > 0 ? list[drag.index - 1].at_ms + 1 : 0;
+      const hi = drag.index < list.length - 1 ? list[drag.index + 1].at_ms - 1 : scene.duration_ms;
+      const raw = Math.round(msFromClientX(e.clientX) - starts[drag.sceneIndex]);
+      setDrag({ ...drag, atMs: Math.max(lo, Math.min(raw, hi)), moved: true });
+      return;
+    }
     const dxMs = ((e.clientX - drag.startX) / pps) * 1000;
     const wanted = drag.sceneStartMs + drag.startDuration + dxMs;
     const snapped = snapTo(wanted, snapPoints, pps);
@@ -94,6 +104,9 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
   const onPointerUp = () => {
     if (drag?.kind === "resize" && drag.duration !== drag.startDuration) {
       dispatch({ type: "patchScene", index: drag.index, patch: { duration_ms: drag.duration } });
+    }
+    if (drag?.kind === "keyframe" && drag.moved) {
+      dispatch({ type: "moveKeyframe", sceneIndex: drag.sceneIndex, index: drag.index, atMs: drag.atMs });
     }
     setDrag(null);
     setGuide(null);
@@ -162,6 +175,36 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
                 </div>
               );
             })}
+          </Track>
+
+          <Track label="Keyframes" height={30}>
+            {timeline.scenes.map((scene, si) =>
+              (scene.keyframes ?? []).map((k, ki) => {
+                const dragging = drag?.kind === "keyframe" && drag.sceneIndex === si && drag.index === ki;
+                const at = dragging ? drag.atMs : k.at_ms;
+                const active = selection.kind === "keyframe" && selection.sceneIndex === si && selection.index === ki;
+                return (
+                  <div
+                    key={`kf-${si}-${ki}`}
+                    role="button"
+                    aria-label={`Keyframe ${ki + 1} of ${scene.id} at ${at} ms`}
+                    className={active ? "kf-marker active" : "kf-marker"}
+                    style={{ left: ((starts[si] + at) / 1000) * pps }}
+                    title={`${scene.id} · ${at} ms`}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      onSelect({ kind: "keyframe", sceneIndex: si, index: ki });
+                      setDrag({ kind: "keyframe", sceneIndex: si, index: ki, atMs: k.at_ms, moved: false });
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Delete" || e.key === "Backspace") dispatch({ type: "deleteKeyframe", sceneIndex: si, index: ki });
+                    }}
+                    tabIndex={0}
+                  />
+                );
+              }),
+            )}
           </Track>
 
           <Track label="Subtitles" height={TRACK_H}>
