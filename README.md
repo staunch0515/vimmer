@@ -63,6 +63,21 @@ lower band; scene text keeps a 260 px bottom inset to stay clear of it.
 Image and audio paths are relative to `remotion-renderer/public/`. Normalized
 images are written to `public/generated/`, which is gitignored.
 
+## Desktop app (Tauri 2)
+
+`desktop/` wraps the Studio editor in a native macOS window (Tauri 2, Rust). It is a
+standalone Cargo project, not part of the `rust-core` workspace.
+
+```bash
+cd desktop && npm install
+npm run dev      # starts the editor dev server on :5180 and opens the window
+npm run build    # production bundle (.app and .dmg under src-tauri/target/release/bundle)
+```
+
+Add `--debug` to `npm run build` for a faster, unoptimized bundle.
+The window loads the editor's `dist/` build; `index.html` keeps its font stylesheet
+non-blocking so the app still renders offline.
+
 ## Studio (editor)
 
 A browser editor in `remotion-renderer/editor/`. The preview is the same `Timeline`

@@ -16,3 +16,6 @@ renders/
 .vscode/
 remotion-renderer/public/generated/
 remotion-renderer/editor/dist/
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/

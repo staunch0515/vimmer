@@ -1,0 +1,15 @@
+[package]
+name = "vimmer-desktop"
+description = "Vimmer Studio: desktop shell for the video editor"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone: keeps this crate out of the rust-core workspace.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
