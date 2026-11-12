@@ -40,9 +40,27 @@ npm run studio
 npm run render:test      # writes out/test-scene.mp4
 ```
 
+## Rust crates
+
+- `vimmer-dsl`: schema, validation, frame math.
+- `vimmer-media`: image normalization (blurred-background letterboxing) and audio
+  duration probing via `ffmpeg`.
+- `vimmer-scheduler`: chunk planner (whole scenes, ≤ 30 s per chunk) and a tokio
+  pipeline: preprocess images → check audio → render chunks through Remotion with
+  bounded concurrency → concatenate with ffmpeg `-c copy`.
+- `vimmer-cli`: `vimmer <timeline.json> -o out.mp4`.
+
+```bash
+cd rust-core && cargo run -p vimmer-cli -- ../fixtures/sample-timeline.json \
+  -o ../out/sample.mp4 --remotion-dir ../remotion-renderer
+```
+
+Image and audio paths are relative to `remotion-renderer/public/`. Normalized
+images are written to `public/generated/`, which is gitignored.
+
 ## Not yet built
 
-- Rust task scheduler (tokio), TTS duration tracking, and image normalization.
 - Subtitle track sync (the fixture has no subtitles yet).
+- TTS generation (duration tracking exists for existing audio files).
 - Studio UI (dark multi-panel layout, timeline, inspector). The design spec is
   deferred until the frontend phase starts.
