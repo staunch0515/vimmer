@@ -36,6 +36,14 @@ pub struct AudioMapping {
     pub offset_ms: u64,
 }
 
+/// Generate narration for a scene from its `text` with a local speech engine.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Narration {
+    /// Voice name for the speech engine. Empty = pick by language (CJK text gets a Chinese voice).
+    #[serde(default)]
+    pub voice: Option<String>,
+}
+
 /// One scene on the timeline.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Scene {
@@ -53,6 +61,9 @@ pub struct Scene {
     pub motion: MotionType,
     #[serde(default)]
     pub audio: Option<AudioMapping>,
+    /// When set and `audio` is empty, the scene's text is synthesized as narration at render time.
+    #[serde(default)]
+    pub narration: Option<Narration>,
 }
 
 impl Scene {

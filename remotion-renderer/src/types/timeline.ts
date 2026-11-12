@@ -8,6 +8,11 @@ export type AudioMapping = {
   offset_ms: number;
 };
 
+// Narration is synthesized from `text` at render time (local speech engine).
+export type Narration = {
+  voice: string | null;
+};
+
 export type Scene = {
   id: string;
   duration_ms: number;
@@ -16,6 +21,7 @@ export type Scene = {
   image: string | null;
   motion: MotionType;
   audio: AudioMapping | null;
+  narration?: Narration | null;
 };
 
 export type Resolution = {

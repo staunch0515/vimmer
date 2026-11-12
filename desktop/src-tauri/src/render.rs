@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use vimmer_dsl::VideoTimeline;
-use vimmer_media::FfmpegProbe;
+use vimmer_media::{FfmpegProbe, SaySpeech, Speech};
 use vimmer_scheduler::{render_timeline_with, CancelHandle, Progress, RenderContext, SchedulerConfig, SchedulerError};
 
 pub const PROGRESS_EVENT: &str = "render-progress";
@@ -56,16 +56,20 @@ pub fn start_render(app: AppHandle, state: State<'_, RenderState>, args: StartAr
         *current = Some(cancel.clone());
     }
 
-    let setup = || -> Result<(SchedulerConfig, PathBuf), String> {
+    let setup = || -> Result<(SchedulerConfig, PathBuf, Arc<dyn Speech>), String> {
         let cache = app.path().app_cache_dir().map_err(|e| format!("No cache folder: {e}"))?;
         let work_dir = cache.join(format!("render-{}", unix_millis()));
         let mut cfg = SchedulerConfig::new(work_dir.clone(), PathBuf::from(&args.output), remotion_dir.clone());
         let path = user_path();
         cfg.ffmpeg = find_in_path("ffmpeg", &path);
+        let speech: Arc<dyn Speech> = Arc::new(SaySpeech {
+            say: find_in_path("say", &path),
+            ffmpeg: cfg.ffmpeg.clone(),
+        });
         cfg.child_path = Some(path);
-        Ok((cfg, work_dir))
+        Ok((cfg, work_dir, speech))
     };
-    let (cfg, work_dir) = match setup() {
+    let (cfg, work_dir, speech) = match setup() {
         Ok(v) => v,
         Err(e) => {
             clear_current(&app);
@@ -84,7 +88,7 @@ pub fn start_render(app: AppHandle, state: State<'_, RenderState>, args: StartAr
 
     let task_app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let result = render_timeline_with(timeline, cfg, probe, ctx).await;
+        let result = render_timeline_with(timeline, cfg, probe, speech, ctx).await;
         let _ = std::fs::remove_dir_all(&work_dir);
         clear_current(&task_app);
         let finished = match result {

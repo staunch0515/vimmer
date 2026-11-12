@@ -90,6 +90,15 @@ Projects are plain timeline JSON files on disk: ⌘O opens one, ⌘S saves to it
 (temp file, then rename). Unsaved work is mirrored to localStorage as a draft and comes
 back on the next launch, marked unsaved. Closing the window with unsaved changes asks first.
 
+## Narration (local TTS)
+
+A scene with **Narrate the text** checked (Inspector, Audio) gets its speech generated
+when you render: its `text` is synthesized with macOS `say` (Samantha for English, Tingting
+for Chinese; or pick a voice) and converted to WAV. The scene is stretched to fit the speech,
+plus 300 ms. Files are cached in `remotion-renderer/public/generated/tts/`, keyed by voice and
+text. A scene that already has its own audio file keeps it. The preview stays silent until
+you render. Local narration needs macOS.
+
 ## Studio (editor)
 
 A browser editor in `remotion-renderer/editor/`. The preview is the same `Timeline`

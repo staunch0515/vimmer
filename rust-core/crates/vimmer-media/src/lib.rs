@@ -2,9 +2,11 @@
 
 pub mod audio;
 pub mod image_norm;
+pub mod speech;
 
 pub use audio::{parse_ffmpeg_duration_ms, AudioProbe, FfmpegProbe};
 pub use image_norm::{letterbox, normalize_image};
+pub use speech::{default_voice_for, SaySpeech, Speech};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MediaError {
@@ -14,4 +16,6 @@ pub enum MediaError {
     Io(#[from] std::io::Error),
     #[error("ffmpeg failed to probe {path}: {reason}")]
     Probe { path: String, reason: String },
+    #[error("speech synthesis failed: {0}")]
+    Speech(String),
 }

@@ -6,9 +6,10 @@ use std::{
 
 use tokio::{sync::Semaphore, task::JoinSet};
 use vimmer_dsl::{validate, ValidationError, VideoTimeline};
-use vimmer_media::{normalize_image, AudioProbe, MediaError};
+use vimmer_media::{normalize_image, AudioProbe, MediaError, Speech};
 
 use crate::control::{Progress, RenderContext};
+use crate::narrate::narrate_scenes;
 use crate::plan::{chunk_timeline, plan_chunks, Chunk, DEFAULT_CHUNK_MS};
 
 #[derive(Debug, thiserror::Error)]
@@ -86,8 +87,9 @@ pub async fn render_timeline(
     timeline: VideoTimeline,
     cfg: SchedulerConfig,
     probe: Arc<dyn AudioProbe>,
+    speech: Arc<dyn Speech>,
 ) -> Result<RunReport, SchedulerError> {
-    render_timeline_with(timeline, cfg, probe, RenderContext::silent()).await
+    render_timeline_with(timeline, cfg, probe, speech, RenderContext::silent()).await
 }
 
 /// Renders a whole timeline, reporting progress and honouring cancellation through `ctx`.
@@ -95,6 +97,7 @@ pub async fn render_timeline_with(
     mut timeline: VideoTimeline,
     cfg: SchedulerConfig,
     probe: Arc<dyn AudioProbe>,
+    speech: Arc<dyn Speech>,
     ctx: RenderContext,
 ) -> Result<RunReport, SchedulerError> {
     ctx.emit(Progress::Stage {
@@ -104,6 +107,20 @@ pub async fn render_timeline_with(
     tokio::fs::create_dir_all(&cfg.work_dir).await?;
     let mut warnings = Vec::new();
     ctx.check()?;
+
+    // Narration can stretch scenes, so the timeline is validated again afterwards.
+    let narrated = narrate_scenes(
+        &mut timeline,
+        &cfg,
+        speech,
+        probe.clone(),
+        &ctx,
+        &mut warnings,
+    )
+    .await?;
+    if narrated > 0 {
+        validate(&timeline).map_err(SchedulerError::Invalid)?;
+    }
 
     ctx.emit(Progress::Stage {
         name: "Preparing images".into(),

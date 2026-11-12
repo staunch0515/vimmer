@@ -310,3 +310,6 @@ textarea { resize: vertical; width: 100%; }
   transition: width 300ms ease;
 }
 .render-foot { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+
+.check { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 12px; cursor: pointer; }
+.check input { accent-color: var(--accent); }

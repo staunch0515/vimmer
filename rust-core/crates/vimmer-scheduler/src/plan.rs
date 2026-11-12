@@ -105,6 +105,7 @@ mod tests {
             image: None,
             motion: MotionType::Static,
             audio: None,
+            narration: None,
         }
     }
 

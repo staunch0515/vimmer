@@ -15,6 +15,7 @@ export const emptyScene = (index: number): Scene => ({
   image: null,
   motion: "static",
   audio: null,
+  narration: null,
 });
 
 export const totalMs = (t: VideoTimeline): number =>

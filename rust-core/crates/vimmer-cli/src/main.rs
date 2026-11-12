@@ -2,7 +2,7 @@ use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
 use clap::Parser;
 use vimmer_dsl::VideoTimeline;
-use vimmer_media::FfmpegProbe;
+use vimmer_media::{FfmpegProbe, SaySpeech};
 use vimmer_scheduler::{render_timeline, SchedulerConfig, DEFAULT_CHUNK_MS};
 
 /// Render a timeline JSON to MP4.
@@ -59,7 +59,13 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     cfg.preprocess_concurrency = cli.preprocess_jobs;
     cfg.render_concurrency = cli.render_jobs;
 
-    let report = render_timeline(timeline, cfg, Arc::new(FfmpegProbe::default())).await?;
+    let report = render_timeline(
+        timeline,
+        cfg,
+        Arc::new(FfmpegProbe::default()),
+        Arc::new(SaySpeech::default()),
+    )
+    .await?;
     for warning in &report.warnings {
         eprintln!("warning: {warning}");
     }

@@ -80,6 +80,26 @@ const SceneEditor = ({ timeline, selection, dispatch }: Props) => {
         </select>
       </Field>
       <div className="section-title">Audio</div>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!scene.narration}
+          onChange={(e) => patch({ narration: e.target.checked ? { voice: null } : null })}
+        />
+        <span>Narrate the text (speech generated at render time)</span>
+      </label>
+      {scene.narration && (
+        <Field label="Voice" hint={scene.audio ? "Manual audio is used instead" : ""}>
+          <select
+            value={scene.narration.voice ?? ""}
+            onChange={(e) => patch({ narration: { voice: e.target.value || null } })}
+          >
+            <option value="">Auto (by language)</option>
+            <option value="Samantha">Samantha (English)</option>
+            <option value="Tingting">Tingting (Chinese)</option>
+          </select>
+        </Field>
+      )}
       {scene.audio ? (
         <>
           <Field label="Source" hint="Path relative to public/">
