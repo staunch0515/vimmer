@@ -204,7 +204,7 @@ impl WhisperCli {
             .unwrap_or_else(|| "whisper-cli".to_string());
         let binary = find_executable(&binary_name, path_var).ok_or_else(|| {
             MediaError::Transcribe(format!(
-                "`{binary_name}` was not found (install whisper.cpp, e.g. `brew install whisper-cpp`, or set {ENV_WHISPER_CLI})"
+                "`{binary_name}` was not found (install whisper.cpp so `whisper-cli` is on PATH, or pass --whisper-cli / set {ENV_WHISPER_CLI})"
             ))
         })?;
         let model = model

@@ -146,6 +146,9 @@ pub fn split_units(text: &str) -> Vec<String> {
 /// is cheaper to pair than to skip, and two unrelated words cost no less than skipping both.
 const GAP: u32 = 100;
 
+/// The most a punctuation token may extend the word before it.
+const PUNCTUATION_TAIL_MS: u64 = 800;
+
 fn char_distance(a: &[char], b: &[char]) -> usize {
     let mut row: Vec<usize> = (0..=b.len()).collect();
     for (i, ca) in a.iter().enumerate() {
@@ -226,6 +229,13 @@ fn timed_hypothesis(
         floor = start;
         let chars: Vec<char> = token.text.chars().collect();
         let count = chars.iter().filter(|&&c| is_key_char(c)).count() as u64;
+        if count == 0 && chars.iter().any(|c| !c.is_whitespace()) {
+            // Whisper often hands the tail of the last syllable to the punctuation token after
+            // it ("来" 3840-4000, "。" 4000-4560), so punctuation extends the word before it.
+            if let Some(last) = spans.last_mut() {
+                last.1 = last.1.max(end.min(last.1 + PUNCTUATION_TAIL_MS));
+            }
+        }
         let len = end - start;
         let mut k = 0u64;
         for c in chars {
@@ -412,7 +422,7 @@ mod tests {
                 (400, 600),
                 (600, 1000),
                 (1000, 1200),
-                (1200, 1700)
+                (1200, 1750)
             ]
         );
     }
@@ -523,6 +533,21 @@ mod tests {
                 (1600, 1900)
             ]
         );
+    }
+
+    #[test]
+    fn punctuation_tokens_extend_the_word_before_them() {
+        let tokens = [
+            tok("亮", 0, 200),
+            tok("起", 200, 360),
+            tok("来", 360, 520),
+            tok("。", 520, 1080),
+        ];
+        let words = align_words("亮起来。", &tokens, 1200);
+        assert_eq!(words[2].end_ms, 1080);
+        // A runaway punctuation span is capped.
+        let words = align_words("好。", &[tok("好", 0, 300), tok("。", 300, 29_000)], 30_000);
+        assert_eq!(words[0].end_ms, 300 + PUNCTUATION_TAIL_MS);
     }
 
     #[test]
