@@ -29,7 +29,7 @@ export const Timeline: React.FC<VideoTimeline> = (timeline) => {
           ) : null}
         </Sequence>
       ))}
-      <Subtitles cues={timeline.subtitles ?? []} />
+      <Subtitles cues={timeline.subtitles} />
     </AbsoluteFill>
   );
 };

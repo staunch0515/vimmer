@@ -6,10 +6,14 @@
   "scripts": {
     "studio": "remotion studio src/index.ts",
     "render:test": "remotion render src/index.ts Timeline out/test-scene.mp4 --props=../fixtures/sample-timeline.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "editor": "vite --config editor/vite.config.ts",
+    "editor:build": "vite build --config editor/vite.config.ts",
+    "typecheck:editor": "tsc --noEmit -p editor/tsconfig.json"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.543",
+    "@remotion/player": "^4.0.543",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "remotion": "^4.0.543"
@@ -17,6 +21,7 @@
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
   }
 }

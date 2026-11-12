@@ -33,5 +33,5 @@ export type VideoTimeline = {
   fps: number;
   resolution: Resolution;
   scenes: Scene[];
-  subtitles?: SubtitleCue[];
+  subtitles: SubtitleCue[];
 };

@@ -63,8 +63,27 @@ lower band; scene text keeps a 260 px bottom inset to stay clear of it.
 Image and audio paths are relative to `remotion-renderer/public/`. Normalized
 images are written to `public/generated/`, which is gitignored.
 
+## Studio (editor)
+
+A browser editor in `remotion-renderer/editor/`. The preview is the same `Timeline`
+composition the renderer uses, running in `@remotion/player`.
+
+```bash
+cd remotion-renderer && npm install && npm run editor   # http://localhost:5180
+```
+
+- **Preview**: Remotion Player with frame sync. Space plays and pauses.
+- **Timeline**: scene, subtitle and audio tracks. Click the ruler to scrub, drag a
+  scene's right edge to change its duration, and zoom with the slider. Edges snap to
+  neighbouring boundaries and show a cyan guide.
+- **Inspector**: edit scene text, duration, highlights, image, motion and audio, and
+  edit subtitle cues. Add a cue at the playhead.
+- **Toolbar**: format switch, undo and redo (⌘Z / ⇧⌘Z), import and export JSON.
+  Validation mirrors the Rust rules and appears above the workspace.
+- The draft autosaves to localStorage. Export JSON, then render it with the CLI.
+
 ## Not yet built
 
 - TTS generation (duration tracking exists for existing audio files).
-- Studio UI (dark multi-panel layout, timeline, inspector). The design spec is
-  deferred until the frontend phase starts.
+- Studio: no direct render from the editor yet (export JSON, then run the CLI).
+  Subtitle cues are not drag-movable on the timeline; edit them in the inspector.
