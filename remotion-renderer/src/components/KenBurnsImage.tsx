@@ -1,5 +1,6 @@
 import { AbsoluteFill, Img, interpolate, useCurrentFrame } from "remotion";
-import { resolveAsset } from "../assets";
+import { useContext } from "react";
+import { AssetUrlContext, resolveAsset } from "../assets";
 import type { MotionType } from "../types/timeline";
 
 type Props = {
@@ -30,7 +31,7 @@ const transformFor = (motion: MotionType, p: number): Transform => {
 // are padded with a soft background instead of flat bars.
 export const KenBurnsImage: React.FC<Props> = ({ src, motion, durationInFrames }) => {
   const frame = useCurrentFrame();
-  const url = resolveAsset(src);
+  const url = resolveAsset(src, useContext(AssetUrlContext));
   const p = interpolate(frame, [0, Math.max(1, durationInFrames - 1)], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",

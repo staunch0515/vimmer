@@ -21,6 +21,7 @@ import {
   type RenderView,
 } from "./render";
 import { inTauri } from "./project";
+import { loadAssetRoot } from "./media";
 
 // Unsaved work is mirrored here so a crash or reload does not lose it. Cleared on save.
 const DRAFT_KEY = "vimmer-studio-draft";
@@ -61,6 +62,7 @@ export const App = () => {
   const [saved, setSaved] = useState<string>(draft ? "" : serialize(startTimeline));
   const [error, setError] = useState<string | null>(null);
   const [render, setRender] = useState<RenderView>({ status: "idle" });
+  const [assetRoot, setAssetRoot] = useState<string | null>(null);
   const playerRef = useRef<PlayerRef>(null);
   const { timeline } = state;
   const problems = useMemo(() => checkTimeline(timeline), [timeline]);
@@ -87,6 +89,11 @@ export const App = () => {
     let off: (() => void) | undefined;
     void guardClose(() => dirtyRef.current, "You have unsaved changes. Close anyway?").then((f) => (off = f));
     return () => off?.();
+  }, []);
+
+  useEffect(() => {
+    if (!inTauri()) return;
+    loadAssetRoot().then(setAssetRoot).catch(() => setAssetRoot(null));
   }, []);
 
   // Render progress and completion come from the desktop shell as events.
@@ -259,7 +266,7 @@ export const App = () => {
       )}
       <main className="workspace">
         <section className="stage">
-          <Preview timeline={timeline} playerRef={playerRef} onFrame={setFrame} />
+          <Preview timeline={timeline} assetRoot={assetRoot} playerRef={playerRef} onFrame={setFrame} />
           <div className="stage-meta">
             <span className="mono">{timecode(frameToMs(frame, fps))}</span>
             <span className="dim mono">/ {timecode(totalMs(timeline))}</span>

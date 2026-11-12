@@ -2,6 +2,8 @@ import type { Dispatch } from "react";
 import type { Scene, SubtitleCue, VideoTimeline } from "../../../src/types/timeline";
 import { timecode, type Selection, sortCues } from "../model";
 import type { Action } from "../state";
+import { canChooseMedia, chooseAndImport, type MediaKind } from "../media";
+import { useState } from "react";
 
 type Props = {
   timeline: VideoTimeline;
@@ -70,7 +72,12 @@ const SceneEditor = ({ timeline, selection, dispatch }: Props) => {
         />
       </Field>
       <Field label="Image" hint="Path relative to public/">
-        <input value={scene.image ?? ""} placeholder="assets/sample.png" onChange={(e) => patch({ image: e.target.value || null })} />
+        <MediaInput
+          kind="image"
+          value={scene.image ?? ""}
+          placeholder="assets/sample.png"
+          onChange={(v) => patch({ image: v || null })}
+        />
       </Field>
       <Field label="Motion">
         <select value={scene.motion} onChange={(e) => patch({ motion: e.target.value as Scene["motion"] })}>
@@ -103,7 +110,12 @@ const SceneEditor = ({ timeline, selection, dispatch }: Props) => {
       {scene.audio ? (
         <>
           <Field label="Source" hint="Path relative to public/">
-            <input value={scene.audio.source} onChange={(e) => patch({ audio: { ...scene.audio!, source: e.target.value } })} />
+            <MediaInput
+              kind="audio"
+              value={scene.audio.source}
+              placeholder="assets/voice.wav"
+              onChange={(v) => patch({ audio: { ...scene.audio!, source: v } })}
+            />
           </Field>
           <Field label="Offset" suffix="ms">
             <input
@@ -192,3 +204,48 @@ const Empty = ({ title, hint }: { title: string; hint: string }) => (
     <div className="dim">{hint}</div>
   </div>
 );
+
+/** A path field with a Choose button that copies the picked file into the public folder. */
+const MediaInput = ({
+  kind,
+  value,
+  placeholder,
+  onChange,
+}: {
+  kind: MediaKind;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const choose = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const path = await chooseAndImport(kind);
+      if (path) onChange(path);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="media-field">
+      <div className="media-input">
+        <input value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+        <button
+          type="button"
+          className="btn small"
+          disabled={!canChooseMedia() || busy}
+          title={canChooseMedia() ? "Choose a file; it is copied into the project's public folder" : "Choosing files needs the desktop app"}
+          onClick={() => void choose()}
+        >
+          {busy ? "…" : "Choose"}
+        </button>
+      </div>
+      {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+};

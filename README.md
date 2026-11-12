@@ -90,6 +90,14 @@ Projects are plain timeline JSON files on disk: ⌘O opens one, ⌘S saves to it
 (temp file, then rename). Unsaved work is mirrored to localStorage as a draft and comes
 back on the next launch, marked unsaved. Closing the window with unsaved changes asks first.
 
+## Images and audio
+
+In the Inspector, the Image and Audio source fields have a **Choose** button (desktop app).
+It opens a file dialog and copies the file into `remotion-renderer/public/assets/` (a
+second file with the same name gets a `-2` suffix; an identical file is reused). The
+timeline stores `assets/<name>`. The preview reads the public folder from disk, so new files
+show without a rebuild. Typing a path still works in both the browser and the desktop app.
+
 ## Narration (local TTS)
 
 A scene with **Narrate the text** checked (Inspector, Audio) gets its speech generated
