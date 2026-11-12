@@ -277,3 +277,15 @@ textarea { resize: vertical; width: 100%; }
   .inspector { border-left: 0; border-top: 1px solid var(--border); }
   .field-inline select { width: 120px; }
 }
+
+/* File name and unsaved marker in the toolbar */
+.file-name {
+  margin-left: 10px;
+  max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-2); font-size: 12px;
+}
+.file-name .dirty { color: var(--amber); }
+
+/* Error banner variant */
+.problems.error { color: var(--danger); background: rgba(248, 113, 113, 0.08); border-bottom-color: rgba(248, 113, 113, 0.25); }
