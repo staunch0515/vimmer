@@ -78,6 +78,13 @@ Add `--debug` to `npm run build` for a faster, unoptimized bundle.
 The window loads the editor's `dist/` build; `index.html` keeps its font stylesheet
 non-blocking so the app still renders offline.
 
+**Render** (toolbar) renders the timeline to an MP4 chosen in a save dialog. A card in the
+corner shows the stage and a progress bar, with Cancel while it runs and Show in Finder
+when it finishes. Rendering runs the same pipeline as the CLI, in the app's cache folder.
+Cancelling kills the Remotion and ffmpeg processes. Only one render runs at a time. The
+Remotion project is found next to the repository, so the app must run from the source
+tree for now.
+
 Projects are plain timeline JSON files on disk: ⌘O opens one, ⌘S saves to its path
 (or asks for one), ⇧⌘S saves as a new file, ⌘N starts a new project. Writes are atomic
 (temp file, then rename). Unsaved work is mirrored to localStorage as a draft and comes

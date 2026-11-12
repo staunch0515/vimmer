@@ -13,6 +13,8 @@ type Props = {
   onUndo: () => void;
   onRedo: () => void;
   onResolution: (w: number, h: number) => void;
+  onRender: () => void;
+  rendering: boolean;
 };
 
 export const Toolbar = (p: Props) => {
@@ -53,6 +55,9 @@ export const Toolbar = (p: Props) => {
         <span className="dot" />
         {p.problemCount ? `${p.problemCount} issue${p.problemCount > 1 ? "s" : ""}` : "Ready to render"}
       </span>
+      <button className="btn primary" onClick={p.onRender} disabled={p.rendering} title="Render to MP4">
+        {p.rendering ? "Rendering…" : "Render"}
+      </button>
     </header>
   );
 };

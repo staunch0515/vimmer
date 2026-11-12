@@ -9,6 +9,18 @@ import { Toolbar } from "./components/Toolbar";
 import { Preview } from "./components/Preview";
 import { Inspector } from "./components/Inspector";
 import { EditorTimeline } from "./components/EditorTimeline";
+import { RenderPanel } from "./components/RenderPanel";
+import {
+  applyProgress,
+  cancelRender,
+  listenRender,
+  pickRenderOutput,
+  renderSupported,
+  revealInFinder,
+  startRender,
+  type RenderView,
+} from "./render";
+import { inTauri } from "./project";
 
 // Unsaved work is mirrored here so a crash or reload does not lose it. Cleared on save.
 const DRAFT_KEY = "vimmer-studio-draft";
@@ -48,6 +60,7 @@ export const App = () => {
   // A recovered draft starts as "different", so it reads as unsaved until the user saves it.
   const [saved, setSaved] = useState<string>(draft ? "" : serialize(startTimeline));
   const [error, setError] = useState<string | null>(null);
+  const [render, setRender] = useState<RenderView>({ status: "idle" });
   const playerRef = useRef<PlayerRef>(null);
   const { timeline } = state;
   const problems = useMemo(() => checkTimeline(timeline), [timeline]);
@@ -74,6 +87,21 @@ export const App = () => {
     let off: (() => void) | undefined;
     void guardClose(() => dirtyRef.current, "You have unsaved changes. Close anyway?").then((f) => (off = f));
     return () => off?.();
+  }, []);
+
+  // Render progress and completion come from the desktop shell as events.
+  useEffect(() => {
+    if (!inTauri()) return;
+    let unlisten: (() => void) | undefined;
+    void listenRender(
+      (p) => setRender((v) => applyProgress(v, p)),
+      (f) => {
+        if (f.ok && f.output) setRender({ status: "done", output: f.output });
+        else if (f.cancelled) setRender({ status: "cancelled" });
+        else setRender({ status: "failed", error: f.error ?? "Unknown error" });
+      },
+    ).then((u) => (unlisten = u));
+    return () => unlisten?.();
   }, []);
 
   // Keep the playhead inside the timeline when edits shorten it.
@@ -166,6 +194,26 @@ export const App = () => {
     setFrame(clamped);
   };
 
+  const doRender = async () => {
+    if (!renderSupported()) {
+      setError("Rendering needs the desktop app.");
+      return;
+    }
+    if (problems.length > 0) {
+      setError(`Fix ${problems.length} issue${problems.length > 1 ? "s" : ""} before rendering.`);
+      return;
+    }
+    const output = await pickRenderOutput(`${baseName(path).replace(/\.json$/i, "") || "video"}.mp4`);
+    if (!output) return;
+    setError(null);
+    setRender({ status: "running", stage: "Starting" });
+    try {
+      await startRender(text, output);
+    } catch (e) {
+      setRender({ status: "failed", error: String(e) });
+    }
+  };
+
   const addSubtitleAtPlayhead = () => {
     dispatch({ type: "addSubtitle", startMs: frameToMs(frame, fps) });
     setTab("subtitles");
@@ -188,6 +236,14 @@ export const App = () => {
         onUndo={() => dispatch({ type: "undo" })}
         onRedo={() => dispatch({ type: "redo" })}
         onResolution={(w, h) => dispatch({ type: "setResolution", width: w, height: h })}
+        onRender={() => void doRender()}
+        rendering={render.status === "running"}
+      />
+      <RenderPanel
+        view={render}
+        onCancel={() => void cancelRender()}
+        onReveal={(p) => void revealInFinder(p).catch((e) => setError(String(e)))}
+        onDismiss={() => setRender({ status: "idle" })}
       />
       {error && (
         <div className="problems error" role="alert">

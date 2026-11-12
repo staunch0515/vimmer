@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    process::Stdio,
     sync::Arc,
 };
 
@@ -7,6 +8,7 @@ use tokio::{sync::Semaphore, task::JoinSet};
 use vimmer_dsl::{validate, ValidationError, VideoTimeline};
 use vimmer_media::{normalize_image, AudioProbe, MediaError};
 
+use crate::control::{Progress, RenderContext};
 use crate::plan::{chunk_timeline, plan_chunks, Chunk, DEFAULT_CHUNK_MS};
 
 #[derive(Debug, thiserror::Error)]
@@ -23,6 +25,8 @@ pub enum SchedulerError {
     Concat(String),
     #[error("background task panicked: {0}")]
     Join(String),
+    #[error("render cancelled")]
+    Cancelled,
 }
 
 fn join(errors: &[ValidationError]) -> String {
@@ -48,6 +52,8 @@ pub struct SchedulerConfig {
     pub preprocess_concurrency: usize,
     pub render_concurrency: usize,
     pub ffmpeg: PathBuf,
+    /// PATH for child processes. Set this when the parent's PATH is minimal (e.g. a GUI app).
+    pub child_path: Option<String>,
 }
 
 impl SchedulerConfig {
@@ -62,6 +68,7 @@ impl SchedulerConfig {
             preprocess_concurrency: 4,
             render_concurrency: 2,
             ffmpeg: PathBuf::from("ffmpeg"),
+            child_path: None,
         }
     }
 }
@@ -74,23 +81,54 @@ pub struct RunReport {
     pub warnings: Vec<String>,
 }
 
-/// Renders a whole timeline to one MP4.
+/// Renders a whole timeline to one MP4, without progress reporting or cancellation.
 pub async fn render_timeline(
-    mut timeline: VideoTimeline,
+    timeline: VideoTimeline,
     cfg: SchedulerConfig,
     probe: Arc<dyn AudioProbe>,
 ) -> Result<RunReport, SchedulerError> {
+    render_timeline_with(timeline, cfg, probe, RenderContext::silent()).await
+}
+
+/// Renders a whole timeline, reporting progress and honouring cancellation through `ctx`.
+pub async fn render_timeline_with(
+    mut timeline: VideoTimeline,
+    cfg: SchedulerConfig,
+    probe: Arc<dyn AudioProbe>,
+    ctx: RenderContext,
+) -> Result<RunReport, SchedulerError> {
+    ctx.emit(Progress::Stage {
+        name: "Checking timeline".into(),
+    });
     validate(&timeline).map_err(SchedulerError::Invalid)?;
     tokio::fs::create_dir_all(&cfg.work_dir).await?;
     let mut warnings = Vec::new();
+    ctx.check()?;
 
-    let normalized_images = preprocess_images(&mut timeline, &cfg).await?;
-    check_audio(&timeline, &cfg, probe, &mut warnings).await?;
+    ctx.emit(Progress::Stage {
+        name: "Preparing images".into(),
+    });
+    let normalized_images = preprocess_images(&mut timeline, &cfg, &ctx).await?;
+
+    ctx.emit(Progress::Stage {
+        name: "Checking audio".into(),
+    });
+    check_audio(&timeline, &cfg, probe, &mut warnings, &ctx).await?;
 
     let chunks = plan_chunks(&timeline, cfg.chunk_ms);
-    let rendered = render_chunks(&timeline, &chunks, &cfg).await?;
-    concat(&rendered, &cfg).await?;
+    ctx.emit(Progress::Stage {
+        name: "Rendering video".into(),
+    });
+    let rendered = render_chunks(&timeline, &chunks, &cfg, &ctx).await?;
 
+    ctx.emit(Progress::Stage {
+        name: "Joining segments".into(),
+    });
+    concat(&rendered, &cfg, &ctx).await?;
+
+    ctx.emit(Progress::Done {
+        output: cfg.output.display().to_string(),
+    });
     Ok(RunReport {
         output: cfg.output.clone(),
         chunks: chunks.len(),
@@ -99,11 +137,35 @@ pub async fn render_timeline(
     })
 }
 
+/// Runs an external command in its own process group, so cancelling can kill the whole tree.
+async fn run_process(
+    mut cmd: tokio::process::Command,
+    cfg: &SchedulerConfig,
+    ctx: &RenderContext,
+) -> Result<std::process::Output, SchedulerError> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    if let Some(path) = &cfg.child_path {
+        cmd.env("PATH", path);
+    }
+    let child = cmd.spawn()?;
+    let pid = child.id().unwrap_or(0);
+    ctx.cancel.track(pid);
+    let output = child.wait_with_output().await;
+    ctx.cancel.untrack(pid);
+    let output = output?;
+    ctx.check()?;
+    Ok(output)
+}
+
 /// Normalizes every local image to the output frame in parallel. Rewrites each
 /// scene's `image` to the public-relative path of the normalized copy.
 async fn preprocess_images(
     timeline: &mut VideoTimeline,
     cfg: &SchedulerConfig,
+    ctx: &RenderContext,
 ) -> Result<usize, SchedulerError> {
     let gen_dir = cfg.public_dir.join("generated");
     tokio::fs::create_dir_all(&gen_dir).await?;
@@ -117,6 +179,7 @@ async fn preprocess_images(
         }
     }
 
+    let total = unique.len();
     let semaphore = Arc::new(Semaphore::new(cfg.preprocess_concurrency.max(1)));
     let mut tasks = JoinSet::new();
     let mut outputs: Vec<(String, String)> = Vec::new();
@@ -136,8 +199,13 @@ async fn preprocess_images(
                 .map_err(SchedulerError::from)
         });
     }
+    let mut done = 0;
+    ctx.emit(Progress::Images { done, total });
     while let Some(res) = tasks.join_next().await {
         res.map_err(|e| SchedulerError::Join(e.to_string()))??;
+        done += 1;
+        ctx.emit(Progress::Images { done, total });
+        ctx.check()?;
     }
 
     for scene in &mut timeline.scenes {
@@ -156,6 +224,7 @@ async fn check_audio(
     cfg: &SchedulerConfig,
     probe: Arc<dyn AudioProbe>,
     warnings: &mut Vec<String>,
+    ctx: &RenderContext,
 ) -> Result<(), SchedulerError> {
     for scene in &timeline.scenes {
         let Some(audio) = &scene.audio else { continue };
@@ -171,6 +240,7 @@ async fn check_audio(
                 scene.id, audio.source
             ));
         }
+        ctx.check()?;
     }
     Ok(())
 }
@@ -180,10 +250,12 @@ async fn render_chunks(
     timeline: &VideoTimeline,
     chunks: &[Chunk],
     cfg: &SchedulerConfig,
+    ctx: &RenderContext,
 ) -> Result<Vec<PathBuf>, SchedulerError> {
     let chunk_dir = cfg.work_dir.join("chunks");
     tokio::fs::create_dir_all(&chunk_dir).await?;
 
+    let total = chunks.len();
     let semaphore = Arc::new(Semaphore::new(cfg.render_concurrency.max(1)));
     let mut tasks = JoinSet::new();
     let mut outputs = Vec::with_capacity(chunks.len());
@@ -200,11 +272,13 @@ async fn render_chunks(
         outputs.push(mp4.clone());
 
         let permit = semaphore.clone();
-        let remotion_dir = cfg.remotion_dir.clone();
+        let cfg = cfg.clone();
+        let ctx = ctx.clone();
         let index = chunk.index;
         tasks.spawn(async move {
             let _permit = permit.acquire_owned().await.expect("semaphore open");
-            run_remotion(&remotion_dir, &props, &mp4)
+            ctx.check()?;
+            run_remotion(&cfg, &props, &mp4, &ctx)
                 .await
                 .map_err(|stderr| SchedulerError::RenderFailed {
                     chunk: index,
@@ -212,20 +286,31 @@ async fn render_chunks(
                 })
         });
     }
+    let mut done = 0;
+    ctx.emit(Progress::Chunks { done, total });
     while let Some(res) = tasks.join_next().await {
         res.map_err(|e| SchedulerError::Join(e.to_string()))??;
+        done += 1;
+        ctx.emit(Progress::Chunks { done, total });
     }
     Ok(outputs)
 }
 
-async fn run_remotion(remotion_dir: &Path, props: &Path, out: &Path) -> Result<(), String> {
-    let output = tokio::process::Command::new("npx")
-        .current_dir(remotion_dir)
+/// Returns `Err(stderr)` when Remotion fails; cancellation surfaces as `SchedulerError::Cancelled`
+/// through the caller's `ctx.check()`.
+async fn run_remotion(
+    cfg: &SchedulerConfig,
+    props: &Path,
+    out: &Path,
+    ctx: &RenderContext,
+) -> Result<(), String> {
+    let mut cmd = tokio::process::Command::new("npx");
+    cmd.current_dir(&cfg.remotion_dir)
         .args(["remotion", "render", "src/index.ts", "Timeline"])
         .arg(out)
         .arg(format!("--props={}", props.display()))
-        .arg("--log=error")
-        .output()
+        .arg("--log=error");
+    let output = run_process(cmd, cfg, ctx)
         .await
         .map_err(|e| e.to_string())?;
     if output.status.success() {
@@ -236,7 +321,11 @@ async fn run_remotion(remotion_dir: &Path, props: &Path, out: &Path) -> Result<(
 }
 
 /// Joins rendered chunks with ffmpeg's concat demuxer without re-encoding.
-async fn concat(parts: &[PathBuf], cfg: &SchedulerConfig) -> Result<(), SchedulerError> {
+async fn concat(
+    parts: &[PathBuf],
+    cfg: &SchedulerConfig,
+    ctx: &RenderContext,
+) -> Result<(), SchedulerError> {
     let list = cfg.work_dir.join("concat.txt");
     let body: String = parts
         .iter()
@@ -252,23 +341,22 @@ async fn concat(parts: &[PathBuf], cfg: &SchedulerConfig) -> Result<(), Schedule
     if let Some(parent) = cfg.output.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    let output = tokio::process::Command::new(&cfg.ffmpeg)
-        .args([
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-        ])
-        .arg(&list)
-        .args(["-c", "copy"])
-        .arg(&cfg.output)
-        .output()
-        .await?;
+    let mut cmd = tokio::process::Command::new(&cfg.ffmpeg);
+    cmd.args([
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+    ])
+    .arg(&list)
+    .args(["-c", "copy"])
+    .arg(&cfg.output);
+    let output = run_process(cmd, cfg, ctx).await?;
     if output.status.success() {
         Ok(())
     } else {

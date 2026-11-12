@@ -289,3 +289,24 @@ textarea { resize: vertical; width: 100%; }
 
 /* Error banner variant */
 .problems.error { color: var(--danger); background: rgba(248, 113, 113, 0.08); border-bottom-color: rgba(248, 113, 113, 0.25); }
+
+/* Render progress card */
+.render-card {
+  position: fixed; right: 16px; bottom: 16px; z-index: 20;
+  width: 320px; padding: 14px 16px;
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.7);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.render-title { font-weight: 600; }
+.render-title.ok { color: var(--emerald); }
+.render-title.bad { color: var(--danger); }
+.render-stage { font-size: 12px; overflow-wrap: anywhere; }
+.render-bar { height: 6px; border-radius: 6px; background: #0d0d10; overflow: hidden; }
+.render-bar span {
+  display: block; height: 100%; border-radius: 6px;
+  background: linear-gradient(90deg, var(--accent), var(--cyan));
+  box-shadow: 0 0 12px var(--accent-glow);
+  transition: width 300ms ease;
+}
+.render-foot { display: flex; align-items: center; gap: 8px; font-size: 12px; }
