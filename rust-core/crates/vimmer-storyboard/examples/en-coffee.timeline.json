@@ -1,0 +1,122 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1080,
+    "height": 1920
+  },
+  "scenes": [
+    {
+      "id": "scene-01",
+      "duration_ms": 2600,
+      "text": "Want better coffee at home?",
+      "highlights": [
+        "better coffee"
+      ],
+      "image": "assets/sample.png",
+      "motion": "zoom_in",
+      "audio": null,
+      "narration": {
+        "voice": null
+      },
+      "transition_in": null,
+      "keyframes": []
+    },
+    {
+      "id": "scene-02",
+      "duration_ms": 3800,
+      "text": "Tip one: grind your beans right before brewing.",
+      "highlights": [
+        "grind"
+      ],
+      "image": "assets/sample.jpeg",
+      "motion": "pan_right",
+      "audio": null,
+      "narration": {
+        "voice": null
+      },
+      "transition_in": {
+        "kind": "slide_up",
+        "duration_ms": 500
+      },
+      "keyframes": []
+    },
+    {
+      "id": "scene-03",
+      "duration_ms": 3800,
+      "text": "Tip two: use water just off the boil.",
+      "highlights": [
+        "just off the boil"
+      ],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "narration": {
+        "voice": null
+      },
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 500
+      },
+      "keyframes": [
+        {
+          "at_ms": 0,
+          "scale": 1.0,
+          "x": 0.0,
+          "y": 0.0,
+          "opacity": 1.0,
+          "rotation": 0.0,
+          "ease": "ease_in_out"
+        },
+        {
+          "at_ms": 3800,
+          "scale": 1.15,
+          "x": -3.0,
+          "y": -2.0,
+          "opacity": 1.0,
+          "rotation": 0.0,
+          "ease": "ease_in_out"
+        }
+      ]
+    },
+    {
+      "id": "scene-04",
+      "duration_ms": 4200,
+      "text": "Tip three: measure with a scale, not a spoon.",
+      "highlights": [
+        "scale"
+      ],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "narration": {
+        "voice": null
+      },
+      "transition_in": {
+        "kind": "slide_down",
+        "duration_ms": 500
+      },
+      "keyframes": []
+    },
+    {
+      "id": "scene-05",
+      "duration_ms": 2200,
+      "text": "Small changes, big flavor.",
+      "highlights": [
+        "big flavor"
+      ],
+      "image": "assets/quizbuks-taker-cover-center.png",
+      "motion": "zoom_out",
+      "audio": null,
+      "narration": {
+        "voice": null
+      },
+      "transition_in": {
+        "kind": "zoom_in",
+        "duration_ms": 400
+      },
+      "keyframes": []
+    }
+  ],
+  "subtitles": [],
+  "music": null
+}

@@ -1,0 +1,42 @@
+{
+  "title": "Three Tips for Better Coffee",
+  "orientation": "portrait",
+  "language": "en",
+  "scenes": [
+    {
+      "text": "Want better coffee at home?",
+      "emphasis": ["better coffee"],
+      "camera": "push_in",
+      "image": "assets/sample.png",
+      "image_prompt": "Steaming cup of coffee on a wooden table, morning light"
+    },
+    {
+      "text": "Tip one: grind your beans right before brewing.",
+      "emphasis": ["grind"],
+      "camera": "pan_right",
+      "transition": "slide_up",
+      "image": "assets/sample.jpeg"
+    },
+    {
+      "text": "Tip two: use water just off the boil.",
+      "emphasis": ["just off the boil"],
+      "camera": "ken_burns",
+      "transition": "fade",
+      "image": "assets/design.png"
+    },
+    {
+      "text": "Tip three: measure with a scale, not a spoon.",
+      "emphasis": ["scale"],
+      "camera": "static",
+      "transition": "slide_down"
+    },
+    {
+      "text": "Small changes, big flavor.",
+      "emphasis": ["big flavor"],
+      "camera": "pull_out",
+      "transition": "zoom_in",
+      "transition_ms": 400,
+      "image": "assets/quizbuks-taker-cover-center.png"
+    }
+  ]
+}

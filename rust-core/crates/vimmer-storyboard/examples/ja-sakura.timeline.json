@@ -1,0 +1,103 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "scenes": [
+    {
+      "id": "scene-01",
+      "duration_ms": 4000,
+      "text": "春になると、日本中が桜色に染まります。",
+      "highlights": [
+        "桜色"
+      ],
+      "image": "assets/sample.jpeg",
+      "motion": "zoom_out",
+      "audio": null,
+      "narration": {
+        "voice": "Kyoko"
+      },
+      "transition_in": null,
+      "keyframes": []
+    },
+    {
+      "id": "scene-02",
+      "duration_ms": 4400,
+      "text": "人々は木の下に集まり、お花見を楽しみます。",
+      "highlights": [
+        "お花見"
+      ],
+      "image": "assets/sample.png",
+      "motion": "pan_left",
+      "audio": null,
+      "narration": {
+        "voice": "Kyoko"
+      },
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 500
+      },
+      "keyframes": []
+    },
+    {
+      "id": "scene-03",
+      "duration_ms": 3400,
+      "text": "でも、桜の命はとても短いのです。",
+      "highlights": [
+        "短い"
+      ],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "narration": {
+        "voice": "Kyoko"
+      },
+      "transition_in": {
+        "kind": "slide_right",
+        "duration_ms": 500
+      },
+      "keyframes": [
+        {
+          "at_ms": 0,
+          "scale": 1.0,
+          "x": 0.0,
+          "y": 0.0,
+          "opacity": 1.0,
+          "rotation": 0.0,
+          "ease": "ease_in_out"
+        },
+        {
+          "at_ms": 3400,
+          "scale": 1.15,
+          "x": -3.0,
+          "y": -2.0,
+          "opacity": 1.0,
+          "rotation": 0.0,
+          "ease": "ease_in_out"
+        }
+      ]
+    },
+    {
+      "id": "scene-04",
+      "duration_ms": 3800,
+      "text": "だからこそ、この季節は特別なのです。",
+      "highlights": [
+        "特別"
+      ],
+      "image": null,
+      "motion": "zoom_in",
+      "audio": null,
+      "narration": {
+        "voice": "Kyoko"
+      },
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 800
+      },
+      "keyframes": []
+    }
+  ],
+  "subtitles": [],
+  "music": null
+}
