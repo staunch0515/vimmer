@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::align::RecognizedToken;
+use crate::process::{run_limited, Limits};
 use crate::MediaError;
 
 /// Environment variable naming the `whisper-cli` binary (a path, or a name looked up on PATH).
@@ -37,17 +38,26 @@ pub struct TranscribeRequest {
 }
 
 /// Turns a speech clip into timed tokens, with times relative to the start of the clip.
+/// Every external command runs under `limits`: it is killed when the render is cancelled
+/// ([`MediaError::Cancelled`]) or runs past its time budget ([`MediaError::TimedOut`]).
 pub trait Transcriber: Send + Sync {
     fn transcribe(
         &self,
         wav: &Path,
         request: &TranscribeRequest,
+        limits: &Limits,
     ) -> Result<Vec<RecognizedToken>, MediaError>;
 
     /// Joins clips into one 16 kHz mono WAV, each followed by `gap_ms` of silence, so several
     /// clips can be recognized in one call. Callers compute clip offsets from their durations.
-    fn join_clips(&self, inputs: &[PathBuf], gap_ms: u64, out: &Path) -> Result<(), MediaError> {
-        join_clips_with_ffmpeg(Path::new("ffmpeg"), inputs, gap_ms, out)
+    fn join_clips(
+        &self,
+        inputs: &[PathBuf],
+        gap_ms: u64,
+        out: &Path,
+        limits: &Limits,
+    ) -> Result<(), MediaError> {
+        join_clips_with_ffmpeg(Path::new("ffmpeg"), inputs, gap_ms, out, limits)
     }
 }
 
@@ -57,6 +67,7 @@ pub fn join_clips_with_ffmpeg(
     inputs: &[PathBuf],
     gap_ms: u64,
     out: &Path,
+    limits: &Limits,
 ) -> Result<(), MediaError> {
     let mut cmd = Command::new(ffmpeg);
     cmd.args(["-y", "-hide_banner", "-loglevel", "error"]);
@@ -75,12 +86,15 @@ pub fn join_clips_with_ffmpeg(
     }
     graph.push_str(&format!("concat=n={}:v=0:a=1[out]", inputs.len()));
     let tmp = out.with_extension("partial.wav");
-    let output = cmd
-        .arg("-filter_complex")
+    cmd.arg("-filter_complex")
         .arg(graph)
         .args(["-map", "[out]", "-c:a", "pcm_s16le"])
-        .arg(&tmp)
-        .output()?;
+        .arg(&tmp);
+    let output = run_limited(cmd, limits);
+    if output.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    let output = output?;
     if !output.status.success() {
         return Err(MediaError::Transcribe(format!(
             "ffmpeg could not join clips: {}",
@@ -256,6 +270,7 @@ impl WhisperCli {
         out_prefix: &Path,
         request: &TranscribeRequest,
         dtw: Option<&str>,
+        limits: &Limits,
     ) -> Result<(), MediaError> {
         let mut cmd = Command::new(&self.binary);
         cmd.arg("-m")
@@ -278,7 +293,7 @@ impl WhisperCli {
             // whisper.cpp silently skips DTW while flash attention is on.
             cmd.arg("-nfa").arg("-dtw").arg(preset);
         }
-        let out = cmd.output()?;
+        let out = run_limited(cmd, limits)?;
         if out.status.success() {
             Ok(())
         } else {
@@ -294,16 +309,24 @@ impl WhisperCli {
 }
 
 impl Transcriber for WhisperCli {
-    fn join_clips(&self, inputs: &[PathBuf], gap_ms: u64, out: &Path) -> Result<(), MediaError> {
-        join_clips_with_ffmpeg(&self.ffmpeg, inputs, gap_ms, out)
+    fn join_clips(
+        &self,
+        inputs: &[PathBuf],
+        gap_ms: u64,
+        out: &Path,
+        limits: &Limits,
+    ) -> Result<(), MediaError> {
+        join_clips_with_ffmpeg(&self.ffmpeg, inputs, gap_ms, out, limits)
     }
 
-    /// Results are cached next to `wav` (keyed by model, language, prompt and DTW preset), so an
-    /// unchanged narration is recognized once.
+    /// Results are cached next to `wav` (keyed by model, language, prompt, DTW preset and GPU
+    /// use), so an unchanged narration is recognized once. An empty result is not cached, so a
+    /// failed recognition is tried again next time.
     fn transcribe(
         &self,
         wav: &Path,
         request: &TranscribeRequest,
+        limits: &Limits,
     ) -> Result<Vec<RecognizedToken>, MediaError> {
         let stem = wav
             .file_stem()
@@ -313,18 +336,25 @@ impl Transcriber for WhisperCli {
         let cached = wav.with_file_name(format!("{stem}.whisper-{key:016x}.json"));
         if let Ok(bytes) = fs::read(&cached) {
             if let Ok(tokens) = parse_whisper_json(&bytes) {
-                return Ok(tokens);
+                if !tokens.is_empty() {
+                    return Ok(tokens);
+                }
             }
         }
 
         // whisper.cpp wants 16 kHz mono PCM.
         let input16k = wav.with_file_name(format!("{stem}.16k.wav"));
-        let converted = Command::new(&self.ffmpeg)
+        let mut resample = Command::new(&self.ffmpeg);
+        resample
             .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
             .arg(wav)
             .args(["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
-            .arg(&input16k)
-            .output()?;
+            .arg(&input16k);
+        let converted = run_limited(resample, limits);
+        if converted.is_err() {
+            let _ = fs::remove_file(&input16k);
+        }
+        let converted = converted?;
         if !converted.status.success() {
             return Err(MediaError::Transcribe(format!(
                 "ffmpeg could not resample {}: {}",
@@ -335,17 +365,27 @@ impl Transcriber for WhisperCli {
 
         let tmp_prefix = wav.with_file_name(format!("{stem}.whisper-{key:016x}.partial"));
         let tmp_json = tmp_prefix.with_extension("partial.json");
-        let mut result = self.run_whisper(&input16k, &tmp_prefix, request, self.dtw.as_deref());
-        if result.is_err() && self.dtw.is_some() {
+        let mut result =
+            self.run_whisper(&input16k, &tmp_prefix, request, self.dtw.as_deref(), limits);
+        if matches!(result, Err(MediaError::Transcribe(_))) && self.dtw.is_some() {
             // Older builds, or a model the preset does not fit: fall back to plain timestamps.
-            result = self.run_whisper(&input16k, &tmp_prefix, request, None);
+            // A cancel or a timeout is final, so it is not retried.
+            result = self.run_whisper(&input16k, &tmp_prefix, request, None, limits);
         }
         let _ = fs::remove_file(&input16k);
-        result?;
+        if let Err(e) = result {
+            let _ = fs::remove_file(&tmp_json);
+            return Err(e);
+        }
         let bytes = fs::read(&tmp_json)?;
-        let tokens = parse_whisper_json(&bytes)?;
-        fs::rename(&tmp_json, &cached)?;
-        Ok(tokens)
+        let tokens = parse_whisper_json(&bytes);
+        match &tokens {
+            Ok(t) if !t.is_empty() => fs::rename(&tmp_json, &cached)?,
+            _ => {
+                let _ = fs::remove_file(&tmp_json);
+            }
+        }
+        tokens
     }
 }
 
@@ -893,6 +933,75 @@ mod tests {
         assert_eq!(p("ggml-base.en.bin"), Some("base.en"));
         assert_eq!(p("ggml-small-q8_0.bin"), Some("small"));
         assert_eq!(p("custom.bin"), None);
+    }
+
+    /// A fake engine: `ffmpeg` is `true` and `whisper-cli` is a script that never finishes.
+    fn hanging_engine(dir: &Path) -> WhisperCli {
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir_all(dir).unwrap();
+        let script = dir.join("whisper-cli");
+        fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        WhisperCli {
+            binary: script,
+            model: dir.join("model.bin"),
+            ffmpeg: PathBuf::from("true"),
+            threads: 1,
+            dtw: Some("large.v3.turbo".into()),
+            gpu: false,
+        }
+    }
+
+    #[test]
+    fn hung_whisper_times_out_without_retry_or_cache() {
+        let dir = std::env::temp_dir().join(format!("vimmer-hang-timeout-{}", std::process::id()));
+        let engine = hanging_engine(&dir);
+        let wav = dir.join("clip.wav");
+        let started = std::time::Instant::now();
+        let limits = Limits::none().with_timeout(std::time::Duration::from_millis(400));
+        let err = engine
+            .transcribe(&wav, &TranscribeRequest::default(), &limits)
+            .unwrap_err();
+        assert!(matches!(err, MediaError::TimedOut { .. }), "{err}");
+        // One attempt only: a timeout must not trigger the no-DTW retry.
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".whisper-"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hung_whisper_stops_on_cancel() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let dir = std::env::temp_dir().join(format!("vimmer-hang-cancel-{}", std::process::id()));
+        let engine = hanging_engine(&dir);
+        let flag = Arc::new(AtomicBool::new(false));
+        let setter = flag.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            setter.store(true, Ordering::SeqCst);
+        });
+        let limits = Limits {
+            timeout: None,
+            cancelled: Arc::new(move || flag.load(Ordering::SeqCst)),
+        };
+        let started = std::time::Instant::now();
+        let err = engine
+            .transcribe(
+                &dir.join("clip.wav"),
+                &TranscribeRequest::default(),
+                &limits,
+            )
+            .unwrap_err();
+        assert!(matches!(err, MediaError::Cancelled), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

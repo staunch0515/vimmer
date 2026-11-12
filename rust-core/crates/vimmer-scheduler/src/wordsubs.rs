@@ -4,11 +4,12 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use vimmer_dsl::{SubtitleCue, VideoTimeline, WordTiming};
 use vimmer_media::{
-    align_words, guess_language, split_units, AlignedWord, AudioProbe, RecognizedToken,
-    TranscribeRequest, Transcriber, WhisperCli,
+    align_words, guess_language, split_units, AlignedWord, AudioProbe, Limits, MediaError,
+    RecognizedToken, TranscribeRequest, Transcriber, WhisperCli,
 };
 
 use crate::control::{Progress, RenderContext};
@@ -131,6 +132,16 @@ pub async fn add_word_subtitles(
     apply_word_subtitles(timeline, &clips, engine, probe, ws, ctx, warnings).await
 }
 
+/// Time budget for one recognition call: a fixed allowance for loading the model plus a
+/// multiple of the audio length. Measured on a loaded 4-core Intel CPU: about 40 s for 4.6 s.
+const TIMEOUT_BASE: Duration = Duration::from_secs(180);
+const TIMEOUT_PER_AUDIO: u32 = 30;
+
+/// Time budget for recognizing `audio_ms` of audio.
+pub(crate) fn recognition_timeout(audio_ms: u64) -> Duration {
+    TIMEOUT_BASE + Duration::from_millis(audio_ms) * TIMEOUT_PER_AUDIO
+}
+
 /// Batches never exceed one whisper window (30 s), since every call encodes a full window
 /// however short the audio is.
 const BATCH_MAX_MS: u64 = 28_000;
@@ -200,6 +211,7 @@ fn recognize_batch(
     engine: &dyn Transcriber,
     batch: &Batch,
     clips: &[NarrationClip],
+    limits: &Limits,
 ) -> Result<Vec<Vec<RecognizedToken>>, vimmer_media::MediaError> {
     let texts: Vec<&str> = batch
         .members
@@ -220,7 +232,11 @@ fn recognize_batch(
         prompt: Some(texts.join(separator)),
     };
     if let [(clip, _, _)] = batch.members[..] {
-        return Ok(vec![engine.transcribe(&clips[clip].wav, &request)?]);
+        return Ok(vec![engine.transcribe(
+            &clips[clip].wav,
+            &request,
+            limits,
+        )?]);
     }
     let wavs: Vec<PathBuf> = batch
         .members
@@ -240,11 +256,13 @@ fn recognize_batch(
         "batch-{:016x}.wav",
         fnv1a(&format!("{BATCH_GAP_MS}\n{}", names.join("\n")))
     ));
-    if !joined.exists() {
-        engine.join_clips(&wavs, BATCH_GAP_MS, &joined)?;
-    }
-    let tokens = engine.transcribe(&joined, &request)?;
-    Ok(split_tokens(&tokens, &batch.members))
+    // The joined file is only an intermediate: the recognition result is cached under its
+    // name, and joining again is quick, so it is removed whatever happens.
+    let result = engine
+        .join_clips(&wavs, BATCH_GAP_MS, &joined, limits)
+        .and_then(|()| engine.transcribe(&joined, &request, limits));
+    let _ = std::fs::remove_file(&joined);
+    Ok(split_tokens(&result?, &batch.members))
 }
 
 fn fnv1a(s: &str) -> u64 {
@@ -289,13 +307,36 @@ pub(crate) async fn apply_word_subtitles(
     // One whisper call per batch of same-language clips; results land per clip.
     let batches = plan_batches(&languages, &durations);
     let mut recognized: Vec<Option<Vec<RecognizedToken>>> = vec![None; clips.len()];
+    // Child processes poll the render's cancel flag, so a cancel stops whisper mid-run.
+    let cancel = ctx.cancel.clone();
+    let base_limits = Limits {
+        timeout: None,
+        cancelled: Arc::new(move || cancel.is_cancelled()),
+    };
+    let mut timed_out = false;
     for (n, batch) in batches.iter().enumerate() {
+        if timed_out {
+            // One call already ran out of time: the engine is too slow here, so do not spend the
+            // same budget again on every remaining batch.
+            for &(clip, _, _) in &batch.members {
+                warnings.push(format!(
+                    "scene `{}`: word-by-word subtitles skipped after an earlier recognition timed out",
+                    scene_id(timeline, &clips[clip])
+                ));
+            }
+            continue;
+        }
         ctx.emit(Progress::Stage {
             name: format!("Timing subtitles ({}/{})", n + 1, batches.len()),
         });
+        let audio_ms = batch
+            .members
+            .last()
+            .map_or(0, |&(_, offset, ms)| offset + ms);
+        let limits = base_limits.with_timeout(recognition_timeout(audio_ms));
         let (engine, batch_owned, clips_owned) = (engine.clone(), batch.clone(), clips.to_vec());
         let result = tokio::task::spawn_blocking(move || {
-            recognize_batch(engine.as_ref(), &batch_owned, &clips_owned)
+            recognize_batch(engine.as_ref(), &batch_owned, &clips_owned, &limits)
         })
         .await
         .map_err(|e| SchedulerError::Join(e.to_string()))?;
@@ -306,7 +347,9 @@ pub(crate) async fn apply_word_subtitles(
                     recognized[clip] = Some(tokens);
                 }
             }
+            Err(MediaError::Cancelled) => return Err(SchedulerError::Cancelled),
             Err(e) => {
+                timed_out |= matches!(e, MediaError::TimedOut { .. });
                 for &(clip, _, _) in &batch.members {
                     warnings.push(format!(
                         "scene `{}`: word-by-word subtitles skipped: {e}",
@@ -772,6 +815,7 @@ mod tests {
             &self,
             _wav: &Path,
             request: &TranscribeRequest,
+            _limits: &Limits,
         ) -> Result<Vec<RecognizedToken>, MediaError> {
             self.1.lock().unwrap().push(request.clone());
             Ok(self.0.clone())
@@ -957,6 +1001,7 @@ mod tests {
             &self,
             wav: &Path,
             _request: &TranscribeRequest,
+            _limits: &Limits,
         ) -> Result<Vec<RecognizedToken>, MediaError> {
             self.calls.lock().unwrap().push(wav.to_path_buf());
             // Joined audio: clip 1 (1000 ms) at 0, gap 1000 ms, clip 2 at 2000.
@@ -970,6 +1015,7 @@ mod tests {
             inputs: &[PathBuf],
             gap_ms: u64,
             out: &Path,
+            _limits: &Limits,
         ) -> Result<(), MediaError> {
             self.joined.lock().unwrap().push((inputs.to_vec(), gap_ms));
             std::fs::write(out, b"joined").map_err(MediaError::from)
@@ -1020,6 +1066,11 @@ mod tests {
             "one whisper call for both clips"
         );
         assert_eq!(engine.joined.lock().unwrap()[0].1, BATCH_GAP_MS);
+        let joined_wav = engine.calls.lock().unwrap()[0].clone();
+        assert!(
+            !joined_wav.exists(),
+            "the joined batch file is removed after recognition"
+        );
         let spans: Vec<Vec<(u64, u64)>> = t
             .subtitles
             .iter()
@@ -1034,5 +1085,100 @@ mod tests {
         );
         assert_eq!(validate(&t), Ok(()));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Fails every call with the given error and counts the calls.
+    struct FailingTranscriber(fn() -> MediaError, Mutex<usize>);
+    impl Transcriber for FailingTranscriber {
+        fn transcribe(
+            &self,
+            _wav: &Path,
+            _request: &TranscribeRequest,
+            limits: &Limits,
+        ) -> Result<Vec<RecognizedToken>, MediaError> {
+            *self.1.lock().unwrap() += 1;
+            assert!(limits.timeout.is_some(), "every call has a time budget");
+            Err((self.0)())
+        }
+    }
+
+    fn three_languages() -> (VideoTimeline, Vec<NarrationClip>) {
+        let t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![
+                narrated("en", 2000, "Hello."),
+                narrated("zh", 2000, "你好。"),
+                narrated("ja", 2000, "こんにちは。"),
+            ],
+            subtitles: vec![SubtitleCue::new(0, 1000, "Hello.")],
+            music: None,
+        };
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let clips = narration_clips(&t, &cfg);
+        (t, clips)
+    }
+
+    #[tokio::test]
+    async fn a_timeout_falls_back_and_skips_the_remaining_batches() {
+        let (mut t, clips) = three_languages();
+        let before = t.subtitles.clone();
+        let engine = Arc::new(FailingTranscriber(
+            || MediaError::TimedOut { secs: 1 },
+            Mutex::new(0),
+        ));
+        let mut warnings = vec![];
+        let n = apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine.clone(),
+            Arc::new(FixedProbe(1000)),
+            &WordSubtitleConfig::default(),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(
+            *engine.1.lock().unwrap(),
+            1,
+            "no second call after a timeout"
+        );
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(warnings[0].contains("timed out"), "{warnings:?}");
+        assert_eq!(t.subtitles, before, "plain subtitles kept");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_during_recognition_cancels_the_render() {
+        let (mut t, clips) = three_languages();
+        let engine = Arc::new(FailingTranscriber(|| MediaError::Cancelled, Mutex::new(0)));
+        let ctx = RenderContext::silent();
+        let result = apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine.clone(),
+            Arc::new(FixedProbe(1000)),
+            &WordSubtitleConfig::default(),
+            &ctx,
+            &mut vec![],
+        )
+        .await;
+        assert!(matches!(result, Err(SchedulerError::Cancelled)));
+        assert_eq!(*engine.1.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn timeout_grows_with_the_audio() {
+        assert_eq!(recognition_timeout(0), Duration::from_secs(180));
+        assert_eq!(recognition_timeout(28_000), Duration::from_secs(180 + 840));
     }
 }

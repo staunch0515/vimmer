@@ -4,12 +4,14 @@
 pub mod align;
 pub mod audio;
 pub mod image_norm;
+pub mod process;
 pub mod speech;
 pub mod transcribe;
 
 pub use align::{align_words, is_cjk, split_units, AlignedWord, RecognizedToken};
 pub use audio::{has_audio_stream, parse_ffmpeg_duration_ms, AudioProbe, FfmpegProbe};
 pub use image_norm::{letterbox, normalize_image};
+pub use process::{run_limited, Limits};
 pub use speech::{default_voice_for, SaySpeech, Speech};
 pub use transcribe::{
     guess_language, TranscribeRequest, Transcriber, WhisperCli, DEFAULT_MODEL_IN_HOME,
@@ -28,4 +30,8 @@ pub enum MediaError {
     Speech(String),
     #[error("speech recognition failed: {0}")]
     Transcribe(String),
+    #[error("cancelled")]
+    Cancelled,
+    #[error("timed out after {secs} s")]
+    TimedOut { secs: u64 },
 }

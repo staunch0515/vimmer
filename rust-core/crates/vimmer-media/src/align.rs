@@ -41,7 +41,9 @@ pub struct AlignedWord {
 pub fn is_cjk(c: char) -> bool {
     matches!(c,
         '\u{3040}'..='\u{309F}'   // Hiragana
-        | '\u{30A0}'..='\u{30FF}' // Katakana
+        // Katakana, without ゠ (U+30A0) and the middle dot ・ (U+30FB), which are punctuation
+        | '\u{30A1}'..='\u{30FA}'
+        | '\u{30FC}'..='\u{30FF}'
         | '\u{31F0}'..='\u{31FF}' // Katakana phonetic extensions
         | '\u{3400}'..='\u{4DBF}' // CJK extension A
         | '\u{4E00}'..='\u{9FFF}' // CJK unified ideographs
@@ -222,6 +224,9 @@ fn timed_hypothesis(
     let mut words: Vec<Vec<char>> = Vec::new();
     let mut spans: Vec<(u64, u64)> = Vec::new();
     let mut open = false; // whether the last word can still grow
+                          // Whether the last word is a CJK character a small kana or long mark may join, so that
+                          // recognized きょ, コー, ショッ form one word, as split_units makes them one unit.
+    let mut kana_open = false;
     let mut floor = 0u64;
     for token in tokens {
         let start = token.start_ms.max(floor).min(audio_ms);
@@ -241,6 +246,7 @@ fn timed_hypothesis(
         for c in chars {
             if c.is_whitespace() {
                 open = false;
+                kana_open = false;
                 continue;
             }
             if !is_key_char(c) {
@@ -249,10 +255,14 @@ fn timed_hypothesis(
             let span = (start + len * k / count, start + len * (k + 1) / count);
             k += 1;
             let lower: Vec<char> = c.to_lowercase().collect();
-            if is_cjk(c) {
+            if is_cjk(c) && is_kana_modifier(c) && kana_open {
+                words.last_mut().expect("open word exists").extend(lower);
+                spans.last_mut().expect("open word exists").1 = span.1;
+            } else if is_cjk(c) {
                 words.push(lower);
                 spans.push(span);
                 open = false;
+                kana_open = true;
             } else if open {
                 words.last_mut().expect("open word exists").extend(lower);
                 spans.last_mut().expect("open word exists").1 = span.1;
@@ -260,6 +270,7 @@ fn timed_hypothesis(
                 words.push(lower);
                 spans.push(span);
                 open = true;
+                kana_open = false;
             }
         }
     }
@@ -532,6 +543,56 @@ mod tests {
                 (1300, 1600),
                 (1600, 1900)
             ]
+        );
+    }
+
+    #[test]
+    fn small_kana_and_long_marks_start_with_their_mora() {
+        // Recognized as one token whose characters share 0-800 ms evenly (100 ms each).
+        let words = align_words("きょうはコーヒー", &[tok("きょうはコーヒー", 0, 800)], 900);
+        assert_eq!(texts(&words), vec!["きょ", "う", "は", "コー", "ヒー"]);
+        assert_eq!(
+            spans(&words),
+            vec![(0, 200), (200, 300), (300, 400), (400, 600), (600, 800)]
+        );
+        // Recognized character by character: the same result.
+        let per_char: Vec<RecognizedToken> = "きょうはコーヒー"
+            .chars()
+            .enumerate()
+            .map(|(i, c)| tok(&c.to_string(), i as u64 * 100, i as u64 * 100 + 100))
+            .collect();
+        assert_eq!(
+            spans(&align_words("きょうはコーヒー", &per_char, 900))[0],
+            (0, 200)
+        );
+        assert_eq!(
+            spans(&align_words("きょうはコーヒー", &per_char, 900))[3],
+            (400, 600)
+        );
+    }
+
+    #[test]
+    fn small_tsu_joins_the_unit_and_keeps_its_start() {
+        let words = align_words("ショップ", &[tok("ショップ", 500, 900)], 1000);
+        assert_eq!(texts(&words), vec!["ショッ", "プ"]);
+        assert_eq!(spans(&words), vec![(500, 800), (800, 900)]);
+    }
+
+    #[test]
+    fn katakana_middle_dot_is_punctuation() {
+        assert_eq!(
+            split_units("コーヒー・ショップ"),
+            vec!["コー", "ヒー・", "ショッ", "プ"]
+        );
+        let words = align_words(
+            "コーヒー・ショップ",
+            &[tok("コーヒー・ショップ", 0, 800)],
+            900,
+        );
+        // 8 kana share 0-800; the dot takes no time of its own.
+        assert_eq!(
+            spans(&words),
+            vec![(0, 200), (200, 400), (400, 700), (700, 800)]
         );
     }
 
