@@ -320,3 +320,13 @@ textarea { resize: vertical; width: 100%; }
 .field-error { color: var(--danger); font-size: 11px; }
 .block.music { top: 10px; bottom: 10px; background: linear-gradient(180deg, #3b2a14, #2a1e0e); border-color: rgba(251, 191, 36, 0.25); }
 .block.music.active { border-color: var(--amber); box-shadow: 0 0 16px rgba(251, 191, 36, 0.25); }
+
+.kf-marker {
+  position: absolute; top: 7px; width: 14px; height: 14px; margin-left: -7px;
+  background: var(--amber); border: 1px solid rgba(0, 0, 0, 0.4); border-radius: 2px;
+  transform: rotate(45deg); cursor: ew-resize; touch-action: none;
+}
+.kf-marker:hover { filter: brightness(1.2); }
+.kf-marker.active { background: #fff; box-shadow: 0 0 0 2px var(--accent), 0 0 12px var(--accent-soft); z-index: 2; }
+.field input[aria-invalid="true"] { border-color: #f87171; }
+.field-error { color: #f87171; font-size: 11px; }
