@@ -33,6 +33,10 @@ pub struct WordSubtitleConfig {
     /// Recognition language: a whisper code (`zh`, `en`, `ja`, ...) or `auto` to let whisper
     /// detect it. `None` guesses it from each scene's text.
     pub language: Option<String>,
+    /// Create subtitle cues from the narration text where no cue covers a narrated scene.
+    /// Off by default, so a timeline renders the same subtitles it always did: word timing
+    /// is only added to cues the timeline already has.
+    pub auto_subtitles: bool,
 }
 
 impl Default for WordSubtitleConfig {
@@ -42,6 +46,7 @@ impl Default for WordSubtitleConfig {
             whisper_cli: None,
             model: None,
             language: None,
+            auto_subtitles: false,
         }
     }
 }
@@ -106,7 +111,11 @@ pub async fn add_word_subtitles(
     if !cfg.word_subtitles.enabled {
         return Ok(0);
     }
-    let clips = narration_clips(timeline, cfg);
+    let clips = clips_to_time(
+        &timeline.subtitles,
+        narration_clips(timeline, cfg),
+        cfg.word_subtitles.auto_subtitles,
+    );
     if clips.is_empty() {
         return Ok(0);
     }
@@ -274,6 +283,26 @@ fn fnv1a(s: &str) -> u64 {
     hash
 }
 
+/// Whether a clip's scene has a subtitle cue without words that overlaps it.
+fn has_cue_to_fill(subtitles: &[SubtitleCue], clip: &NarrationClip) -> bool {
+    subtitles
+        .iter()
+        .any(|c| c.words.is_empty() && c.start_ms < clip.scene_end_ms && c.end_ms > clip.start_ms)
+}
+
+/// The clips worth recognizing: all of them when cues may be generated, else only those with a
+/// cue to fill. Skipping the others saves a whisper call each.
+pub(crate) fn clips_to_time(
+    subtitles: &[SubtitleCue],
+    clips: Vec<NarrationClip>,
+    auto_subtitles: bool,
+) -> Vec<NarrationClip> {
+    clips
+        .into_iter()
+        .filter(|clip| auto_subtitles || has_cue_to_fill(subtitles, clip))
+        .collect()
+}
+
 pub(crate) async fn apply_word_subtitles(
     timeline: &mut VideoTimeline,
     clips: &[NarrationClip],
@@ -384,7 +413,13 @@ pub(crate) async fn apply_word_subtitles(
                 text: w.text,
             })
             .collect();
-        if merge_clip_words(&mut timeline.subtitles, clip, &words, max_cols) {
+        if merge_clip_words(
+            &mut timeline.subtitles,
+            clip,
+            &words,
+            max_cols,
+            ws.auto_subtitles,
+        ) {
             timed += 1;
         } else {
             warnings.push(format!(
@@ -405,6 +440,7 @@ pub(crate) fn merge_clip_words(
     clip: &NarrationClip,
     words: &[AlignedWord],
     max_cols: usize,
+    generate: bool,
 ) -> bool {
     let Some(last) = words.last() else {
         return true;
@@ -418,6 +454,9 @@ pub(crate) fn merge_clip_words(
         .collect();
 
     if overlapping.is_empty() {
+        if !generate {
+            return true;
+        }
         // The next cue after this clip bounds how long generated lines may stay up.
         let limit = subtitles
             .iter()
@@ -650,6 +689,13 @@ mod tests {
         }
     }
 
+    fn auto() -> WordSubtitleConfig {
+        WordSubtitleConfig {
+            auto_subtitles: true,
+            ..WordSubtitleConfig::default()
+        }
+    }
+
     #[test]
     fn sentences_and_long_lines_are_broken() {
         let words = vec![
@@ -721,7 +767,13 @@ mod tests {
             w("world ", 400, 1100),
             w("again", 1200, 1500),
         ];
-        assert!(merge_clip_words(&mut subs, &clip(100, 3000), &words, 42));
+        assert!(merge_clip_words(
+            &mut subs,
+            &clip(100, 3000),
+            &words,
+            42,
+            true
+        ));
         assert_eq!(subs.len(), 3);
         let spans: Vec<(u64, u64)> = subs[0]
             .words
@@ -741,7 +793,13 @@ mod tests {
     fn unrelated_existing_cues_are_reported_and_left_alone() {
         let mut subs = vec![SubtitleCue::new(0, 1000, "完全不同")];
         let words = vec![w("Hello ", 100, 400), w("world", 400, 900)];
-        assert!(!merge_clip_words(&mut subs, &clip(0, 1000), &words, 42));
+        assert!(!merge_clip_words(
+            &mut subs,
+            &clip(0, 1000),
+            &words,
+            42,
+            true
+        ));
         assert!(subs[0].words.is_empty());
     }
 
@@ -749,7 +807,13 @@ mod tests {
     fn generates_cues_when_none_cover_the_clip() {
         let mut subs = vec![SubtitleCue::new(9000, 9500, "later")];
         let words = vec![w("你", 1000, 1200), w("好。", 1200, 1500)];
-        assert!(merge_clip_words(&mut subs, &clip(1000, 3000), &words, 42));
+        assert!(merge_clip_words(
+            &mut subs,
+            &clip(1000, 3000),
+            &words,
+            42,
+            true
+        ));
         assert_eq!(subs.len(), 2);
         assert_eq!(subs[1].text, "你好。");
         assert_eq!((subs[1].start_ms, subs[1].end_ms), (1000, 2100));
@@ -885,7 +949,7 @@ mod tests {
             &clips,
             engine.clone(),
             Arc::new(FixedProbe(1500)),
-            &WordSubtitleConfig::default(),
+            &auto(),
             &RenderContext::silent(),
             &mut warnings,
         )
@@ -985,7 +1049,7 @@ mod tests {
         assert_eq!(t.total_duration_ms(), 9_570);
         let mut subs = vec![];
         let words = vec![w("こん", 4_950, 6_000), w("にちは。", 6_000, 9_500)];
-        assert!(merge_clip_words(&mut subs, &clips[1], &words, 42));
+        assert!(merge_clip_words(&mut subs, &clips[1], &words, 42, true));
         assert_eq!(
             subs[0].end_ms, 9_570,
             "held line is cut at the validated end"
@@ -1053,7 +1117,7 @@ mod tests {
             &clips,
             engine.clone(),
             Arc::new(FixedProbe(1000)),
-            &WordSubtitleConfig::default(),
+            &auto(),
             &RenderContext::silent(),
             &mut warnings,
         )
@@ -1140,7 +1204,7 @@ mod tests {
             &clips,
             engine.clone(),
             Arc::new(FixedProbe(1000)),
-            &WordSubtitleConfig::default(),
+            &auto(),
             &RenderContext::silent(),
             &mut warnings,
         )
@@ -1167,7 +1231,7 @@ mod tests {
             &clips,
             engine.clone(),
             Arc::new(FixedProbe(1000)),
-            &WordSubtitleConfig::default(),
+            &auto(),
             &ctx,
             &mut vec![],
         )
@@ -1180,5 +1244,92 @@ mod tests {
     fn timeout_grows_with_the_audio() {
         assert_eq!(recognition_timeout(0), Duration::from_secs(180));
         assert_eq!(recognition_timeout(28_000), Duration::from_secs(180 + 840));
+    }
+
+    #[test]
+    fn by_default_only_clips_with_cues_are_timed() {
+        let (t, clips) = three_languages();
+        // Only the English scene has a cue.
+        let kept = clips_to_time(&t.subtitles, clips.clone(), false);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(t.scenes[kept[0].scene_index].id, "en");
+        assert_eq!(clips_to_time(&t.subtitles, clips.clone(), true).len(), 3);
+        // A cue that already has words needs nothing.
+        let mut filled = t.subtitles.clone();
+        filled[0].words = vec![WordTiming {
+            text: "Hello.".into(),
+            start_ms: 0,
+            end_ms: 500,
+        }];
+        assert!(clips_to_time(&filled, clips, false).is_empty());
+    }
+
+    #[test]
+    fn by_default_no_cue_is_generated_for_narration_without_cues() {
+        let mut subs = vec![SubtitleCue::new(9000, 9500, "later")];
+        let words = vec![w("你", 1000, 1200), w("好。", 1200, 1500)];
+        assert!(merge_clip_words(
+            &mut subs,
+            &clip(1000, 3000),
+            &words,
+            42,
+            false
+        ));
+        assert_eq!(subs, vec![SubtitleCue::new(9000, 9500, "later")]);
+        assert!(merge_clip_words(
+            &mut subs,
+            &clip(1000, 3000),
+            &words,
+            42,
+            true
+        ));
+        assert_eq!(subs.len(), 2, "generated when switched on");
+    }
+
+    #[tokio::test]
+    async fn default_config_leaves_a_timeline_without_cues_untouched() {
+        let mut t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![narrated("zh", 2000, "你好。")],
+            subtitles: vec![],
+            music: None,
+        };
+        let before = t.clone();
+        let mut cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        // Point at a missing engine: with nothing to time, it must not even be looked up.
+        cfg.word_subtitles.whisper_cli = Some(PathBuf::from("/nonexistent/whisper-cli"));
+        let mut warnings = vec![];
+        let n = add_word_subtitles(
+            &mut t,
+            &cfg,
+            Arc::new(FixedProbe(1000)),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(t, before);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // Switched on, the same timeline would need the engine (and warns that it is missing).
+        cfg.word_subtitles.auto_subtitles = true;
+        add_word_subtitles(
+            &mut t,
+            &cfg,
+            Arc::new(FixedProbe(1000)),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 }

@@ -172,9 +172,16 @@ curl -L -o ~/.local/share/vimmer/models/ggml-large-v3-turbo-q5_0.bin \
 cd rust-core && cargo run -p vimmer-cli -- ../fixtures/word-subtitles-demo.json -o /tmp/words.mp4 --remotion-dir ../remotion-renderer
 ```
 
-- **On by default** (`--word-subtitles on|off`). It only touches scenes whose narration is
-  synthesized. When `whisper-cli` or the model is missing, the render prints one warning and
-  the subtitles stay exactly as they were.
+- **Two switches.**
+  - `--word-subtitles on|off` (default **on**): add word timing to subtitle cues that cover a
+    synthesized narration. Scenes without narration, and cues that already have `words`, are
+    left alone.
+  - `--auto-subtitles on|off` (default **off**): also create cues from the narration text for
+    narrated scenes that no cue covers. Off by default so an existing timeline renders the same
+    subtitles it always did; when nothing needs timing, whisper is not even looked up.
+- When `whisper-cli` or the model is missing, the render prints one warning and the subtitles
+  stay exactly as they were. Recognition stops when the render is cancelled, and gives up after
+  180 s plus 30× the audio length (then plain subtitles are kept and later clips are skipped).
 - **Engine**: `whisper-cli` from PATH, or `--whisper-cli` / `$VIMMER_WHISPER_CLI`. Model:
   `--whisper-model` / `$VIMMER_WHISPER_MODEL`, default
   `~/.local/share/vimmer/models/ggml-large-v3-turbo-q5_0.bin`. Language: `--whisper-language`
@@ -194,9 +201,9 @@ cd rust-core && cargo run -p vimmer-cli -- ../fixtures/word-subtitles-demo.json 
   same way and the two sequences are aligned by edit distance, where pairing two different
   words costs their character distance. Misheard words keep their slot, missed words are
   interpolated between neighbours by length, extra words are ignored.
-- **Cues**: subtitle cues overlapping a narrated clip get `words` for their own text. When no
-  cue covers the clip, cues are generated from the script: a sentence end closes a line, and a
-  long line breaks at a comma or before the word that overflows.
+- **Cues**: subtitle cues overlapping a narrated clip get `words` for their own text. With
+  `--auto-subtitles on`, a clip no cue covers gets cues generated from the script: a sentence
+  end closes a line, and a long line breaks at a comma or before the word that overflows.
 
 Each cue can carry absolute word times, which must lie inside the cue, in order and without
 overlap (zero-length words are allowed). Empty `words` is omitted from the JSON, and cues

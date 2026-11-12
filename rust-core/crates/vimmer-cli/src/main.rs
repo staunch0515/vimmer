@@ -37,6 +37,11 @@ struct Cli {
     /// is missing.
     #[arg(long, value_enum, default_value_t = Toggle::On)]
     word_subtitles: Toggle,
+    /// Create subtitle cues from the narration text for narrated scenes that no cue covers.
+    /// Off by default: only cues already in the timeline get word timing, so a timeline keeps
+    /// the subtitles it always had.
+    #[arg(long, value_enum, default_value_t = Toggle::Off)]
+    auto_subtitles: Toggle,
     /// whisper-cli binary (default: $VIMMER_WHISPER_CLI, then `whisper-cli` on PATH).
     #[arg(long)]
     whisper_cli: Option<PathBuf>,
@@ -81,6 +86,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     cfg.preprocess_concurrency = cli.preprocess_jobs;
     cfg.render_concurrency = cli.render_jobs;
     cfg.word_subtitles.enabled = cli.word_subtitles == Toggle::On;
+    cfg.word_subtitles.auto_subtitles = cli.auto_subtitles == Toggle::On;
     cfg.word_subtitles.whisper_cli = cli.whisper_cli;
     cfg.word_subtitles.model = cli.whisper_model;
     cfg.word_subtitles.language = cli.whisper_language;

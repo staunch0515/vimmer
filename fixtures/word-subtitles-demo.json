@@ -30,7 +30,7 @@
     },
     {
       "id": "zh",
-      "duration_ms": 3000,
+      "duration_ms": 4920,
       "text": "在西安的钟楼下，每一个字都会在念到时亮起来。",
       "highlights": [],
       "image": "assets/design.png",
@@ -46,7 +46,7 @@
     },
     {
       "id": "ja",
-      "duration_ms": 3000,
+      "duration_ms": 4650,
       "text": "日本語のナレーションも、話している言葉に合わせて光ります。",
       "highlights": [],
       "image": "assets/sample.jpeg",
@@ -62,6 +62,26 @@
       "start_ms": 0,
       "end_ms": 6000,
       "text": "Every word lights up as it is spoken."
+    },
+    {
+      "start_ms": 6500,
+      "end_ms": 8433,
+      "text": "在西安的钟楼下，"
+    },
+    {
+      "start_ms": 8433,
+      "end_ms": 11420,
+      "text": "每一个字都会在念到时亮起来。"
+    },
+    {
+      "start_ms": 11433,
+      "end_ms": 13200,
+      "text": "日本語のナレーションも、"
+    },
+    {
+      "start_ms": 13200,
+      "end_ms": 16070,
+      "text": "話している言葉に合わせて光ります。"
     }
   ]
 }
