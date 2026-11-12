@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use thiserror::Error;
 
-use crate::model::{VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS};
+use crate::model::{Scene, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS};
 
 const ALLOWED_RESOLUTIONS: [(u32, u32); 2] = [(1920, 1080), (1080, 1920)];
 
@@ -46,6 +46,106 @@ pub enum ValidationError {
     BadMusicVolume(f32),
     #[error("music fades ({fade_in_ms} ms in, {fade_out_ms} ms out) are longer than the timeline")]
     MusicFadesTooLong { fade_in_ms: u64, fade_out_ms: u64 },
+    #[error("scene `{0}` is the first scene, so it cannot have a transition_in")]
+    TransitionOnFirstScene(String),
+    #[error("scene `{0}` has a zero-length transition")]
+    ZeroTransition(String),
+    #[error("scene `{scene}` transition is {transition_ms} ms, longer than the scene ({scene_ms} ms)")]
+    TransitionTooLong {
+        scene: String,
+        transition_ms: u64,
+        scene_ms: u64,
+    },
+    #[error("scene `{scene}` keyframe {index} is at {at_ms} ms, after the scene ends at {scene_ms} ms")]
+    KeyframeOutOfScene {
+        scene: String,
+        index: usize,
+        at_ms: u64,
+        scene_ms: u64,
+    },
+    #[error("scene `{scene}` keyframes must be sorted by at_ms (keyframe {index} is earlier than the one before it)")]
+    KeyframesNotSorted { scene: String, index: usize },
+    #[error("scene `{scene}` has two keyframes at {at_ms} ms")]
+    DuplicateKeyframe { scene: String, at_ms: u64 },
+    #[error("scene `{scene}` keyframe {index} has scale {value}; scale must be a finite number above 0")]
+    BadKeyframeScale {
+        scene: String,
+        index: usize,
+        value: f32,
+    },
+    #[error("scene `{scene}` keyframe {index} has opacity {value}; opacity must be between 0 and 1")]
+    BadKeyframeOpacity {
+        scene: String,
+        index: usize,
+        value: f32,
+    },
+    #[error("scene `{scene}` keyframe {index} has a non-finite x, y or rotation")]
+    NonFiniteKeyframe { scene: String, index: usize },
+}
+
+fn validate_transition(scene: &Scene, index: usize, errors: &mut Vec<ValidationError>) {
+    let Some(transition) = &scene.transition_in else {
+        return;
+    };
+    if index == 0 {
+        errors.push(ValidationError::TransitionOnFirstScene(scene.id.clone()));
+    }
+    if transition.duration_ms == 0 {
+        errors.push(ValidationError::ZeroTransition(scene.id.clone()));
+    } else if transition.duration_ms > scene.duration_ms {
+        errors.push(ValidationError::TransitionTooLong {
+            scene: scene.id.clone(),
+            transition_ms: transition.duration_ms,
+            scene_ms: scene.duration_ms,
+        });
+    }
+}
+
+fn validate_keyframes(scene: &Scene, errors: &mut Vec<ValidationError>) {
+    for (index, kf) in scene.keyframes.iter().enumerate() {
+        if kf.at_ms > scene.duration_ms {
+            errors.push(ValidationError::KeyframeOutOfScene {
+                scene: scene.id.clone(),
+                index,
+                at_ms: kf.at_ms,
+                scene_ms: scene.duration_ms,
+            });
+        }
+        if !(kf.scale.is_finite() && kf.scale > 0.0) {
+            errors.push(ValidationError::BadKeyframeScale {
+                scene: scene.id.clone(),
+                index,
+                value: kf.scale,
+            });
+        }
+        if !(0.0..=1.0).contains(&kf.opacity) {
+            errors.push(ValidationError::BadKeyframeOpacity {
+                scene: scene.id.clone(),
+                index,
+                value: kf.opacity,
+            });
+        }
+        if !(kf.x.is_finite() && kf.y.is_finite() && kf.rotation.is_finite()) {
+            errors.push(ValidationError::NonFiniteKeyframe {
+                scene: scene.id.clone(),
+                index,
+            });
+        }
+        if index > 0 {
+            let prev = &scene.keyframes[index - 1];
+            if kf.at_ms < prev.at_ms {
+                errors.push(ValidationError::KeyframesNotSorted {
+                    scene: scene.id.clone(),
+                    index,
+                });
+            } else if kf.at_ms == prev.at_ms {
+                errors.push(ValidationError::DuplicateKeyframe {
+                    scene: scene.id.clone(),
+                    at_ms: kf.at_ms,
+                });
+            }
+        }
+    }
 }
 
 /// Checks a timeline against the DSL rules. Returns every violation found,
@@ -65,7 +165,7 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
     }
 
     let mut seen = HashSet::new();
-    for scene in &timeline.scenes {
+    for (i, scene) in timeline.scenes.iter().enumerate() {
         if !seen.insert(scene.id.as_str()) {
             errors.push(ValidationError::DuplicateSceneId(scene.id.clone()));
         }
@@ -82,6 +182,8 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
                 errors.push(ValidationError::EmptyAudioSource(scene.id.clone()));
             }
         }
+        validate_transition(scene, i, &mut errors);
+        validate_keyframes(scene, &mut errors);
     }
 
     let total_ms = timeline.total_duration_ms();
@@ -149,6 +251,8 @@ mod tests {
             motion: MotionType::Static,
             audio: None,
             narration: None,
+            transition_in: None,
+            keyframes: vec![],
         }
     }
 
@@ -270,5 +374,149 @@ mod tests {
     fn rejects_empty_timeline() {
         let errs = validate(&timeline(vec![])).unwrap_err();
         assert_eq!(errs, vec![ValidationError::NoScenes]);
+    }
+
+    fn kf(at_ms: u64) -> crate::model::Keyframe {
+        crate::model::Keyframe {
+            at_ms,
+            scale: 1.0,
+            x: 0.0,
+            y: 0.0,
+            opacity: 1.0,
+            rotation: 0.0,
+            ease: crate::model::Easing::EaseInOut,
+        }
+    }
+
+    fn fade(ms: u64) -> Option<crate::model::Transition> {
+        Some(crate::model::Transition {
+            kind: crate::model::TransitionKind::Fade,
+            duration_ms: ms,
+        })
+    }
+
+    #[test]
+    fn transition_on_first_scene_is_rejected() {
+        let mut first = scene("a", 5_000);
+        first.transition_in = fade(500);
+        let errs = validate(&timeline(vec![first])).unwrap_err();
+        assert_eq!(
+            errs,
+            vec![ValidationError::TransitionOnFirstScene("a".into())]
+        );
+    }
+
+    #[test]
+    fn transition_on_later_scene_is_allowed() {
+        let mut second = scene("b", 5_000);
+        second.transition_in = fade(500);
+        assert!(validate(&timeline(vec![scene("a", 5_000), second])).is_ok());
+    }
+
+    #[test]
+    fn transition_longer_than_its_scene_is_rejected() {
+        let mut second = scene("b", 1_000);
+        second.transition_in = fade(1_500);
+        let errs = validate(&timeline(vec![scene("a", 5_000), second])).unwrap_err();
+        assert_eq!(
+            errs,
+            vec![ValidationError::TransitionTooLong {
+                scene: "b".into(),
+                transition_ms: 1_500,
+                scene_ms: 1_000,
+            }]
+        );
+    }
+
+    #[test]
+    fn transition_equal_to_scene_length_is_allowed() {
+        let mut second = scene("b", 1_000);
+        second.transition_in = fade(1_000);
+        assert!(validate(&timeline(vec![scene("a", 5_000), second])).is_ok());
+    }
+
+    #[test]
+    fn zero_length_transition_is_rejected() {
+        let mut second = scene("b", 1_000);
+        second.transition_in = fade(0);
+        let errs = validate(&timeline(vec![scene("a", 5_000), second])).unwrap_err();
+        assert_eq!(errs, vec![ValidationError::ZeroTransition("b".into())]);
+    }
+
+    #[test]
+    fn keyframes_must_be_sorted_without_duplicates() {
+        let mut a = scene("a", 4_000);
+        a.keyframes = vec![kf(0), kf(3_000), kf(1_000)];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert_eq!(
+            errs,
+            vec![ValidationError::KeyframesNotSorted {
+                scene: "a".into(),
+                index: 2,
+            }]
+        );
+
+        let mut b = scene("b", 4_000);
+        b.keyframes = vec![kf(1_000), kf(1_000)];
+        let errs = validate(&timeline(vec![b])).unwrap_err();
+        assert_eq!(
+            errs,
+            vec![ValidationError::DuplicateKeyframe {
+                scene: "b".into(),
+                at_ms: 1_000,
+            }]
+        );
+    }
+
+    #[test]
+    fn keyframe_past_scene_end_is_rejected_and_end_is_allowed() {
+        let mut a = scene("a", 4_000);
+        a.keyframes = vec![kf(0), kf(4_000), kf(4_001)];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert_eq!(
+            errs,
+            vec![ValidationError::KeyframeOutOfScene {
+                scene: "a".into(),
+                index: 2,
+                at_ms: 4_001,
+                scene_ms: 4_000,
+            }]
+        );
+    }
+
+    #[test]
+    fn keyframe_values_are_range_checked() {
+        let mut a = scene("a", 4_000);
+        let mut bad = kf(0);
+        bad.scale = 0.0;
+        let mut bad2 = kf(1_000);
+        bad2.opacity = 1.5;
+        let mut bad3 = kf(2_000);
+        bad3.x = f32::NAN;
+        a.keyframes = vec![bad, bad2, bad3];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(errs.contains(&ValidationError::BadKeyframeScale {
+            scene: "a".into(),
+            index: 0,
+            value: 0.0,
+        }));
+        assert!(errs.contains(&ValidationError::BadKeyframeOpacity {
+            scene: "a".into(),
+            index: 1,
+            value: 1.5,
+        }));
+        assert!(errs.contains(&ValidationError::NonFiniteKeyframe {
+            scene: "a".into(),
+            index: 2,
+        }));
+    }
+
+    #[test]
+    fn valid_keyframes_and_transition_pass() {
+        let mut a = scene("a", 4_000);
+        a.keyframes = vec![kf(0), kf(2_000), kf(4_000)];
+        let mut b = scene("b", 4_000);
+        b.transition_in = fade(1_000);
+        assert!(validate(&timeline(vec![a, b])).is_ok());
     }
 }

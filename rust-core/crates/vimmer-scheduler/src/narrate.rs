@@ -145,6 +145,8 @@ mod tests {
             motion: MotionType::Static,
             audio: None,
             narration: narration.then(Narration::default),
+            transition_in: None,
+            keyframes: vec![],
         }
     }
 

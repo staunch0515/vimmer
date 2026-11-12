@@ -6,7 +6,8 @@ Self-hosted, modular pipeline that turns a JSON scene description into a short
 ```
 repo_vimmer/
 ├── fixtures/                 # Shared JSON contract fixtures (Rust tests + Remotion props)
-│   └── sample-timeline.json  # 15-second single-scene baseline
+│   ├── sample-timeline.json  # 15-second single-scene baseline
+│   └── motion-demo.json      # 3 scenes: a slide transition and keyframes
 ├── rust-core/                # Cargo workspace: orchestration + DSL
 │   └── crates/vimmer-dsl/    # serde model, validation, frame math
 └── remotion-renderer/        # Node/TS Remotion project: frame-based composition
@@ -26,11 +27,49 @@ Rust `VideoTimeline` / `Scene` structs and the TypeScript types in
   `zoom_out`, `pan_left`, `pan_right`.
 - Asset paths are relative to `remotion-renderer/public/`.
 
+### Transitions (`transition_in`)
+
+Optional per scene: `{ "kind": ..., "duration_ms": ... }`, where `kind` is `fade`,
+`slide_left`, `slide_right`, `slide_up`, `slide_down`, `zoom_in` or `wipe_left`.
+
+Overlap rule: the transition overlaps the **start of the incoming scene**. The scene
+still starts at its nominal time, and the previous scene keeps its nominal end, so the
+total duration and every scene's start are unchanged. For the first `duration_ms` of
+the incoming scene, the previous scene's last frame is held underneath and the incoming
+scene plays over it (fades in, slides in, zooms in, or is revealed by a wipe). The
+transition does not change any timing.
+
+- A transition on the first scene, a zero-length transition, and one longer than its
+  scene are all rejected.
+- The chunk planner never splits a scene that has a transition from the one before it,
+  so the held frame is always rendered in the same chunk.
+
+### Keyframes (`keyframes`)
+
+Optional per scene: a list of `{ at_ms, scale?, x?, y?, opacity?, rotation?, ease? }`
+that animates the image layer. Defaults: `scale` 1, `x` and `y` 0 (percent of the frame),
+`opacity` 1, `rotation` 0 (degrees, clockwise), `ease` `ease_in_out`.
+
+- Keyframes must be sorted by `at_ms`, with no duplicates, and each `at_ms` must be within
+  the scene (`0..=duration_ms`). `scale` must be above 0, and `opacity` must be between 0 and 1.
+- A non-empty list replaces `motion`.
+- Before the first keyframe, its values hold; after the last, its values hold.
+- Between two keyframes, values interpolate with the earlier keyframe's `ease`:
+  `linear`, `ease_in` (t²), `ease_out` (1−(1−t)²) or `ease_in_out` (quadratic).
+- `opacity` applies to the whole image layer, so fading it to 0 shows the background.
+
+`fixtures/motion-demo.json` shows both: three scenes, one slide transition, and
+keyframes. Its scene 2 is a transition, and scenes 1 and 2 share a chunk with
+`--chunk-ms 3000`.
+
 ## Commands
 
 ```bash
-# Rust: DSL tests (5 unit + 3 fixture tests)
+# Rust: DSL tests
 cd rust-core && cargo test
+
+# Remotion: motion unit tests (keyframe sampling, transition poses; Node >= 22.6)
+cd remotion-renderer && npm run test:motion
 
 # Remotion: typecheck, studio, and render the 15 s test scene
 cd remotion-renderer

@@ -18,7 +18,10 @@ pub struct Chunk {
 
 /// Greedily groups whole scenes into chunks of at most `max_chunk_ms`.
 /// A scene longer than the limit becomes its own chunk. Scenes are never split,
-/// so every scene's frames stay local to one render.
+/// so every scene's frames stay local to one render. A scene with a `transition_in`
+/// always joins the chunk of the scene before it, because the transition needs that
+/// scene's last frame. A chunk can therefore exceed `max_chunk_ms` for a long run of
+/// transitions.
 pub fn plan_chunks(timeline: &VideoTimeline, max_chunk_ms: u64) -> Vec<Chunk> {
     let max_chunk_ms = max_chunk_ms.max(1);
     let starts = timeline.scene_start_frames();
@@ -27,7 +30,8 @@ pub fn plan_chunks(timeline: &VideoTimeline, max_chunk_ms: u64) -> Vec<Chunk> {
     let mut acc_ms = 0u64;
 
     for (i, scene) in timeline.scenes.iter().enumerate() {
-        if i > first && acc_ms + scene.duration_ms > max_chunk_ms {
+        let joins_previous = scene.transition_in.is_some();
+        if i > first && !joins_previous && acc_ms + scene.duration_ms > max_chunk_ms {
             push_chunk(&mut chunks, timeline, &starts, first..i);
             first = i;
             acc_ms = 0;
@@ -108,6 +112,8 @@ mod tests {
             motion: MotionType::Static,
             audio: None,
             narration: None,
+            transition_in: None,
+            keyframes: vec![],
         }
     }
 
@@ -213,6 +219,67 @@ mod tests {
             }
         );
         assert_eq!(b.total_duration_ms(), 10_000);
+    }
+
+    #[test]
+    fn transition_keeps_scenes_in_one_chunk() {
+        use vimmer_dsl::{Transition, TransitionKind};
+        let mut t = timeline(&[10_000, 10_000, 10_000]);
+        t.scenes[1].transition_in = Some(Transition {
+            kind: TransitionKind::Fade,
+            duration_ms: 1_000,
+        });
+        // Without the transition these would split at every scene (10 s limit).
+        let chunks = plan_chunks(&t, 10_000);
+        assert_eq!(
+            chunks.iter().map(|c| c.scenes.clone()).collect::<Vec<_>>(),
+            vec![0..2, 2..3]
+        );
+        assert_eq!(chunks[0].frame_count, 600);
+        assert_eq!(chunks[1].start_frame, 600);
+    }
+
+    #[test]
+    fn chain_of_transitions_stays_in_one_chunk() {
+        use vimmer_dsl::{Transition, TransitionKind};
+        let mut t = timeline(&[5_000, 5_000, 5_000, 5_000]);
+        for scene in &mut t.scenes[1..] {
+            scene.transition_in = Some(Transition {
+                kind: TransitionKind::SlideLeft,
+                duration_ms: 500,
+            });
+        }
+        let chunks = plan_chunks(&t, 5_000);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].scenes, 0..4);
+        assert_eq!(chunks[0].frame_count, t.total_frames());
+    }
+
+    #[test]
+    fn no_chunk_boundary_falls_inside_a_transition() {
+        use vimmer_dsl::{Transition, TransitionKind};
+        // Scene 2 and 4 carry transitions; the planner must never start a chunk on them.
+        let mut t = timeline(&[7_000, 7_000, 7_000, 7_000, 7_000]);
+        t.scenes[2].transition_in = Some(Transition {
+            kind: TransitionKind::ZoomIn,
+            duration_ms: 800,
+        });
+        t.scenes[4].transition_in = Some(Transition {
+            kind: TransitionKind::Fade,
+            duration_ms: 800,
+        });
+        for limit in [1, 7_000, 10_000, 14_000, 21_000, 30_000] {
+            let chunks = plan_chunks(&t, limit);
+            for c in &chunks {
+                assert!(
+                    t.scenes[c.scenes.start].transition_in.is_none() || c.scenes.start == 0,
+                    "limit {limit}: chunk starts on a transition scene {:?}",
+                    c.scenes
+                );
+            }
+            let total: u32 = chunks.iter().map(|c| c.frame_count).sum();
+            assert_eq!(total, t.total_frames());
+        }
     }
 
     #[test]

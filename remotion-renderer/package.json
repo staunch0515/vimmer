@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "editor": "vite --config editor/vite.config.ts",
     "editor:build": "vite build --config editor/vite.config.ts",
-    "typecheck:editor": "tsc --noEmit -p editor/tsconfig.json"
+    "typecheck:editor": "tsc --noEmit -p editor/tsconfig.json",
+    "test:motion": "node --experimental-strip-types --test test/motion.test.ts"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.543",

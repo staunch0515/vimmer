@@ -1,11 +1,12 @@
-import { useContext } from "react";
-import { AbsoluteFill, Audio, Sequence, interpolate } from "remotion";
+import { Fragment, useContext } from "react";
+import { AbsoluteFill, Audio, Freeze, Sequence, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { AnimatedText } from "../components/AnimatedText";
 import { Subtitles } from "../components/Subtitles";
 import { KenBurnsImage } from "../components/KenBurnsImage";
 import { AssetUrlContext, resolveAsset } from "../assets";
-import { layoutScenes, msToFrames, totalFrames } from "../layout";
-import type { Music, VideoTimeline } from "../types/timeline";
+import { layoutScenes, msToFrames, totalFrames, type SceneLayout } from "../layout";
+import { transitionPose } from "../motion/transitions";
+import type { Music, Scene, Transition, VideoTimeline } from "../types/timeline";
 
 // Gain at a frame: the music volume, faded in and out at the timeline's ends.
 const musicVolume = (music: Music, timeline: VideoTimeline) => {
@@ -20,30 +21,75 @@ const musicVolume = (music: Music, timeline: VideoTimeline) => {
   };
 };
 
+// The visual content of one scene: image layer and text. No audio, which stays with the scene.
+const SceneBody: React.FC<{ scene: Scene; durationInFrames: number }> = ({ scene, durationInFrames }) => (
+  <AbsoluteFill>
+    {scene.image ? (
+      <KenBurnsImage
+        src={scene.image}
+        motion={scene.motion}
+        keyframes={scene.keyframes}
+        durationInFrames={durationInFrames}
+      />
+    ) : null}
+    {scene.text ? <AnimatedText text={scene.text} highlights={scene.highlights} /> : null}
+  </AbsoluteFill>
+);
+
+// Plays the incoming scene over the held last frame of the previous one (see motion/transitions.ts).
+// Rendered inside the incoming scene's own Sequence, so its frame counts from the scene start.
+const TransitionIn: React.FC<{ transition: Transition; children: React.ReactNode }> = ({ transition, children }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const frames = Math.max(1, msToFrames(transition.duration_ms, fps));
+  const progress = interpolate(frame, [0, frames], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const pose = transitionPose(transition.kind, progress);
+  return (
+    <AbsoluteFill style={{ opacity: pose.opacity, transform: pose.transform, clipPath: pose.clipPath }}>
+      {children}
+    </AbsoluteFill>
+  );
+};
+
 // Renders every scene of the Rust-generated timeline at its frame offset.
 export const Timeline: React.FC<VideoTimeline> = (timeline) => {
   const assetUrl = useContext(AssetUrlContext);
+  const layouts = layoutScenes(timeline);
   return (
     <AbsoluteFill style={{ backgroundColor: "#09090b" }}>
-      {layoutScenes(timeline).map(({ scene, from, durationInFrames }) => (
-        <Sequence key={scene.id} from={from} durationInFrames={durationInFrames} name={scene.id}>
-          <AbsoluteFill>
-            {scene.image ? (
-              <KenBurnsImage
-                src={scene.image}
-                motion={scene.motion}
-                durationInFrames={durationInFrames}
-              />
+      {layouts.map((layout: SceneLayout, index) => {
+        const { scene, from, durationInFrames } = layout;
+        const transition = index > 0 ? scene.transition_in : null;
+        // The transition overlaps the start of this scene. The previous scene's last frame is
+        // held underneath it. The hold sits before this scene's Sequence, so this scene paints on top.
+        const hold = transition ? layouts[index - 1] : null;
+        const transitionFrames = transition ? Math.max(1, msToFrames(transition.duration_ms, timeline.fps)) : 0;
+        return (
+          <Fragment key={scene.id}>
+            {hold && transition ? (
+              <Sequence from={from} durationInFrames={transitionFrames} name={`${hold.scene.id} hold`}>
+                <Freeze frame={hold.durationInFrames - 1}>
+                  <SceneBody scene={hold.scene} durationInFrames={hold.durationInFrames} />
+                </Freeze>
+              </Sequence>
             ) : null}
-            {scene.text ? <AnimatedText text={scene.text} highlights={scene.highlights} /> : null}
-          </AbsoluteFill>
-          {scene.audio ? (
-            <Sequence from={msToFrames(scene.audio.offset_ms, timeline.fps)}>
-              <Audio src={resolveAsset(scene.audio.source, assetUrl)} />
+            <Sequence from={from} durationInFrames={durationInFrames} name={scene.id}>
+              {transition ? (
+                <TransitionIn transition={transition}>
+                  <SceneBody scene={scene} durationInFrames={durationInFrames} />
+                </TransitionIn>
+              ) : (
+                <SceneBody scene={scene} durationInFrames={durationInFrames} />
+              )}
+              {scene.audio ? (
+                <Sequence from={msToFrames(scene.audio.offset_ms, timeline.fps)}>
+                  <Audio src={resolveAsset(scene.audio.source, assetUrl)} />
+                </Sequence>
+              ) : null}
             </Sequence>
-          ) : null}
-        </Sequence>
-      ))}
+          </Fragment>
+        );
+      })}
       <Subtitles cues={timeline.subtitles} />
       {timeline.music?.source ? (
         // Looped and faded in the preview. The render mixes music in after joining, so chunks omit it.
