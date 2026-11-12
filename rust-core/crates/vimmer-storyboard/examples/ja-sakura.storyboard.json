@@ -1,0 +1,35 @@
+{
+  "title": "桜の季節",
+  "orientation": "landscape",
+  "language": "ja",
+  "scenes": [
+    {
+      "text": "春になると、日本中が桜色に染まります。",
+      "emphasis": ["桜色"],
+      "camera": "pull_out",
+      "image": "assets/sample.jpeg",
+      "image_prompt": "満開の桜並木と青空"
+    },
+    {
+      "text": "人々は木の下に集まり、お花見を楽しみます。",
+      "emphasis": ["お花見"],
+      "camera": "pan_left",
+      "transition": "fade",
+      "image": "assets/sample.png"
+    },
+    {
+      "text": "でも、桜の命はとても短いのです。",
+      "emphasis": ["短い"],
+      "camera": "ken_burns",
+      "transition": "slide_right",
+      "image": "assets/design.png"
+    },
+    {
+      "text": "だからこそ、この季節は特別なのです。",
+      "emphasis": ["特別"],
+      "camera": "push_in",
+      "transition": "fade",
+      "transition_ms": 800
+    }
+  ]
+}
