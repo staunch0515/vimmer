@@ -152,7 +152,9 @@ fn char_distance(a: &[char], b: &[char]) -> usize {
         let mut diag = row[0];
         row[0] = i + 1;
         for (j, cb) in b.iter().enumerate() {
-            let next = (diag + usize::from(ca != cb)).min(row[j] + 1).min(row[j + 1] + 1);
+            let next = (diag + usize::from(ca != cb))
+                .min(row[j] + 1)
+                .min(row[j + 1] + 1);
             diag = row[j + 1];
             row[j + 1] = next;
         }
@@ -210,7 +212,10 @@ fn align_sequences(reference: &[Vec<char>], hypothesis: &[Vec<char>]) -> Vec<Opt
 /// is a word of its own, matching [`split_units`]; tokens without a leading space continue the
 /// word before them. A token's span is shared evenly by its characters. Token times are first
 /// made monotonic and clamped to the audio.
-fn timed_hypothesis(tokens: &[RecognizedToken], audio_ms: u64) -> (Vec<Vec<char>>, Vec<(u64, u64)>) {
+fn timed_hypothesis(
+    tokens: &[RecognizedToken],
+    audio_ms: u64,
+) -> (Vec<Vec<char>>, Vec<(u64, u64)>) {
     let mut words: Vec<Vec<char>> = Vec::new();
     let mut spans: Vec<(u64, u64)> = Vec::new();
     let mut open = false; // whether the last word can still grow
@@ -336,7 +341,10 @@ mod tests {
     }
 
     fn assert_well_formed(text: &str, words: &[AlignedWord], audio_ms: u64) {
-        assert_eq!(words.iter().map(|w| w.text.as_str()).collect::<String>(), text);
+        assert_eq!(
+            words.iter().map(|w| w.text.as_str()).collect::<String>(),
+            text
+        );
         let mut floor = 0;
         for w in words {
             assert!(w.start_ms >= floor, "{words:?}");
@@ -399,7 +407,13 @@ mod tests {
         assert_well_formed(text, &words, 2000);
         assert_eq!(
             spans(&words),
-            vec![(100, 400), (400, 600), (600, 1000), (1000, 1200), (1200, 1700)]
+            vec![
+                (100, 400),
+                (400, 600),
+                (600, 1000),
+                (1000, 1200),
+                (1200, 1700)
+            ]
         );
     }
 
@@ -407,7 +421,11 @@ mod tests {
     fn subword_tokens_merge_into_one_word() {
         let words = align_words(
             "Remotion renders",
-            &[tok(" Rem", 0, 200), tok("otion", 200, 500), tok(" renders", 600, 900)],
+            &[
+                tok(" Rem", 0, 200),
+                tok("otion", 200, 500),
+                tok(" renders", 600, 900),
+            ],
             1000,
         );
         assert_eq!(spans(&words), vec![(0, 500), (600, 900)]);
@@ -418,7 +436,11 @@ mod tests {
         // "Vimmer" heard as "Wimmer": a substitution keeps the timing.
         let words = align_words(
             "Vimmer makes videos",
-            &[tok(" Wimmer", 0, 500), tok(" makes", 500, 800), tok(" videos", 800, 1300)],
+            &[
+                tok(" Wimmer", 0, 500),
+                tok(" makes", 500, 800),
+                tok(" videos", 800, 1300),
+            ],
             1500,
         );
         assert_eq!(texts(&words), vec!["Vimmer ", "makes ", "videos"]);
@@ -429,11 +451,7 @@ mod tests {
     fn dropped_words_are_interpolated_between_neighbours() {
         // "quick brown" was not recognized at all.
         let text = "the quick brown fox";
-        let words = align_words(
-            text,
-            &[tok(" the", 0, 200), tok(" fox", 1200, 1500)],
-            1600,
-        );
+        let words = align_words(text, &[tok(" the", 0, 200), tok(" fox", 1200, 1500)], 1600);
         assert_well_formed(text, &words, 1600);
         assert_eq!(words[0].end_ms, 200);
         // 5 + 5 letters share 200..1200 evenly.

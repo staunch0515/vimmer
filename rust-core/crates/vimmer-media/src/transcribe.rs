@@ -43,6 +43,52 @@ pub trait Transcriber: Send + Sync {
         wav: &Path,
         request: &TranscribeRequest,
     ) -> Result<Vec<RecognizedToken>, MediaError>;
+
+    /// Joins clips into one 16 kHz mono WAV, each followed by `gap_ms` of silence, so several
+    /// clips can be recognized in one call. Callers compute clip offsets from their durations.
+    fn join_clips(&self, inputs: &[PathBuf], gap_ms: u64, out: &Path) -> Result<(), MediaError> {
+        join_clips_with_ffmpeg(Path::new("ffmpeg"), inputs, gap_ms, out)
+    }
+}
+
+/// [`Transcriber::join_clips`] with a given ffmpeg binary.
+pub fn join_clips_with_ffmpeg(
+    ffmpeg: &Path,
+    inputs: &[PathBuf],
+    gap_ms: u64,
+    out: &Path,
+) -> Result<(), MediaError> {
+    let mut cmd = Command::new(ffmpeg);
+    cmd.args(["-y", "-hide_banner", "-loglevel", "error"]);
+    for input in inputs {
+        cmd.arg("-i").arg(input);
+    }
+    let mut graph = String::new();
+    for i in 0..inputs.len() {
+        graph.push_str(&format!(
+            "[{i}:a]aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono,apad=pad_dur={:.3}[a{i}];",
+            gap_ms as f64 / 1000.0
+        ));
+    }
+    for i in 0..inputs.len() {
+        graph.push_str(&format!("[a{i}]"));
+    }
+    graph.push_str(&format!("concat=n={}:v=0:a=1[out]", inputs.len()));
+    let tmp = out.with_extension("partial.wav");
+    let output = cmd
+        .arg("-filter_complex")
+        .arg(graph)
+        .args(["-map", "[out]", "-c:a", "pcm_s16le"])
+        .arg(&tmp)
+        .output()?;
+    if !output.status.success() {
+        return Err(MediaError::Transcribe(format!(
+            "ffmpeg could not join clips: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    fs::rename(&tmp, out)?;
+    Ok(())
 }
 
 /// Language of a script, judged by its characters: any kana means Japanese, other CJK
@@ -51,7 +97,9 @@ pub fn guess_language(text: &str) -> Option<&'static str> {
     let has = |f: fn(char) -> bool| text.chars().any(f);
     if has(|c| ('\u{3040}'..='\u{30FF}').contains(&c) || ('\u{FF66}'..='\u{FF9F}').contains(&c)) {
         Some("ja")
-    } else if has(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3400}'..='\u{4DBF}').contains(&c)) {
+    } else if has(|c| {
+        ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3400}'..='\u{4DBF}').contains(&c)
+    }) {
         Some("zh")
     } else if has(|c| ('\u{AC00}'..='\u{D7AF}').contains(&c)) {
         Some("ko")
@@ -148,7 +196,11 @@ impl WhisperCli {
     ) -> Result<Self, MediaError> {
         let binary_name = binary
             .map(|p| p.to_string_lossy().into_owned())
-            .or_else(|| std::env::var(ENV_WHISPER_CLI).ok().filter(|s| !s.is_empty()))
+            .or_else(|| {
+                std::env::var(ENV_WHISPER_CLI)
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            })
             .unwrap_or_else(|| "whisper-cli".to_string());
         let binary = find_executable(&binary_name, path_var).ok_or_else(|| {
             MediaError::Transcribe(format!(
@@ -162,7 +214,9 @@ impl WhisperCli {
                     .filter(|s| !s.is_empty())
                     .map(PathBuf::from)
             })
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(DEFAULT_MODEL_IN_HOME)))
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(DEFAULT_MODEL_IN_HOME))
+            })
             .ok_or_else(|| MediaError::Transcribe("no whisper model configured".into()))?;
         if !model.is_file() {
             return Err(MediaError::Transcribe(format!(
@@ -240,6 +294,10 @@ impl WhisperCli {
 }
 
 impl Transcriber for WhisperCli {
+    fn join_clips(&self, inputs: &[PathBuf], gap_ms: u64, out: &Path) -> Result<(), MediaError> {
+        join_clips_with_ffmpeg(&self.ffmpeg, inputs, gap_ms, out)
+    }
+
     /// Results are cached next to `wav` (keyed by model, language, prompt and DTW preset), so an
     /// unchanged narration is recognized once.
     fn transcribe(
@@ -388,14 +446,24 @@ pub fn parse_whisper_json(bytes: &[u8]) -> Result<Vec<RecognizedToken>, MediaErr
             }
             Err(err) if err.error_len().is_none() => {} // incomplete: wait for the next token
             Err(_) => {
-                out.push(RecognizedToken::new(String::from_utf8_lossy(&buf), start, e));
+                out.push(RecognizedToken::new(
+                    String::from_utf8_lossy(&buf),
+                    start,
+                    e,
+                ));
                 buf.clear();
             }
         }
     }
     if !buf.is_empty() {
-        let end = out.last().map_or(start, |t: &RecognizedToken| t.end_ms.max(start));
-        out.push(RecognizedToken::new(String::from_utf8_lossy(&buf), start, end));
+        let end = out
+            .last()
+            .map_or(start, |t: &RecognizedToken| t.end_ms.max(start));
+        out.push(RecognizedToken::new(
+            String::from_utf8_lossy(&buf),
+            start,
+            end,
+        ));
     }
     Ok(out)
 }
@@ -557,7 +625,10 @@ mod json {
                 Some(b'n') => self.literal("null", Value::Null),
                 Some(b'-' | b'0'..=b'9') => {
                     let start = self.i;
-                    while matches!(self.peek(), Some(b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')) {
+                    while matches!(
+                        self.peek(),
+                        Some(b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+                    ) {
                         self.i += 1;
                     }
                     std::str::from_utf8(&self.s[start..self.i])
@@ -610,7 +681,9 @@ mod json {
                                 {
                                     self.i += 2;
                                     let low = self.hex4()?;
-                                    code = 0x10000 + ((code - 0xD800) << 10) + (low.wrapping_sub(0xDC00) & 0x3FF);
+                                    code = 0x10000
+                                        + ((code - 0xD800) << 10)
+                                        + (low.wrapping_sub(0xDC00) & 0x3FF);
                                 }
                                 let c = char::from_u32(code).unwrap_or('\u{FFFD}');
                                 let mut buf = [0u8; 4];
@@ -631,10 +704,23 @@ mod json {
 
         #[test]
         fn parses_nested_values_and_escapes() {
-            let v = parse(concat!(r#" {"a": [1, -2.5e1, true, null], "s": "x\"\\"#, r"\u00e9\ud83d\ude00", r#"", "o": {}} "#).as_bytes())
-                .unwrap();
-            assert_eq!(v.get("a").unwrap().as_array().unwrap()[1], Value::Number(-25.0));
-            assert_eq!(v.get("s").unwrap().as_bytes().unwrap(), "x\"\\é😀".as_bytes());
+            let v = parse(
+                concat!(
+                    r#" {"a": [1, -2.5e1, true, null], "s": "x\"\\"#,
+                    r"\u00e9\ud83d\ude00",
+                    r#"", "o": {}} "#
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(
+                v.get("a").unwrap().as_array().unwrap()[1],
+                Value::Number(-25.0)
+            );
+            assert_eq!(
+                v.get("s").unwrap().as_bytes().unwrap(),
+                "x\"\\é😀".as_bytes()
+            );
             assert_eq!(v.get("o"), Some(&Value::Object(vec![])));
         }
 
@@ -646,7 +732,14 @@ mod json {
 
         #[test]
         fn rejects_malformed_input() {
-            for bad in [&b"{"[..], b"[1,]", b"{\"a\" 1}", b"\"open", b"[1] x", b"tru"] {
+            for bad in [
+                &b"{"[..],
+                b"[1,]",
+                b"{\"a\" 1}",
+                b"\"open",
+                b"[1] x",
+                b"tru",
+            ] {
                 assert!(parse(bad).is_err(), "{:?}", String::from_utf8_lossy(bad));
             }
         }
@@ -765,7 +858,10 @@ mod tests {
     fn rejects_files_without_a_transcription() {
         assert!(parse_whisper_json(b"{}").is_err());
         assert!(parse_whisper_json(b"not json").is_err());
-        assert_eq!(parse_whisper_json(br#"{"transcription": []}"#).unwrap(), vec![]);
+        assert_eq!(
+            parse_whisper_json(br#"{"transcription": []}"#).unwrap(),
+            vec![]
+        );
     }
 
     #[test]
@@ -782,7 +878,10 @@ mod tests {
         let m = Path::new("ggml-large-v3-turbo-q5_0.bin");
         assert_eq!(dtw_from_env(None, m), None);
         assert_eq!(dtw_from_env(Some("0"), m), None);
-        assert_eq!(dtw_from_env(Some("1"), m).as_deref(), Some("large.v3.turbo"));
+        assert_eq!(
+            dtw_from_env(Some("1"), m).as_deref(),
+            Some("large.v3.turbo")
+        );
         assert_eq!(dtw_from_env(Some("base.en"), m).as_deref(), Some("base.en"));
     }
 
@@ -801,8 +900,8 @@ mod tests {
         let err = WhisperCli::locate(None, None, Some("/nonexistent-dir")).unwrap_err();
         assert!(err.to_string().contains("not found"), "{err}");
         let sh = find_executable("sh", Some("/bin:/usr/bin")).expect("sh exists");
-        let err = WhisperCli::locate(Some(&sh), Some(Path::new("/no/such/model.bin")), None)
-            .unwrap_err();
+        let err =
+            WhisperCli::locate(Some(&sh), Some(Path::new("/no/such/model.bin")), None).unwrap_err();
         assert!(err.to_string().contains("does not exist"), "{err}");
     }
 }

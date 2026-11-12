@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use vimmer_dsl::{SubtitleCue, VideoTimeline, WordTiming};
 use vimmer_media::{
-    align_words, guess_language, split_units, AlignedWord, AudioProbe, TranscribeRequest,
-    Transcriber, WhisperCli,
+    align_words, guess_language, split_units, AlignedWord, AudioProbe, RecognizedToken,
+    TranscribeRequest, Transcriber, WhisperCli,
 };
 
 use crate::control::{Progress, RenderContext};
@@ -58,7 +58,10 @@ pub(crate) struct NarrationClip {
 }
 
 /// Synthesized narration clips: scenes with `narration` whose audio is the generated file.
-pub(crate) fn narration_clips(timeline: &VideoTimeline, cfg: &SchedulerConfig) -> Vec<NarrationClip> {
+pub(crate) fn narration_clips(
+    timeline: &VideoTimeline,
+    cfg: &SchedulerConfig,
+) -> Vec<NarrationClip> {
     let fps = u64::from(timeline.fps);
     let frame_ms = |frame: u32| (u64::from(frame) * 1000 + fps / 2) / fps;
     let starts = timeline.scene_start_frames();
@@ -125,6 +128,131 @@ pub async fn add_word_subtitles(
     apply_word_subtitles(timeline, &clips, engine, probe, ws, ctx, warnings).await
 }
 
+/// Batches never exceed one whisper window (30 s), since every call encodes a full window
+/// however short the audio is.
+const BATCH_MAX_MS: u64 = 28_000;
+/// Silence between clips joined into one batch, so words cannot run from one clip into the next.
+const BATCH_GAP_MS: u64 = 1_000;
+
+/// Clips recognized in one whisper call: same language, joined with silence in between.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Batch {
+    pub language: Option<String>,
+    /// `(clip index, offset of the clip in the joined audio, clip length)`, in ms.
+    pub members: Vec<(usize, u64, u64)>,
+}
+
+/// Groups clips by language, in timeline order, into batches of at most `BATCH_MAX_MS` of audio
+/// (gaps included). A clip longer than that gets a batch of its own.
+pub(crate) fn plan_batches(languages: &[Option<String>], durations: &[u64]) -> Vec<Batch> {
+    let mut batches: Vec<Batch> = Vec::new();
+    let mut open: Vec<(Option<String>, usize, u64)> = Vec::new(); // (language, batch, end ms)
+    for (clip, (language, &ms)) in languages.iter().zip(durations).enumerate() {
+        let slot = open.iter_mut().find(|(l, _, _)| l == language);
+        match slot {
+            Some((_, batch, end)) if *end + BATCH_GAP_MS + ms <= BATCH_MAX_MS => {
+                let offset = *end + BATCH_GAP_MS;
+                batches[*batch].members.push((clip, offset, ms));
+                *end = offset + ms;
+            }
+            _ => {
+                open.retain(|(l, _, _)| l != language);
+                open.push((language.clone(), batches.len(), ms));
+                batches.push(Batch {
+                    language: language.clone(),
+                    members: vec![(clip, 0, ms)],
+                });
+            }
+        }
+    }
+    batches
+}
+
+/// Hands each recognized token of a joined batch back to the clip whose span (plus half the
+/// surrounding gaps) holds the token's midpoint, with times made relative to that clip.
+pub(crate) fn split_tokens(
+    tokens: &[RecognizedToken],
+    members: &[(usize, u64, u64)],
+) -> Vec<Vec<RecognizedToken>> {
+    let mut out = vec![Vec::new(); members.len()];
+    for token in tokens {
+        let mid = (token.start_ms + token.end_ms.max(token.start_ms)) / 2;
+        let k = members
+            .iter()
+            .rposition(|&(_, offset, _)| offset <= mid + BATCH_GAP_MS / 2)
+            .unwrap_or(0);
+        let (_, offset, ms) = members[k];
+        let rebase = |t: u64| t.saturating_sub(offset).min(ms);
+        out[k].push(RecognizedToken::new(
+            token.text.clone(),
+            rebase(token.start_ms),
+            rebase(token.end_ms.max(token.start_ms)),
+        ));
+    }
+    out
+}
+
+/// Recognizes one batch: a lone clip directly, several clips joined into one file first.
+fn recognize_batch(
+    engine: &dyn Transcriber,
+    batch: &Batch,
+    clips: &[NarrationClip],
+) -> Result<Vec<Vec<RecognizedToken>>, vimmer_media::MediaError> {
+    let texts: Vec<&str> = batch
+        .members
+        .iter()
+        .map(|&(c, _, _)| clips[c].text.as_str())
+        .collect();
+    let separator = if batch
+        .language
+        .as_deref()
+        .is_some_and(|l| matches!(l, "zh" | "ja"))
+    {
+        ""
+    } else {
+        " "
+    };
+    let request = TranscribeRequest {
+        language: batch.language.clone(),
+        prompt: Some(texts.join(separator)),
+    };
+    if let [(clip, _, _)] = batch.members[..] {
+        return Ok(vec![engine.transcribe(&clips[clip].wav, &request)?]);
+    }
+    let wavs: Vec<PathBuf> = batch
+        .members
+        .iter()
+        .map(|&(c, _, _)| clips[c].wav.clone())
+        .collect();
+    let names: Vec<String> = wavs
+        .iter()
+        .map(|w| {
+            w.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        })
+        .collect();
+    let dir = wavs[0].parent().map(PathBuf::from).unwrap_or_default();
+    let joined = dir.join(format!(
+        "batch-{:016x}.wav",
+        fnv1a(&format!("{BATCH_GAP_MS}\n{}", names.join("\n")))
+    ));
+    if !joined.exists() {
+        engine.join_clips(&wavs, BATCH_GAP_MS, &joined)?;
+    }
+    let tokens = engine.transcribe(&joined, &request)?;
+    Ok(split_tokens(&tokens, &batch.members))
+}
+
+fn fnv1a(s: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in s.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
 pub(crate) async fn apply_word_subtitles(
     timeline: &mut VideoTimeline,
     clips: &[NarrationClip],
@@ -134,46 +262,75 @@ pub(crate) async fn apply_word_subtitles(
     ctx: &RenderContext,
     warnings: &mut Vec<String>,
 ) -> Result<usize, SchedulerError> {
-    let mut timed = 0;
-    for clip in clips {
-        let scene_id = timeline.scenes[clip.scene_index].id.clone();
-        ctx.emit(Progress::Stage {
-            name: format!("Timing subtitles for {scene_id}"),
-        });
-        let language = match ws.language.as_deref() {
+    let scene_id = |timeline: &VideoTimeline, clip: &NarrationClip| {
+        timeline.scenes[clip.scene_index].id.clone()
+    };
+    let languages: Vec<Option<String>> = clips
+        .iter()
+        .map(|clip| match ws.language.as_deref() {
             Some("auto") => None,
             Some(code) => Some(code.to_string()),
             None => guess_language(&clip.text).map(String::from),
-        };
-        let request = TranscribeRequest {
-            language,
-            prompt: Some(clip.text.clone()),
-        };
-        let (engine, probe, wav) = (engine.clone(), probe.clone(), clip.wav.clone());
+        })
+        .collect();
+    let wavs: Vec<PathBuf> = clips.iter().map(|c| c.wav.clone()).collect();
+    let probe2 = probe.clone();
+    let durations = tokio::task::spawn_blocking(move || {
+        wavs.iter()
+            .map(|w| probe2.duration_ms(w))
+            .collect::<Result<Vec<u64>, _>>()
+    })
+    .await
+    .map_err(|e| SchedulerError::Join(e.to_string()))??;
+
+    // One whisper call per batch of same-language clips; results land per clip.
+    let batches = plan_batches(&languages, &durations);
+    let mut recognized: Vec<Option<Vec<RecognizedToken>>> = vec![None; clips.len()];
+    for (n, batch) in batches.iter().enumerate() {
+        ctx.emit(Progress::Stage {
+            name: format!("Timing subtitles ({}/{})", n + 1, batches.len()),
+        });
+        let (engine, batch_owned, clips_owned) = (engine.clone(), batch.clone(), clips.to_vec());
         let result = tokio::task::spawn_blocking(move || {
-            let audio_ms = probe.duration_ms(&wav)?;
-            let tokens = engine.transcribe(&wav, &request)?;
-            Ok::<_, vimmer_media::MediaError>((audio_ms, tokens))
+            recognize_batch(engine.as_ref(), &batch_owned, &clips_owned)
         })
         .await
         .map_err(|e| SchedulerError::Join(e.to_string()))?;
         ctx.check()?;
-        let (audio_ms, tokens) = match result {
-            Ok(r) => r,
-            Err(e) => {
-                warnings.push(format!(
-                    "scene `{scene_id}`: word-by-word subtitles skipped: {e}"
-                ));
-                continue;
+        match result {
+            Ok(per_clip) => {
+                for (&(clip, _, _), tokens) in batch.members.iter().zip(per_clip) {
+                    recognized[clip] = Some(tokens);
+                }
             }
+            Err(e) => {
+                for &(clip, _, _) in &batch.members {
+                    warnings.push(format!(
+                        "scene `{}`: word-by-word subtitles skipped: {e}",
+                        scene_id(timeline, &clips[clip])
+                    ));
+                }
+            }
+        }
+    }
+
+    let max_cols = if timeline.resolution.width >= timeline.resolution.height {
+        42
+    } else {
+        28
+    };
+    let mut timed = 0;
+    for (k, clip) in clips.iter().enumerate() {
+        let Some(tokens) = &recognized[k] else {
+            continue;
         };
+        let id = scene_id(timeline, clip);
         if tokens.is_empty() {
             warnings.push(format!(
-                "scene `{scene_id}`: speech recognition heard nothing; word timing is estimated from text length"
+                "scene `{id}`: speech recognition heard nothing; word timing is estimated from text length"
             ));
         }
-        let words = align_words(&clip.text, &tokens, audio_ms);
-        let words: Vec<AlignedWord> = words
+        let words: Vec<AlignedWord> = align_words(&clip.text, tokens, durations[k])
             .into_iter()
             .map(|w| AlignedWord {
                 start_ms: w.start_ms + clip.start_ms,
@@ -181,16 +338,11 @@ pub(crate) async fn apply_word_subtitles(
                 text: w.text,
             })
             .collect();
-        let max_cols = if timeline.resolution.width >= timeline.resolution.height {
-            42
-        } else {
-            28
-        };
         if merge_clip_words(&mut timeline.subtitles, clip, &words, max_cols) {
             timed += 1;
         } else {
             warnings.push(format!(
-                "scene `{scene_id}`: existing subtitle cues do not match the narration text; they keep plain timing"
+                "scene `{id}`: existing subtitle cues do not match the narration text; they keep plain timing"
             ));
         }
     }
@@ -307,7 +459,16 @@ fn map_units(cue_keys: &[String], script_keys: &[String]) -> Option<Vec<Option<u
 fn width(text: &str) -> usize {
     text.trim()
         .chars()
-        .map(|c| if vimmer_media::is_cjk(c) || ('\u{3000}'..='\u{303F}').contains(&c) || ('\u{FF00}'..='\u{FFEF}').contains(&c) { 2 } else { 1 })
+        .map(|c| {
+            if vimmer_media::is_cjk(c)
+                || ('\u{3000}'..='\u{303F}').contains(&c)
+                || ('\u{FF00}'..='\u{FFEF}').contains(&c)
+            {
+                2
+            } else {
+                1
+            }
+        })
         .sum()
 }
 
@@ -365,7 +526,11 @@ fn width_of(words: &[AlignedWord]) -> usize {
 
 /// Builds cues from aligned words (absolute times). A line shows from its first word until the
 /// next line starts (when that is soon) or briefly after its last word, never past `limit`.
-pub(crate) fn cues_from_words(words: &[AlignedWord], max_cols: usize, limit: u64) -> Vec<SubtitleCue> {
+pub(crate) fn cues_from_words(
+    words: &[AlignedWord],
+    max_cols: usize,
+    limit: u64,
+) -> Vec<SubtitleCue> {
     let lines = line_breaks(words, max_cols);
     let mut cues = Vec::new();
     for (n, range) in lines.iter().enumerate() {
@@ -417,7 +582,7 @@ mod tests {
     use std::sync::Mutex;
 
     use vimmer_dsl::{validate, AudioMapping, MotionType, Narration, Resolution, Scene};
-    use vimmer_media::{MediaError, RecognizedToken};
+    use vimmer_media::MediaError;
 
     use super::*;
 
@@ -478,9 +643,21 @@ mod tests {
         ];
         let cues = cues_from_words(&words, 42, 4800);
         assert_eq!(cues.len(), 3);
-        assert_eq!((cues[0].start_ms, cues[0].end_ms), (0, 900), "joined to the next line");
-        assert_eq!((cues[1].start_ms, cues[1].end_ms), (900, 1900), "held 600 ms");
-        assert_eq!((cues[2].start_ms, cues[2].end_ms), (4000, 4800), "cut at the limit");
+        assert_eq!(
+            (cues[0].start_ms, cues[0].end_ms),
+            (0, 900),
+            "joined to the next line"
+        );
+        assert_eq!(
+            (cues[1].start_ms, cues[1].end_ms),
+            (900, 1900),
+            "held 600 ms"
+        );
+        assert_eq!(
+            (cues[2].start_ms, cues[2].end_ms),
+            (4000, 4800),
+            "cut at the limit"
+        );
         assert_eq!(cues[0].text, "One.");
         assert_eq!(cues[0].words[0].text, "One.");
         assert_eq!(cues[2].words[0].end_ms, 4500);
@@ -500,8 +677,16 @@ mod tests {
         ];
         assert!(merge_clip_words(&mut subs, &clip(100, 3000), &words, 42));
         assert_eq!(subs.len(), 3);
-        let spans: Vec<(u64, u64)> = subs[0].words.iter().map(|x| (x.start_ms, x.end_ms)).collect();
-        assert_eq!(spans, vec![(100, 400), (400, 1000)], "clamped to the cue end");
+        let spans: Vec<(u64, u64)> = subs[0]
+            .words
+            .iter()
+            .map(|x| (x.start_ms, x.end_ms))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![(100, 400), (400, 1000)],
+            "clamped to the cue end"
+        );
         assert_eq!(subs[1].words[0].start_ms, 1200);
         assert!(subs[2].words.is_empty(), "cue outside the clip untouched");
     }
@@ -522,6 +707,60 @@ mod tests {
         assert_eq!(subs.len(), 2);
         assert_eq!(subs[1].text, "你好。");
         assert_eq!((subs[1].start_ms, subs[1].end_ms), (1000, 2100));
+    }
+
+    #[test]
+    fn batches_group_by_language_up_to_one_window() {
+        let l = |s: &str| Some(s.to_string());
+        let langs = vec![l("zh"), l("en"), l("zh"), l("zh"), None, l("zh")];
+        let ms = vec![5_000, 4_000, 6_000, 20_000, 3_000, 30_000];
+        let batches = plan_batches(&langs, &ms);
+        assert_eq!(
+            batches,
+            vec![
+                Batch {
+                    language: l("zh"),
+                    members: vec![(0, 0, 5_000), (2, 6_000, 6_000)]
+                },
+                Batch {
+                    language: l("en"),
+                    members: vec![(1, 0, 4_000)]
+                },
+                Batch {
+                    language: l("zh"),
+                    members: vec![(3, 0, 20_000)]
+                },
+                Batch {
+                    language: None,
+                    members: vec![(4, 0, 3_000)]
+                },
+                Batch {
+                    language: l("zh"),
+                    members: vec![(5, 0, 30_000)]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn tokens_of_a_joined_batch_go_back_to_their_clips() {
+        let members = vec![(0, 0, 2_000), (1, 3_000, 1_500), (2, 5_500, 1_000)];
+        let tokens = vec![
+            RecognizedToken::new("a", 100, 900),
+            RecognizedToken::new("b", 1_800, 2_300), // runs a little into the gap
+            RecognizedToken::new("c", 2_900, 3_400), // starts a little early
+            RecognizedToken::new("d", 5_600, 6_400),
+        ];
+        let split = split_tokens(&tokens, &members);
+        assert_eq!(
+            split[0],
+            vec![
+                RecognizedToken::new("a", 100, 900),
+                RecognizedToken::new("b", 1_800, 2_000)
+            ]
+        );
+        assert_eq!(split[1], vec![RecognizedToken::new("c", 0, 400)]);
+        assert_eq!(split[2], vec![RecognizedToken::new("d", 100, 900)]);
     }
 
     struct FixedTranscriber(Vec<RecognizedToken>, Mutex<Vec<TranscribeRequest>>);
@@ -577,13 +816,20 @@ mod tests {
             music: None,
         };
         t.scenes[0].audio = None; // not narrated by us: ignored
-        let cfg = SchedulerConfig::new(PathBuf::from("w"), PathBuf::from("o.mp4"), PathBuf::from("r"));
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
         let clips = narration_clips(&t, &cfg);
         assert_eq!(clips.len(), 1);
         assert_eq!(clips[0].start_ms, 2000);
 
         let engine = Arc::new(FixedTranscriber(
-            vec![RecognizedToken::new("你好", 100, 500), RecognizedToken::new("世界", 500, 1200)],
+            vec![
+                RecognizedToken::new("你好", 100, 500),
+                RecognizedToken::new("世界", 500, 1200),
+            ],
             Mutex::new(vec![]),
         ));
         let mut warnings = vec![];
@@ -607,7 +853,10 @@ mod tests {
         assert_eq!(cue.text, "你好世界。");
         assert_eq!(cue.start_ms, 2100);
         let spans: Vec<(u64, u64)> = cue.words.iter().map(|x| (x.start_ms, x.end_ms)).collect();
-        assert_eq!(spans, vec![(2100, 2300), (2300, 2500), (2500, 2850), (2850, 3200)]);
+        assert_eq!(
+            spans,
+            vec![(2100, 2300), (2300, 2500), (2500, 2850), (2850, 3200)]
+        );
         assert_eq!(validate(&t), Ok(()));
     }
 
@@ -624,7 +873,11 @@ mod tests {
             music: None,
         };
         let before = t.clone();
-        let mut cfg = SchedulerConfig::new(PathBuf::from("w"), PathBuf::from("o.mp4"), PathBuf::from("r"));
+        let mut cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
         cfg.child_path = Some("/nonexistent-dir".into());
         cfg.word_subtitles.whisper_cli = Some(PathBuf::from("whisper-cli-missing"));
         let mut warnings = vec![];
@@ -640,13 +893,110 @@ mod tests {
         assert_eq!(n, 0);
         assert_eq!(t, before);
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("word-by-word subtitles skipped"), "{warnings:?}");
+        assert!(
+            warnings[0].contains("word-by-word subtitles skipped"),
+            "{warnings:?}"
+        );
 
         cfg.word_subtitles.enabled = false;
         let mut warnings = vec![];
-        add_word_subtitles(&mut t, &cfg, Arc::new(FixedProbe(1000)), &RenderContext::silent(), &mut warnings)
-            .await
-            .unwrap();
+        add_word_subtitles(
+            &mut t,
+            &cfg,
+            Arc::new(FixedProbe(1000)),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
         assert!(warnings.is_empty(), "disabled: not even a warning");
+    }
+
+    struct JoiningTranscriber {
+        joined: Mutex<Vec<(Vec<PathBuf>, u64)>>,
+        calls: Mutex<Vec<PathBuf>>,
+    }
+    impl Transcriber for JoiningTranscriber {
+        fn transcribe(
+            &self,
+            wav: &Path,
+            _request: &TranscribeRequest,
+        ) -> Result<Vec<RecognizedToken>, MediaError> {
+            self.calls.lock().unwrap().push(wav.to_path_buf());
+            // Joined audio: clip 1 (1000 ms) at 0, gap 1000 ms, clip 2 at 2000.
+            Ok(vec![
+                RecognizedToken::new("你好", 0, 1000),
+                RecognizedToken::new("再见", 2000, 2800),
+            ])
+        }
+        fn join_clips(
+            &self,
+            inputs: &[PathBuf],
+            gap_ms: u64,
+            out: &Path,
+        ) -> Result<(), MediaError> {
+            self.joined.lock().unwrap().push((inputs.to_vec(), gap_ms));
+            std::fs::write(out, b"joined").map_err(MediaError::from)
+        }
+    }
+
+    #[tokio::test]
+    async fn same_language_clips_are_recognized_in_one_call() {
+        let dir = std::env::temp_dir().join(format!("vimmer-batch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![narrated("a", 2000, "你好"), narrated("b", 2000, "再见")],
+            subtitles: vec![],
+            music: None,
+        };
+        let mut clips = narration_clips(
+            &t,
+            &SchedulerConfig::new(dir.clone(), dir.join("o.mp4"), dir.clone()),
+        );
+        for clip in &mut clips {
+            clip.wav = dir.join(clip.wav.file_name().unwrap());
+        }
+        let engine = Arc::new(JoiningTranscriber {
+            joined: Mutex::new(vec![]),
+            calls: Mutex::new(vec![]),
+        });
+        let mut warnings = vec![];
+        let n = apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine.clone(),
+            Arc::new(FixedProbe(1000)),
+            &WordSubtitleConfig::default(),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 2, "{warnings:?}");
+        assert_eq!(
+            engine.calls.lock().unwrap().len(),
+            1,
+            "one whisper call for both clips"
+        );
+        assert_eq!(engine.joined.lock().unwrap()[0].1, BATCH_GAP_MS);
+        let spans: Vec<Vec<(u64, u64)>> = t
+            .subtitles
+            .iter()
+            .map(|c| c.words.iter().map(|w| (w.start_ms, w.end_ms)).collect())
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                vec![(0, 500), (500, 1000)],
+                vec![(2000, 2400), (2400, 2800)]
+            ]
+        );
+        assert_eq!(validate(&t), Ok(()));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
