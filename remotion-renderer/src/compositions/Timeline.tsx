@@ -1,5 +1,6 @@
 import { AbsoluteFill, Audio, Sequence } from "remotion";
 import { AnimatedText } from "../components/AnimatedText";
+import { Subtitles } from "../components/Subtitles";
 import { KenBurnsImage } from "../components/KenBurnsImage";
 import { resolveAsset } from "../assets";
 import { layoutScenes, msToFrames } from "../layout";
@@ -28,6 +29,7 @@ export const Timeline: React.FC<VideoTimeline> = (timeline) => {
           ) : null}
         </Sequence>
       ))}
+      <Subtitles cues={timeline.subtitles ?? []} />
     </AbsoluteFill>
   );
 };

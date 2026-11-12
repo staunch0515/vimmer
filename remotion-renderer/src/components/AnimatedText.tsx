@@ -22,7 +22,8 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights }) => {
       style={{
         justifyContent: "flex-end",
         alignItems: "center",
-        padding: "8% 8% 12%",
+        // Fixed bottom inset keeps scene text clear of the subtitle band.
+        padding: "8% 8% 260px",
       }}
     >
       <div

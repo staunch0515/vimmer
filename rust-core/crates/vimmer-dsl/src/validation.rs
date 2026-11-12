@@ -26,6 +26,20 @@ pub enum ValidationError {
     TooLong(u64),
     #[error("timeline is {0} frames; maximum is {MAX_FRAMES} frames")]
     TooManyFrames(u32),
+    #[error("subtitle {index} must have start < end (got {start_ms}..{end_ms} ms)")]
+    BadSubtitleRange {
+        index: usize,
+        start_ms: u64,
+        end_ms: u64,
+    },
+    #[error("subtitle {index} ends at {end_ms} ms, after the timeline ends at {total_ms} ms")]
+    SubtitleOutOfRange {
+        index: usize,
+        end_ms: u64,
+        total_ms: u64,
+    },
+    #[error("subtitle {0} has empty text")]
+    EmptySubtitle(usize),
 }
 
 /// Checks a timeline against the DSL rules. Returns every violation found,
@@ -73,6 +87,25 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
         errors.push(ValidationError::TooManyFrames(total_frames));
     }
 
+    for (index, cue) in timeline.subtitles.iter().enumerate() {
+        if cue.start_ms >= cue.end_ms {
+            errors.push(ValidationError::BadSubtitleRange {
+                index,
+                start_ms: cue.start_ms,
+                end_ms: cue.end_ms,
+            });
+        } else if cue.end_ms > total_ms {
+            errors.push(ValidationError::SubtitleOutOfRange {
+                index,
+                end_ms: cue.end_ms,
+                total_ms,
+            });
+        }
+        if cue.text.trim().is_empty() {
+            errors.push(ValidationError::EmptySubtitle(index));
+        }
+    }
+
     if errors.is_empty() {
         Ok(())
     } else {
@@ -83,7 +116,7 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{MotionType, Resolution, Scene};
+    use crate::model::{MotionType, Resolution, Scene, SubtitleCue};
 
     fn scene(id: &str, ms: u64) -> Scene {
         Scene {
@@ -105,6 +138,7 @@ mod tests {
                 height: 1080,
             },
             scenes,
+            subtitles: vec![],
         }
     }
 
@@ -124,6 +158,7 @@ mod tests {
                 height: 480,
             },
             scenes: vec![bad, scene("dup", 1000)],
+            subtitles: vec![],
         };
         let errs = validate(&t).unwrap_err();
         assert!(errs.contains(&ValidationError::UnsupportedFps(24)));
@@ -145,6 +180,40 @@ mod tests {
     fn exactly_200_seconds_is_allowed() {
         let t = timeline(vec![scene("a", 200_000)]);
         assert!(validate(&t).is_ok());
+    }
+
+    #[test]
+    fn checks_subtitle_cues() {
+        let mut t = timeline(vec![scene("a", 5_000)]);
+        t.subtitles = vec![
+            SubtitleCue {
+                start_ms: 2_000,
+                end_ms: 1_000,
+                text: "backwards".into(),
+            },
+            SubtitleCue {
+                start_ms: 4_000,
+                end_ms: 6_000,
+                text: "too late".into(),
+            },
+            SubtitleCue {
+                start_ms: 0,
+                end_ms: 1_000,
+                text: "  ".into(),
+            },
+        ];
+        let errs = validate(&t).unwrap_err();
+        assert!(errs.contains(&ValidationError::BadSubtitleRange {
+            index: 0,
+            start_ms: 2_000,
+            end_ms: 1_000
+        }));
+        assert!(errs.contains(&ValidationError::SubtitleOutOfRange {
+            index: 1,
+            end_ms: 6_000,
+            total_ms: 5_000
+        }));
+        assert!(errs.contains(&ValidationError::EmptySubtitle(2)));
     }
 
     #[test]

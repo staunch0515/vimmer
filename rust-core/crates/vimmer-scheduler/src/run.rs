@@ -7,7 +7,7 @@ use tokio::{sync::Semaphore, task::JoinSet};
 use vimmer_dsl::{validate, ValidationError, VideoTimeline};
 use vimmer_media::{normalize_image, AudioProbe, MediaError};
 
-use crate::plan::{plan_chunks, Chunk, DEFAULT_CHUNK_MS};
+use crate::plan::{chunk_timeline, plan_chunks, Chunk, DEFAULT_CHUNK_MS};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SchedulerError {
@@ -189,11 +189,7 @@ async fn render_chunks(
     let mut outputs = Vec::with_capacity(chunks.len());
 
     for chunk in chunks {
-        let sub = VideoTimeline {
-            fps: timeline.fps,
-            resolution: timeline.resolution,
-            scenes: timeline.scenes[chunk.scenes.clone()].to_vec(),
-        };
+        let sub = chunk_timeline(timeline, chunk);
         let props = chunk_dir.join(format!("chunk-{:03}.json", chunk.index));
         let mp4 = chunk_dir.join(format!("chunk-{:03}.mp4", chunk.index));
         tokio::fs::write(

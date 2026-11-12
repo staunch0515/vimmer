@@ -23,8 +23,15 @@ export type Resolution = {
   height: number;
 };
 
+export type SubtitleCue = {
+  start_ms: number;
+  end_ms: number;
+  text: string;
+};
+
 export type VideoTimeline = {
   fps: number;
   resolution: Resolution;
   scenes: Scene[];
+  subtitles?: SubtitleCue[];
 };

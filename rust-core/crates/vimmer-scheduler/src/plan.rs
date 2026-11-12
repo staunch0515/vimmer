@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use vimmer_dsl::VideoTimeline;
+use vimmer_dsl::{SubtitleCue, VideoTimeline};
 
 /// Default target length of one render chunk. Chunks render in parallel, then get concatenated.
 pub const DEFAULT_CHUNK_MS: u64 = 30_000;
@@ -38,6 +38,38 @@ pub fn plan_chunks(timeline: &VideoTimeline, max_chunk_ms: u64) -> Vec<Chunk> {
         push_chunk(&mut chunks, timeline, &starts, first..timeline.scenes.len());
     }
     chunks
+}
+
+/// Builds the self-contained timeline for one chunk. Subtitle cues are clipped to the
+/// chunk's frame range and rebased so the chunk starts at 0 ms. Cues that straddle a
+/// boundary appear in both chunks, each for its own part.
+pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline {
+    let fps = timeline.fps;
+    let chunk_start = chunk.start_frame;
+    let chunk_end = chunk.start_frame + chunk.frame_count;
+    let to_frame = |ms: u64| ((ms * u64::from(fps) + 500) / 1000) as u32;
+    let to_ms = |frame: u32| (f64::from(frame) * 1000.0 / f64::from(fps)).round() as u64;
+
+    let subtitles = timeline
+        .subtitles
+        .iter()
+        .filter_map(|cue| {
+            let start = to_frame(cue.start_ms).max(chunk_start);
+            let end = to_frame(cue.end_ms).min(chunk_end);
+            (start < end).then(|| SubtitleCue {
+                start_ms: to_ms(start - chunk_start),
+                end_ms: to_ms(end - chunk_start),
+                text: cue.text.clone(),
+            })
+        })
+        .collect();
+
+    VideoTimeline {
+        fps,
+        resolution: timeline.resolution,
+        scenes: timeline.scenes[chunk.scenes.clone()].to_vec(),
+        subtitles,
+    }
 }
 
 fn push_chunk(
@@ -88,6 +120,7 @@ mod tests {
                 .enumerate()
                 .map(|(i, &ms)| scene(&format!("s{i}"), ms))
                 .collect(),
+            subtitles: vec![],
         }
     }
 
@@ -124,6 +157,58 @@ mod tests {
                 pair[1].start_frame
             );
         }
+    }
+
+    #[test]
+    fn chunk_timeline_clips_and_rebases_subtitles() {
+        let mut t = timeline(&[10_000, 10_000]);
+        t.subtitles = vec![
+            SubtitleCue {
+                start_ms: 1_000,
+                end_ms: 2_000,
+                text: "first".into(),
+            },
+            SubtitleCue {
+                start_ms: 9_000,
+                end_ms: 11_000,
+                text: "straddles".into(),
+            },
+            SubtitleCue {
+                start_ms: 15_000,
+                end_ms: 16_000,
+                text: "second".into(),
+            },
+        ];
+        let chunks = plan_chunks(&t, 10_000);
+        let a = chunk_timeline(&t, &chunks[0]);
+        let b = chunk_timeline(&t, &chunks[1]);
+        assert_eq!(a.subtitles.len(), 2);
+        assert_eq!(
+            a.subtitles[1],
+            SubtitleCue {
+                start_ms: 9_000,
+                end_ms: 10_000,
+                text: "straddles".into()
+            }
+        );
+        assert_eq!(b.subtitles.len(), 2);
+        assert_eq!(
+            b.subtitles[0],
+            SubtitleCue {
+                start_ms: 0,
+                end_ms: 1_000,
+                text: "straddles".into()
+            }
+        );
+        assert_eq!(
+            b.subtitles[1],
+            SubtitleCue {
+                start_ms: 5_000,
+                end_ms: 6_000,
+                text: "second".into()
+            }
+        );
+        assert_eq!(b.total_duration_ms(), 10_000);
     }
 
     #[test]

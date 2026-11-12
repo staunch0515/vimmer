@@ -62,12 +62,23 @@ impl Scene {
     }
 }
 
+/// A subtitle line on the global timeline, in milliseconds from the video start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubtitleCue {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
 /// Root document: the full timeline handed from the Rust core to Remotion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VideoTimeline {
     pub fps: u32,
     pub resolution: Resolution,
     pub scenes: Vec<Scene>,
+    /// Global subtitle track. Independent of scenes, so cues can span scene boundaries.
+    #[serde(default)]
+    pub subtitles: Vec<SubtitleCue>,
 }
 
 impl VideoTimeline {

@@ -23,6 +23,9 @@ struct Cli {
     /// Target length of each render chunk, in milliseconds.
     #[arg(long, default_value_t = DEFAULT_CHUNK_MS)]
     chunk_ms: u64,
+    /// SubRip file whose cues replace the timeline's subtitle track.
+    #[arg(long)]
+    subtitles: Option<PathBuf>,
     /// Parallel image normalization jobs.
     #[arg(long, default_value_t = 4)]
     preprocess_jobs: usize,
@@ -45,7 +48,11 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let raw = tokio::fs::read_to_string(&cli.timeline).await?;
-    let timeline: VideoTimeline = serde_json::from_str(&raw)?;
+    let mut timeline: VideoTimeline = serde_json::from_str(&raw)?;
+    if let Some(srt_path) = &cli.subtitles {
+        let srt = tokio::fs::read_to_string(srt_path).await?;
+        timeline.subtitles = vimmer_dsl::parse_srt(&srt)?;
+    }
 
     let mut cfg = SchedulerConfig::new(cli.work_dir, cli.output, cli.remotion_dir);
     cfg.chunk_ms = cli.chunk_ms;
