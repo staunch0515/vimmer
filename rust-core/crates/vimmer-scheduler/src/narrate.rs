@@ -157,6 +157,7 @@ mod tests {
             },
             scenes,
             subtitles: vec![],
+            music: None,
         }
     }
 

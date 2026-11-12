@@ -8,8 +8,8 @@ import { useState } from "react";
 type Props = {
   timeline: VideoTimeline;
   selection: Selection;
-  tab: "scene" | "subtitles";
-  setTab: (tab: "scene" | "subtitles") => void;
+  tab: "scene" | "subtitles" | "music";
+  setTab: (tab: "scene" | "subtitles" | "music") => void;
   playheadMs: number;
   dispatch: Dispatch<Action>;
   onSelect: (s: Selection) => void;
@@ -29,9 +29,14 @@ export const Inspector = (props: Props) => {
         <button role="tab" aria-selected={tab === "subtitles"} className={tab === "subtitles" ? "tab active" : "tab"} onClick={() => setTab("subtitles")}>
           Subtitles <span className="count">{props.timeline.subtitles.length}</span>
         </button>
+        <button role="tab" aria-selected={tab === "music"} className={tab === "music" ? "tab active" : "tab"} onClick={() => setTab("music")}>
+          Music
+        </button>
       </div>
       <div className="inspector-body">
-        {tab === "scene" ? <SceneEditor {...props} /> : <SubtitleEditor {...props} />}
+        {tab === "scene" && <SceneEditor {...props} />}
+        {tab === "subtitles" && <SubtitleEditor {...props} />}
+        {tab === "music" && <MusicEditor {...props} />}
       </div>
     </aside>
   );
@@ -246,6 +251,53 @@ const MediaInput = ({
         </button>
       </div>
       {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+};
+
+const MusicEditor = ({ timeline, dispatch }: Props) => {
+  const music = timeline.music;
+  if (!music) {
+    return (
+      <div className="form">
+        <Empty title="No background music" hint="Music loops under the whole video and fades at the ends." />
+        <Field label="Music file" hint="Path relative to public/">
+          <MediaInput
+            kind="audio"
+            value=""
+            placeholder="assets/music.mp3"
+            onChange={(source) => source && dispatch({ type: "setMusic", music: { source, volume: 0.3, fade_in_ms: 0, fade_out_ms: 0 } })}
+          />
+        </Field>
+      </div>
+    );
+  }
+  const patch = (p: Partial<typeof music>) => dispatch({ type: "patchMusic", patch: p });
+  return (
+    <div className="form">
+      <div className="section-title">Background music</div>
+      <Field label="File" hint="Path relative to public/">
+        <MediaInput kind="audio" value={music.source} placeholder="assets/music.mp3" onChange={(v) => patch({ source: v })} />
+      </Field>
+      <Field label="Volume" suffix={`${Math.round(music.volume * 100)} %`}>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={music.volume}
+          onChange={(e) => patch({ volume: Number(e.target.value) })}
+        />
+      </Field>
+      <div className="two-col">
+        <Field label="Fade in" suffix="ms">
+          <input type="number" min={0} step={100} value={music.fade_in_ms} onChange={(e) => patch({ fade_in_ms: Math.max(0, Number(e.target.value) || 0) })} />
+        </Field>
+        <Field label="Fade out" suffix="ms">
+          <input type="number" min={0} step={100} value={music.fade_out_ms} onChange={(e) => patch({ fade_out_ms: Math.max(0, Number(e.target.value) || 0) })} />
+        </Field>
+      </div>
+      <button className="btn danger small" onClick={() => dispatch({ type: "setMusic", music: null })}>Remove music</button>
     </div>
   );
 };

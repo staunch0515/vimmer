@@ -37,6 +37,20 @@ impl AudioProbe for FfmpegProbe {
     }
 }
 
+/// True when the file has at least one audio stream, judged from ffmpeg's stream listing.
+pub fn has_audio_stream(ffmpeg: &Path, path: &Path) -> bool {
+    std::process::Command::new(ffmpeg)
+        .args(["-hide_banner", "-nostdin", "-i"])
+        .arg(path)
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stderr)
+                .lines()
+                .any(|l| l.contains("Stream #") && l.contains("Audio:"))
+        })
+        .unwrap_or(false)
+}
+
 /// Extracts `Duration: HH:MM:SS.ff` from ffmpeg's banner and returns milliseconds.
 pub fn parse_ffmpeg_duration_ms(text: &str) -> Option<u64> {
     let rest = text.split("Duration:").nth(1)?.trim_start();

@@ -1,6 +1,7 @@
 //! Orchestration: validate → preprocess assets → plan chunks → render chunks → concatenate.
 
 pub mod control;
+pub mod music;
 pub mod narrate;
 pub mod plan;
 pub mod run;

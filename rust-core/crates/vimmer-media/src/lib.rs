@@ -4,7 +4,7 @@ pub mod audio;
 pub mod image_norm;
 pub mod speech;
 
-pub use audio::{parse_ffmpeg_duration_ms, AudioProbe, FfmpegProbe};
+pub use audio::{has_audio_stream, parse_ffmpeg_duration_ms, AudioProbe, FfmpegProbe};
 pub use image_norm::{letterbox, normalize_image};
 pub use speech::{default_voice_for, SaySpeech, Speech};
 

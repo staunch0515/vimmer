@@ -90,6 +90,16 @@ Projects are plain timeline JSON files on disk: ⌘O opens one, ⌘S saves to it
 (temp file, then rename). Unsaved work is mirrored to localStorage as a draft and comes
 back on the next launch, marked unsaved. Closing the window with unsaved changes asks first.
 
+## Background music
+
+Music is one track under the whole video. In the editor, open the **Music** tab in the
+Inspector and choose a file (or type a path under `public/`). Set the volume (0–1) and
+optional fades in and out, in milliseconds. The track loops until the video ends.
+
+The renderer does not render music inside the segments. After the segments are joined, ffmpeg
+loops the track, applies volume and fades, and mixes it under any scene audio (narration).
+Music that runs past the end is cut. The editor preview plays the same loop and fades.
+
 ## Images and audio
 
 In the Inspector, the Image and Audio source fields have a **Choose** button (desktop app).

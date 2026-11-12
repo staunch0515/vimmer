@@ -318,3 +318,5 @@ textarea { resize: vertical; width: 100%; }
 .media-input { display: flex; gap: 6px; align-items: center; }
 .media-input input { flex: 1; }
 .field-error { color: var(--danger); font-size: 11px; }
+.block.music { top: 10px; bottom: 10px; background: linear-gradient(180deg, #3b2a14, #2a1e0e); border-color: rgba(251, 191, 36, 0.25); }
+.block.music.active { border-color: var(--amber); box-shadow: 0 0 16px rgba(251, 191, 36, 0.25); }

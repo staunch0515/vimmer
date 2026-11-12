@@ -35,9 +35,18 @@ export type SubtitleCue = {
   text: string;
 };
 
+// Background music: loops under the whole video. Mixed in by the Rust core after rendering.
+export type Music = {
+  source: string;
+  volume: number;
+  fade_in_ms: number;
+  fade_out_ms: number;
+};
+
 export type VideoTimeline = {
   fps: number;
   resolution: Resolution;
   scenes: Scene[];
   subtitles: SubtitleCue[];
+  music?: Music | null;
 };

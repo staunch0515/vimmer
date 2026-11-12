@@ -1,4 +1,4 @@
-import type { Scene, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import type { Music, Scene, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
 import { emptyScene, type Selection } from "./model";
 
 export type EditorState = {
@@ -20,6 +20,8 @@ export type Action =
   | { type: "addSubtitle"; startMs: number }
   | { type: "deleteSubtitle"; index: number }
   | { type: "setResolution"; width: number; height: number }
+  | { type: "setMusic"; music: Music | null }
+  | { type: "patchMusic"; patch: Partial<Music> }
   | { type: "undo" }
   | { type: "redo" };
 
@@ -78,6 +80,12 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
     }
     case "setResolution":
       return commit(state, { ...t, resolution: { width: action.width, height: action.height } });
+    case "setMusic":
+      return commit(state, { ...t, music: action.music }, action.music ? { kind: "music" } : { kind: "none" });
+    case "patchMusic": {
+      if (!t.music) return state;
+      return commit(state, { ...t, music: { ...t.music, ...action.patch } });
+    }
     case "undo": {
       const prev = state.history[state.history.length - 1];
       if (!prev) return state;

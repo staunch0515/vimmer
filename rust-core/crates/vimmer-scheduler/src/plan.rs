@@ -69,6 +69,8 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
         resolution: timeline.resolution,
         scenes: timeline.scenes[chunk.scenes.clone()].to_vec(),
         subtitles,
+        // Music is mixed once, over the joined video, so chunks never carry it.
+        music: None,
     }
 }
 
@@ -122,6 +124,7 @@ mod tests {
                 .map(|(i, &ms)| scene(&format!("s{i}"), ms))
                 .collect(),
             subtitles: vec![],
+            music: None,
         }
     }
 

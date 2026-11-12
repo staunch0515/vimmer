@@ -181,6 +181,19 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
             })}
           </Track>
 
+          <Track label="Music" height={TRACK_H}>
+            {timeline.music && (
+              <div
+                className={selection.kind === "music" ? "block music active" : "block music"}
+                style={{ left: 0, width: Math.max(4, (totalMs / 1000) * pps - 2) }}
+                onPointerDown={() => onSelect({ kind: "music" })}
+                title={timeline.music.source}
+              >
+                <span className="block-title">♪ {timeline.music.source || "music"}</span>
+              </div>
+            )}
+          </Track>
+
           <Track label="Audio" height={TRACK_H}>
             {timeline.scenes.map((scene, i) =>
               scene.audio ? (

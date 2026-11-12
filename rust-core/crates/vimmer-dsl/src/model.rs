@@ -81,8 +81,26 @@ pub struct SubtitleCue {
     pub text: String,
 }
 
+fn default_music_volume() -> f32 {
+    0.3
+}
+
+/// Background music for the whole video. Loops until the timeline ends, with optional fades.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Music {
+    /// Path relative to the renderer's public dir.
+    pub source: String,
+    /// Linear gain from 0.0 (silent) to 1.0 (full level).
+    #[serde(default = "default_music_volume")]
+    pub volume: f32,
+    #[serde(default)]
+    pub fade_in_ms: u64,
+    #[serde(default)]
+    pub fade_out_ms: u64,
+}
+
 /// Root document: the full timeline handed from the Rust core to Remotion.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoTimeline {
     pub fps: u32,
     pub resolution: Resolution,
@@ -90,6 +108,9 @@ pub struct VideoTimeline {
     /// Global subtitle track. Independent of scenes, so cues can span scene boundaries.
     #[serde(default)]
     pub subtitles: Vec<SubtitleCue>,
+    /// Background music across the whole timeline.
+    #[serde(default)]
+    pub music: Option<Music>,
 }
 
 impl VideoTimeline {

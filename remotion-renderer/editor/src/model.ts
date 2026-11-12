@@ -38,6 +38,11 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
   }
   const total = totalMs(t);
   if (total > MAX_DURATION_MS) problems.push(`Timeline is ${(total / 1000).toFixed(1)} s; the limit is 200 s.`);
+  if (t.music) {
+    if (!t.music.source.trim()) problems.push("Background music has no file.");
+    if (t.music.volume < 0 || t.music.volume > 1) problems.push("Music volume must be between 0 and 1.");
+    if (t.music.fade_in_ms + t.music.fade_out_ms > total) problems.push("Music fades are longer than the video.");
+  }
   t.subtitles?.forEach((c, i) => {
     if (c.start_ms >= c.end_ms) problems.push(`Subtitle ${i + 1} must start before it ends.`);
     else if (c.end_ms > total) problems.push(`Subtitle ${i + 1} runs past the end of the timeline.`);
@@ -61,6 +66,7 @@ export const frameToMs = (frame: number, fps: number): number => Math.round((fra
 export type Selection =
   | { kind: "scene"; index: number }
   | { kind: "subtitle"; index: number }
+  | { kind: "music" }
   | { kind: "none" };
 
 export const sortCues = (cues: SubtitleCue[]): SubtitleCue[] =>

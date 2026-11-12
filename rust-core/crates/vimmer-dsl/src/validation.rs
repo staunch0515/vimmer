@@ -6,7 +6,7 @@ use crate::model::{VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS};
 
 const ALLOWED_RESOLUTIONS: [(u32, u32); 2] = [(1920, 1080), (1080, 1920)];
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 pub enum ValidationError {
     #[error("timeline has no scenes")]
     NoScenes,
@@ -40,6 +40,12 @@ pub enum ValidationError {
     },
     #[error("subtitle {0} has empty text")]
     EmptySubtitle(usize),
+    #[error("music has an empty source")]
+    EmptyMusicSource,
+    #[error("music volume {0} must be between 0 and 1")]
+    BadMusicVolume(f32),
+    #[error("music fades ({fade_in_ms} ms in, {fade_out_ms} ms out) are longer than the timeline")]
+    MusicFadesTooLong { fade_in_ms: u64, fade_out_ms: u64 },
 }
 
 /// Checks a timeline against the DSL rules. Returns every violation found,
@@ -106,6 +112,21 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
         }
     }
 
+    if let Some(music) = &timeline.music {
+        if music.source.trim().is_empty() {
+            errors.push(ValidationError::EmptyMusicSource);
+        }
+        if !(0.0..=1.0).contains(&music.volume) {
+            errors.push(ValidationError::BadMusicVolume(music.volume));
+        }
+        if music.fade_in_ms + music.fade_out_ms > total_ms {
+            errors.push(ValidationError::MusicFadesTooLong {
+                fade_in_ms: music.fade_in_ms,
+                fade_out_ms: music.fade_out_ms,
+            });
+        }
+    }
+
     if errors.is_empty() {
         Ok(())
     } else {
@@ -140,6 +161,7 @@ mod tests {
             },
             scenes,
             subtitles: vec![],
+            music: None,
         }
     }
 
@@ -160,6 +182,7 @@ mod tests {
             },
             scenes: vec![bad, scene("dup", 1000)],
             subtitles: vec![],
+            music: None,
         };
         let errs = validate(&t).unwrap_err();
         assert!(errs.contains(&ValidationError::UnsupportedFps(24)));
@@ -215,6 +238,32 @@ mod tests {
             total_ms: 5_000
         }));
         assert!(errs.contains(&ValidationError::EmptySubtitle(2)));
+    }
+
+    #[test]
+    fn checks_music() {
+        use crate::model::Music;
+        let mut t = timeline(vec![scene("a", 5_000)]);
+        t.music = Some(Music {
+            source: " ".into(),
+            volume: 1.5,
+            fade_in_ms: 4_000,
+            fade_out_ms: 4_000,
+        });
+        let errs = validate(&t).unwrap_err();
+        assert!(errs.contains(&ValidationError::EmptyMusicSource));
+        assert!(errs.contains(&ValidationError::BadMusicVolume(1.5)));
+        assert!(errs.contains(&ValidationError::MusicFadesTooLong {
+            fade_in_ms: 4_000,
+            fade_out_ms: 4_000
+        }));
+        t.music = Some(Music {
+            source: "assets/m.mp3".into(),
+            volume: 0.3,
+            fade_in_ms: 500,
+            fade_out_ms: 500,
+        });
+        assert!(validate(&t).is_ok());
     }
 
     #[test]

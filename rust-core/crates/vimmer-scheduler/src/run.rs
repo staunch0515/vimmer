@@ -28,6 +28,10 @@ pub enum SchedulerError {
     Join(String),
     #[error("render cancelled")]
     Cancelled,
+    #[error("music file not found: {0}")]
+    MusicMissing(String),
+    #[error("mixing music failed: {0}")]
+    Mix(String),
 }
 
 fn join(errors: &[ValidationError]) -> String {
@@ -108,6 +112,13 @@ pub async fn render_timeline_with(
     let mut warnings = Vec::new();
     ctx.check()?;
 
+    if let Some(music) = &timeline.music {
+        let path = cfg.public_dir.join(&music.source);
+        if !path.is_file() {
+            return Err(SchedulerError::MusicMissing(path.display().to_string()));
+        }
+    }
+
     // Narration can stretch scenes, so the timeline is validated again afterwards.
     let narrated = narrate_scenes(
         &mut timeline,
@@ -143,6 +154,24 @@ pub async fn render_timeline_with(
     });
     concat(&rendered, &cfg, &ctx).await?;
 
+    if let Some(music) = timeline.music.clone() {
+        ctx.emit(Progress::Stage {
+            name: "Adding music".into(),
+        });
+        let mixed = cfg.work_dir.join("mixed.mp4");
+        crate::music::mix_music(
+            &cfg.output,
+            &mixed,
+            &music,
+            timeline.total_duration_ms(),
+            &cfg,
+            &ctx,
+        )
+        .await?;
+        tokio::fs::copy(&mixed, &cfg.output).await?;
+        let _ = tokio::fs::remove_file(&mixed).await;
+    }
+
     ctx.emit(Progress::Done {
         output: cfg.output.display().to_string(),
     });
@@ -155,7 +184,7 @@ pub async fn render_timeline_with(
 }
 
 /// Runs an external command in its own process group, so cancelling can kill the whole tree.
-async fn run_process(
+pub(crate) async fn run_process(
     mut cmd: tokio::process::Command,
     cfg: &SchedulerConfig,
     ctx: &RenderContext,

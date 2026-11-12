@@ -55,7 +55,7 @@ const initial: EditorState = {
 export const App = () => {
   const [state, dispatch] = useReducer(reducer, initial);
   const [frame, setFrame] = useState(0);
-  const [tab, setTab] = useState<"scene" | "subtitles">("scene");
+  const [tab, setTab] = useState<"scene" | "subtitles" | "music">("scene");
   const [path, setPath] = useState<string | null>(null);
   // The last saved (or opened) document. Unsaved changes = the current document differs from it.
   // A recovered draft starts as "different", so it reads as unsaved until the user saves it.
@@ -193,6 +193,7 @@ export const App = () => {
     dispatch({ type: "select", selection });
     if (selection.kind === "subtitle") setTab("subtitles");
     if (selection.kind === "scene") setTab("scene");
+    if (selection.kind === "music") setTab("music");
   };
 
   const seek = (f: number) => {
