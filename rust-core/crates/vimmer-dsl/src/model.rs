@@ -44,8 +44,73 @@ pub struct Narration {
     pub voice: Option<String>,
 }
 
+fn default_scale() -> f32 {
+    1.0
+}
+
+fn default_opacity() -> f32 {
+    1.0
+}
+
+/// How a scene's keyframes ease between this keyframe and the next one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Easing {
+    Linear,
+    EaseIn,
+    EaseOut,
+    #[default]
+    EaseInOut,
+}
+
+/// One animation pose of a scene's image layer. Values between keyframes are interpolated.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Keyframe {
+    /// Time from the start of the scene, in milliseconds.
+    pub at_ms: u64,
+    /// Zoom factor; 1.0 is the unscaled image.
+    #[serde(default = "default_scale")]
+    pub scale: f32,
+    /// Horizontal offset as a percentage of the frame width.
+    #[serde(default)]
+    pub x: f32,
+    /// Vertical offset as a percentage of the frame height.
+    #[serde(default)]
+    pub y: f32,
+    /// Opacity of the image layer, from 0.0 (invisible) to 1.0 (opaque).
+    #[serde(default = "default_opacity")]
+    pub opacity: f32,
+    /// Clockwise rotation in degrees.
+    #[serde(default)]
+    pub rotation: f32,
+    /// Easing of the segment that leaves this keyframe, toward the next one.
+    #[serde(default)]
+    pub ease: Easing,
+}
+
+/// How the incoming scene appears over the held last frame of the previous scene.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionKind {
+    Fade,
+    SlideLeft,
+    SlideRight,
+    SlideUp,
+    SlideDown,
+    ZoomIn,
+    WipeLeft,
+}
+
+/// Transition into a scene from the previous one. It overlaps the start of this scene:
+/// the scene's nominal start and the timeline's total duration do not change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Transition {
+    pub kind: TransitionKind,
+    pub duration_ms: u64,
+}
+
 /// One scene on the timeline.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
     pub id: String,
     pub duration_ms: u64,
@@ -64,6 +129,12 @@ pub struct Scene {
     /// When set and `audio` is empty, the scene's text is synthesized as narration at render time.
     #[serde(default)]
     pub narration: Option<Narration>,
+    /// Transition from the previous scene. Ignored on the first scene (validation rejects it).
+    #[serde(default)]
+    pub transition_in: Option<Transition>,
+    /// Animation of the image layer. When non-empty it replaces `motion`.
+    #[serde(default)]
+    pub keyframes: Vec<Keyframe>,
 }
 
 impl Scene {
@@ -138,5 +209,52 @@ impl VideoTimeline {
                 start
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scene_without_new_fields_gets_defaults() {
+        let json = r#"{"id":"a","duration_ms":1000,"text":"hi"}"#;
+        let scene: Scene = serde_json::from_str(json).unwrap();
+        assert_eq!(scene.transition_in, None);
+        assert!(scene.keyframes.is_empty());
+        assert_eq!(scene.motion, MotionType::Static);
+    }
+
+    #[test]
+    fn keyframe_fields_default_to_identity_pose() {
+        let kf: Keyframe = serde_json::from_str(r#"{"at_ms":500}"#).unwrap();
+        assert_eq!(
+            kf,
+            Keyframe {
+                at_ms: 500,
+                scale: 1.0,
+                x: 0.0,
+                y: 0.0,
+                opacity: 1.0,
+                rotation: 0.0,
+                ease: Easing::EaseInOut,
+            }
+        );
+    }
+
+    #[test]
+    fn easing_and_transition_kinds_use_snake_case() {
+        let kf: Keyframe =
+            serde_json::from_str(r#"{"at_ms":0,"ease":"ease_in_out"}"#).unwrap();
+        assert_eq!(kf.ease, Easing::EaseInOut);
+        let t: Transition =
+            serde_json::from_str(r#"{"kind":"wipe_left","duration_ms":400}"#).unwrap();
+        assert_eq!(t.kind, TransitionKind::WipeLeft);
+    }
+
+    #[test]
+    fn unknown_transition_kind_is_a_parse_error() {
+        let err = serde_json::from_str::<Transition>(r#"{"kind":"spin","duration_ms":400}"#);
+        assert!(err.is_err());
     }
 }

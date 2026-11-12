@@ -32,3 +32,17 @@ fn fixture_round_trips_through_serde() {
     let again: VideoTimeline = serde_json::from_str(&json).unwrap();
     assert_eq!(timeline, again);
 }
+
+#[test]
+fn motion_demo_fixture_parses_and_validates() {
+    let raw = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures/motion-demo.json"),
+    )
+    .expect("motion demo readable");
+    let timeline: VideoTimeline = serde_json::from_str(&raw).expect("motion demo parses");
+    validate(&timeline).expect("motion demo is valid");
+    assert_eq!(timeline.total_duration_ms(), 12_000);
+    assert!(timeline.scenes[1].transition_in.is_some());
+    assert!(!timeline.scenes[0].keyframes.is_empty());
+    assert!(!timeline.scenes[2].keyframes.is_empty());
+}

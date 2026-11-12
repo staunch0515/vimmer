@@ -1,11 +1,14 @@
-import { AbsoluteFill, Img, interpolate, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Img, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { useContext } from "react";
 import { AssetUrlContext, resolveAsset } from "../assets";
-import type { MotionType } from "../types/timeline";
+import { sampleKeyframes, type KeyframePose } from "../motion/keyframes";
+import type { Keyframe, MotionType } from "../types/timeline";
 
 type Props = {
   src: string;
   motion: MotionType;
+  // When non-empty, these replace `motion`.
+  keyframes?: Keyframe[];
   durationInFrames: number;
 };
 
@@ -28,18 +31,23 @@ const transformFor = (motion: MotionType, p: number): Transform => {
 };
 
 // Image with a blurred copy of itself behind it, so mismatched aspect ratios
-// are padded with a soft background instead of flat bars.
-export const KenBurnsImage: React.FC<Props> = ({ src, motion, durationInFrames }) => {
+// are padded with a soft background instead of flat bars. With keyframes, the whole
+// image layer (both copies) takes the keyframed opacity, so a fade-out reveals the background.
+export const KenBurnsImage: React.FC<Props> = ({ src, motion, keyframes, durationInFrames }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const url = resolveAsset(src, useContext(AssetUrlContext));
   const p = interpolate(frame, [0, Math.max(1, durationInFrames - 1)], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const { scale, x, y } = transformFor(motion, p);
+  const pose: KeyframePose =
+    keyframes && keyframes.length > 0
+      ? sampleKeyframes(keyframes, (frame * 1000) / fps)
+      : { ...transformFor(motion, p), opacity: 1, rotation: 0 };
 
   return (
-    <AbsoluteFill style={{ overflow: "hidden", backgroundColor: "#09090b" }}>
+    <AbsoluteFill style={{ overflow: "hidden", backgroundColor: "#09090b", opacity: pose.opacity }}>
       <Img
         src={url}
         style={{
@@ -60,7 +68,7 @@ export const KenBurnsImage: React.FC<Props> = ({ src, motion, durationInFrames }
           width: "100%",
           height: "100%",
           objectFit: "contain",
-          transform: `translate3d(${x}%, ${y}%, 0) scale(${scale})`,
+          transform: `translate3d(${pose.x}%, ${pose.y}%, 0) rotate(${pose.rotation}deg) scale(${pose.scale})`,
           willChange: "transform",
         }}
       />
