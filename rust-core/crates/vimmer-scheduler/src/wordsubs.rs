@@ -77,7 +77,10 @@ pub(crate) fn narration_clips(
             }
             let text = scene.text.clone().filter(|t| !t.trim().is_empty())?;
             let scene_start = frame_ms(starts[i]);
-            let scene_end = frame_ms(starts[i] + scene.duration_frames(timeline.fps));
+            // Validation measures the timeline as the sum of `duration_ms`, which can be a few
+            // ms shorter than the frame-rounded end, so cues must stay inside both.
+            let ms_end: u64 = timeline.scenes[..=i].iter().map(|s| s.duration_ms).sum();
+            let scene_end = frame_ms(starts[i] + scene.duration_frames(timeline.fps)).min(ms_end);
             Some(NarrationClip {
                 scene_index: i,
                 text,
@@ -910,6 +913,39 @@ mod tests {
         .await
         .unwrap();
         assert!(warnings.is_empty(), "disabled: not even a warning");
+    }
+
+    #[test]
+    fn clip_end_never_passes_the_validated_timeline_length() {
+        // 4920 ms and 4650 ms round up to 148 and 140 frames: frame time 9600 ms, sum 9570 ms.
+        let t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![
+                narrated("zh", 4920, "你好。"),
+                narrated("ja", 4650, "こんにちは。"),
+            ],
+            subtitles: vec![],
+            music: None,
+        };
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let clips = narration_clips(&t, &cfg);
+        assert_eq!(clips[1].scene_end_ms, 9_570);
+        assert_eq!(t.total_duration_ms(), 9_570);
+        let mut subs = vec![];
+        let words = vec![w("こん", 4_950, 6_000), w("にちは。", 6_000, 9_500)];
+        assert!(merge_clip_words(&mut subs, &clips[1], &words, 42));
+        assert_eq!(
+            subs[0].end_ms, 9_570,
+            "held line is cut at the validated end"
+        );
     }
 
     struct JoiningTranscriber {

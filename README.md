@@ -184,7 +184,9 @@ cd rust-core && cargo run -p vimmer-cli -- ../fixtures/word-subtitles-demo.json 
   flash attention off); it is off by default because on an Intel Mac it nearly doubled
   recognition time with no visible gain on TTS speech. On Intel Macs whisper runs CPU-only
   (`-ng`): the Metal backend returned garbage there (`VIMMER_WHISPER_GPU=1/0` overrides).
-  Results are cached next to the narration WAV in `public/generated/tts/`. Expect roughly
+  Every whisper call encodes a full 30 s window, so clips of the same language are joined
+  (1 s of silence between them, at most 28 s per call), recognized once, and split back by
+  offset. Results are cached next to the narration WAV in `public/generated/tts/`. Expect roughly
   40 s per clip with large-v3-turbo on a 4-core Intel CPU; a smaller model
   (`--whisper-model …/ggml-small.bin`) is much faster.
 - **Alignment**: the script is cut into units (an English word with its punctuation; one
