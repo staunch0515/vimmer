@@ -1,0 +1,71 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "scenes": [
+    {
+      "id": "intro",
+      "duration_ms": 3000,
+      "text": "Music only",
+      "highlights": [],
+      "image": "assets/sample.png",
+      "motion": "zoom_in",
+      "audio": null
+    },
+    {
+      "id": "first",
+      "duration_ms": 3500,
+      "text": "The music steps back while I am talking.",
+      "highlights": ["steps back"],
+      "image": "assets/design.png",
+      "motion": "pan_left",
+      "audio": null,
+      "narration": {
+        "voice": "Samantha"
+      }
+    },
+    {
+      "id": "breath",
+      "duration_ms": 2500,
+      "text": null,
+      "highlights": [],
+      "image": "assets/quizbuks-taker-cover-center.png",
+      "motion": "static",
+      "audio": null,
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 400
+      }
+    },
+    {
+      "id": "second",
+      "duration_ms": 3500,
+      "text": "And it comes back up in the pauses.",
+      "highlights": ["comes back"],
+      "image": "assets/sample.jpeg",
+      "motion": "zoom_out",
+      "audio": null,
+      "narration": {
+        "voice": "Samantha"
+      }
+    },
+    {
+      "id": "outro",
+      "duration_ms": 3000,
+      "text": "Music only again",
+      "highlights": [],
+      "image": "assets/sample.png",
+      "motion": "static",
+      "audio": null
+    }
+  ],
+  "subtitles": [],
+  "music": {
+    "source": "assets/pad-loop.m4a",
+    "volume": 0.6,
+    "fade_in_ms": 500,
+    "fade_out_ms": 1000
+  }
+}

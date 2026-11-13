@@ -79,12 +79,23 @@ export type SubtitleCue = {
   words?: WordTiming[];
 };
 
+// Ducking: the music drops under each scene's audio (narration or `audio`) and comes back up
+// between them. Omitted = on with the defaults below. Applied by the Rust core when it mixes the
+// soundtrack; the preview plays the music without it.
+export type Duck = {
+  enabled?: boolean; // default true
+  depth_db?: number; // -40..0, default -12 (relative to `volume`)
+  attack_ms?: number; // 10..5000, default 200: fully down when the speech starts
+  release_ms?: number; // 10..5000, default 400: back up after the speech ends
+};
+
 // Background music: loops under the whole video. Mixed in by the Rust core after rendering.
 export type Music = {
   source: string;
   volume: number;
   fade_in_ms: number;
   fade_out_ms: number;
+  duck?: Duck;
 };
 
 export type VideoTimeline = {

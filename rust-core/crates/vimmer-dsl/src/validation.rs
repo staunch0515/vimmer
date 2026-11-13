@@ -59,6 +59,10 @@ pub enum ValidationError {
     BadMusicVolume(f32),
     #[error("music fades ({fade_in_ms} ms in, {fade_out_ms} ms out) are longer than the timeline")]
     MusicFadesTooLong { fade_in_ms: u64, fade_out_ms: u64 },
+    #[error("music duck depth {0} dB must be between -40 and 0")]
+    BadDuckDepth(f32),
+    #[error("music duck attack ({attack_ms} ms) and release ({release_ms} ms) must each be between 10 and 5000 ms")]
+    BadDuckRamp { attack_ms: u64, release_ms: u64 },
     #[error("scene `{0}` is the first scene, so it cannot have a transition_in")]
     TransitionOnFirstScene(String),
     #[error("scene `{0}` has a zero-length transition")]
@@ -273,6 +277,17 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
                 fade_out_ms: music.fade_out_ms,
             });
         }
+        let duck = &music.duck;
+        if !(-40.0..=0.0).contains(&duck.depth_db) {
+            errors.push(ValidationError::BadDuckDepth(duck.depth_db));
+        }
+        let ramp = 10..=5_000;
+        if !ramp.contains(&duck.attack_ms) || !ramp.contains(&duck.release_ms) {
+            errors.push(ValidationError::BadDuckRamp {
+                attack_ms: duck.attack_ms,
+                release_ms: duck.release_ms,
+            });
+        }
     }
 
     if errors.is_empty() {
@@ -470,6 +485,7 @@ mod tests {
             volume: 1.5,
             fade_in_ms: 4_000,
             fade_out_ms: 4_000,
+            duck: Default::default(),
         });
         let errs = validate(&t).unwrap_err();
         assert!(errs.contains(&ValidationError::EmptyMusicSource));
@@ -483,8 +499,70 @@ mod tests {
             volume: 0.3,
             fade_in_ms: 500,
             fade_out_ms: 500,
+            duck: Default::default(),
         });
         assert!(validate(&t).is_ok());
+    }
+
+    #[test]
+    fn checks_duck_ranges() {
+        use crate::model::{Duck, Music};
+        let mut t = timeline(vec![scene("a", 5_000)]);
+        let music = |duck: Duck| Music {
+            source: "assets/m.mp3".into(),
+            volume: 0.3,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            duck,
+        };
+        for duck in [
+            Duck::default(),
+            Duck {
+                enabled: false,
+                ..Duck::default()
+            },
+            Duck {
+                depth_db: 0.0,
+                attack_ms: 10,
+                release_ms: 5_000,
+                ..Duck::default()
+            },
+            Duck {
+                depth_db: -40.0,
+                ..Duck::default()
+            },
+        ] {
+            t.music = Some(music(duck));
+            assert!(validate(&t).is_ok(), "{duck:?}");
+        }
+        t.music = Some(music(Duck {
+            depth_db: 3.0,
+            ..Duck::default()
+        }));
+        assert_eq!(
+            validate(&t).unwrap_err(),
+            vec![ValidationError::BadDuckDepth(3.0)]
+        );
+        t.music = Some(music(Duck {
+            depth_db: f32::NAN,
+            ..Duck::default()
+        }));
+        assert!(matches!(
+            validate(&t).unwrap_err()[0],
+            ValidationError::BadDuckDepth(_)
+        ));
+        t.music = Some(music(Duck {
+            attack_ms: 0,
+            release_ms: 6_000,
+            ..Duck::default()
+        }));
+        assert_eq!(
+            validate(&t).unwrap_err(),
+            vec![ValidationError::BadDuckRamp {
+                attack_ms: 0,
+                release_ms: 6_000
+            }]
+        );
     }
 
     #[test]

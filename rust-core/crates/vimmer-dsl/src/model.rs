@@ -182,6 +182,56 @@ fn default_music_volume() -> f32 {
     0.3
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_duck_depth_db() -> f32 {
+    -12.0
+}
+
+fn default_duck_attack_ms() -> u64 {
+    200
+}
+
+fn default_duck_release_ms() -> u64 {
+    400
+}
+
+/// Lowers the background music while a scene's audio (narration or `scene.audio`) plays.
+/// On by default: a timeline without a `duck` block gets these defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Duck {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Gain change while ducked, in dB relative to the music's own volume (0 = no change).
+    #[serde(default = "default_duck_depth_db")]
+    pub depth_db: f32,
+    /// How long the music takes to go down. It is fully down when the speech starts.
+    #[serde(default = "default_duck_attack_ms")]
+    pub attack_ms: u64,
+    /// How long the music takes to come back up after the speech ends.
+    #[serde(default = "default_duck_release_ms")]
+    pub release_ms: u64,
+}
+
+impl Default for Duck {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            depth_db: default_duck_depth_db(),
+            attack_ms: default_duck_attack_ms(),
+            release_ms: default_duck_release_ms(),
+        }
+    }
+}
+
+impl Duck {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Background music for the whole video. Loops until the timeline ends, with optional fades.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Music {
@@ -194,6 +244,9 @@ pub struct Music {
     pub fade_in_ms: u64,
     #[serde(default)]
     pub fade_out_ms: u64,
+    /// Ducking under scene audio. Omitted = on with the defaults (and not written back out).
+    #[serde(default, skip_serializing_if = "Duck::is_default")]
+    pub duck: Duck,
 }
 
 /// Root document: the full timeline handed from the Rust core to Remotion.
@@ -293,6 +346,39 @@ mod tests {
         assert_eq!(cue.words.len(), 2);
         assert_eq!(cue.words[1].start_ms, 400);
         assert_eq!(serde_json::to_string(&cue).unwrap(), json);
+    }
+
+    #[test]
+    fn music_without_duck_ducks_with_defaults_and_writes_no_duck_key() {
+        let json = r#"{"source":"m.mp3","volume":0.3,"fade_in_ms":0,"fade_out_ms":0}"#;
+        let music: Music = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            music.duck,
+            Duck {
+                enabled: true,
+                depth_db: -12.0,
+                attack_ms: 200,
+                release_ms: 400
+            }
+        );
+        assert_eq!(serde_json::to_string(&music).unwrap(), json);
+    }
+
+    #[test]
+    fn partial_duck_block_fills_in_defaults_and_round_trips() {
+        let music: Music =
+            serde_json::from_str(r#"{"source":"m.mp3","duck":{"enabled":false}}"#).unwrap();
+        assert!(!music.duck.enabled);
+        assert_eq!(music.duck.depth_db, -12.0);
+        let music: Music =
+            serde_json::from_str(r#"{"source":"m.mp3","duck":{"depth_db":-6,"release_ms":800}}"#)
+                .unwrap();
+        assert!(music.duck.enabled);
+        assert_eq!(music.duck.depth_db, -6.0);
+        assert_eq!(music.duck.attack_ms, 200);
+        assert_eq!(music.duck.release_ms, 800);
+        let back: Music = serde_json::from_str(&serde_json::to_string(&music).unwrap()).unwrap();
+        assert_eq!(back, music);
     }
 
     #[test]

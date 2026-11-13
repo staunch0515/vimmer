@@ -8,7 +8,7 @@ pub mod srt;
 pub mod validation;
 
 pub use model::{
-    AudioMapping, Easing, Keyframe, MotionType, Music, Narration, Resolution, Scene, SubtitleCue,
+    AudioMapping, Duck, Easing, Keyframe, MotionType, Music, Narration, Resolution, Scene, SubtitleCue,
     Transition, TransitionKind, VideoTimeline, WordTiming, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
 };
 pub use srt::{parse_srt, SrtError};

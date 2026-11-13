@@ -31,7 +31,7 @@ pub enum SchedulerError {
     Cancelled,
     #[error("music file not found: {0}")]
     MusicMissing(String),
-    #[error("mixing music failed: {0}")]
+    #[error("mixing audio failed: {0}")]
     Mix(String),
 }
 
@@ -182,7 +182,8 @@ pub async fn render_timeline_with(
     ctx.emit(Progress::Stage {
         name: "Checking audio".into(),
     });
-    check_audio(&timeline, &cfg, probe, &mut warnings, &ctx).await?;
+    let placements = crate::audio::place_scene_audio(&timeline);
+    let clip_ms = check_audio(&timeline, &placements, &cfg, probe, &mut warnings, &ctx).await?;
 
     let chunks = plan_chunks(&timeline, cfg.chunk_ms);
     ctx.emit(Progress::Stage {
@@ -193,25 +194,30 @@ pub async fn render_timeline_with(
     ctx.emit(Progress::Stage {
         name: "Joining segments".into(),
     });
-    concat(&rendered, &cfg, &ctx).await?;
-
-    if let Some(music) = timeline.music.clone() {
-        ctx.emit(Progress::Stage {
-            name: "Adding music".into(),
-        });
-        let mixed = cfg.work_dir.join("mixed.mp4");
-        crate::music::mix_music(
-            &cfg.output,
-            &mixed,
-            &music,
-            timeline.total_duration_ms(),
-            &cfg,
-            &ctx,
-        )
-        .await?;
-        tokio::fs::copy(&mixed, &cfg.output).await?;
-        let _ = tokio::fs::remove_file(&mixed).await;
+    // Chunks are rendered without audio; the whole soundtrack is mixed once, from the timeline,
+    // so the audio never drifts at a seam (see audio.rs).
+    let joined = cfg.work_dir.join("joined.mp4");
+    concat(&rendered, &joined, &cfg, &ctx).await?;
+    if let Some(parent) = cfg.output.parent() {
+        tokio::fs::create_dir_all(parent).await?;
     }
+    ctx.emit(Progress::Stage {
+        name: "Mixing audio".into(),
+    });
+    let mixed = crate::audio::mux_soundtrack(
+        &timeline,
+        &placements,
+        &clip_ms,
+        &joined,
+        &cfg.output,
+        &cfg,
+        &ctx,
+    )
+    .await?;
+    if !mixed {
+        tokio::fs::copy(&joined, &cfg.output).await?;
+    }
+    let _ = tokio::fs::remove_file(&joined).await;
 
     ctx.emit(Progress::Done {
         output: cfg.output.display().to_string(),
@@ -305,15 +311,18 @@ async fn preprocess_images(
     Ok(outputs.len())
 }
 
-/// Probes audio durations and warns when a clip runs past the end of its scene.
+/// Probes the length of every placed clip and warns when one runs past the end of its scene.
+/// Returns the lengths in the order of `placements`.
 async fn check_audio(
     timeline: &VideoTimeline,
+    placements: &[crate::audio::Placement],
     cfg: &SchedulerConfig,
     probe: Arc<dyn AudioProbe>,
     warnings: &mut Vec<String>,
     ctx: &RenderContext,
-) -> Result<(), SchedulerError> {
-    for scene in &timeline.scenes {
+) -> Result<Vec<u64>, SchedulerError> {
+    let mut durations = Vec::with_capacity(placements.len());
+    for (index, scene) in timeline.scenes.iter().enumerate() {
         let Some(audio) = &scene.audio else { continue };
         let path = cfg.public_dir.join(&audio.source);
         let probe = probe.clone();
@@ -327,9 +336,12 @@ async fn check_audio(
                 scene.id, audio.source
             ));
         }
+        if placements.iter().any(|p| p.scene == index) {
+            durations.push(duration);
+        }
         ctx.check()?;
     }
-    Ok(())
+    Ok(durations)
 }
 
 /// Renders each chunk through the Remotion CLI, at most `render_concurrency` at a time.
@@ -396,6 +408,8 @@ async fn run_remotion(
         .args(["remotion", "render", "src/index.ts", "Timeline"])
         .arg(out)
         .arg(format!("--props={}", props.display()))
+        // The soundtrack is mixed once for the whole timeline (audio.rs), never per chunk.
+        .arg("--muted")
         .arg("--log=error");
     let output = run_process(cmd, cfg, ctx)
         .await
@@ -407,9 +421,10 @@ async fn run_remotion(
     }
 }
 
-/// Joins rendered chunks with ffmpeg's concat demuxer without re-encoding.
+/// Joins rendered (silent) chunks into `out` with ffmpeg's concat demuxer without re-encoding.
 async fn concat(
     parts: &[PathBuf],
+    out: &Path,
     cfg: &SchedulerConfig,
     ctx: &RenderContext,
 ) -> Result<(), SchedulerError> {
@@ -425,9 +440,6 @@ async fn concat(
         .collect();
     tokio::fs::write(&list, body).await?;
 
-    if let Some(parent) = cfg.output.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
     let mut cmd = tokio::process::Command::new(&cfg.ffmpeg);
     cmd.args([
         "-y",
@@ -441,8 +453,8 @@ async fn concat(
         "-i",
     ])
     .arg(&list)
-    .args(["-c", "copy"])
-    .arg(&cfg.output);
+    .args(["-c", "copy", "-an"])
+    .arg(out);
     let output = run_process(cmd, cfg, ctx).await?;
     if output.status.success() {
         Ok(())
