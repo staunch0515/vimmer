@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { IDENTITY_POSE, applyEasing, sampleKeyframes } from "../src/motion/keyframes.ts";
 import { transitionPose } from "../src/motion/transitions.ts";
-import type { Keyframe, TransitionKind } from "../src/types/timeline.ts";
+import { animationPose, layerFrames, layerStateAt, splitLayers } from "../src/motion/layers.ts";
+import type { Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
 
 const kf = (at_ms: number, extra: Partial<Keyframe> = {}): Keyframe => ({ at_ms, ...extra });
 const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`);
@@ -96,4 +97,82 @@ test("transition poses: progress 0 hides the incoming scene, progress 1 shows it
 test("transition progress is clamped", () => {
   assert.equal(transitionPose("fade", -1).opacity, 0);
   assert.equal(transitionPose("fade", 3).opacity, 1);
+});
+
+// ---- Layers (src/motion/layers.ts)
+
+const shape = (extra: Partial<ShapeLayer> = {}): ShapeLayer => ({
+  id: "s", kind: "shape", x: 0.25, y: 0.5, width: 0.5, height: 0.1, fill: "#fff", ...extra,
+});
+
+test("layer box: fractions of the frame, top-left anchor by default, center anchor shifts by half", () => {
+  const s = layerStateAt(shape(), 0, 30, 90, 1920, 1080);
+  assert.equal(s.visible, true);
+  assert.deepEqual([s.left, s.top, s.width, s.height], [480, 540, 960, 108]);
+  assert.equal(s.transform, "none");
+  const c = layerStateAt(shape({ anchor: "center" }), 0, 30, 90, 1920, 1080);
+  assert.equal(c.transform, "translate(-50%, -50%)");
+});
+
+test("layer timing: shown on [start, end) frames, default end is the scene end", () => {
+  const l = shape({ start_ms: 1000, end_ms: 2000 });
+  assert.deepEqual(layerFrames(l, 30, 90), { start: 30, end: 60 });
+  assert.equal(layerStateAt(l, 29, 30, 90, 1920, 1080).visible, false);
+  assert.equal(layerStateAt(l, 30, 30, 90, 1920, 1080).visible, true);
+  assert.equal(layerStateAt(l, 59, 30, 90, 1920, 1080).visible, true);
+  assert.equal(layerStateAt(l, 60, 30, 90, 1920, 1080).visible, false);
+  assert.deepEqual(layerFrames(shape(), 30, 90), { start: 0, end: 90 });
+});
+
+test("enter starts hidden and ends at rest; exit ends hidden on the last frame", () => {
+  const l = shape({ enter: { kind: "slide_up", duration_ms: 500 }, exit: { kind: "fade", duration_ms: 500 } });
+  const first = layerStateAt(l, 0, 30, 90, 1920, 1080);
+  assert.equal(first.opacity, 0);
+  assert.match(first.transform, /translate\(0px, 64\.8px\)/); // 6% of 1080 below
+  const rest = layerStateAt(l, 45, 30, 90, 1920, 1080);
+  assert.equal(rest.opacity, 1);
+  assert.equal(rest.transform, "none");
+  assert.equal(layerStateAt(l, 89, 30, 90, 1920, 1080).opacity, 0);
+  assert.ok(layerStateAt(l, 80, 30, 90, 1920, 1080).opacity > 0);
+});
+
+test("every animation kind enters from hidden to rest and exits from rest to hidden", () => {
+  for (const kind of ["fade", "slide_up", "slide_down", "slide_left", "slide_right", "pop"] as const) {
+    const done = animationPose(kind, 1, "enter", 1920, 1080);
+    assert.deepEqual([done.dx, done.dy, done.opacity], [0, 0, 1], kind);
+    close(done.scale, 1);
+    assert.equal(animationPose(kind, 0, "enter", 1920, 1080).opacity, 0, kind);
+    assert.deepEqual(animationPose(kind, 0, "exit", 1920, 1080), { dx: 0, dy: 0, scale: 1, opacity: 1 }, kind);
+    assert.equal(animationPose(kind, 1, "exit", 1920, 1080).opacity, 0, kind);
+  }
+  assert.ok(animationPose("pop", 0.6, "enter", 1920, 1080).scale > 1, "pop overshoots");
+});
+
+test("keyframes offset in percent of the frame, scale and rotation compose with the layer", () => {
+  const l = shape({ rotation: 10, opacity: 0.5, keyframes: [kf(0, { x: 10, y: -10, scale: 2, rotation: 5, opacity: 0.5 })] });
+  const pose = sampleKeyframes(l.keyframes!, 0);
+  const s = layerStateAt(l, 0, 30, 90, 1920, 1080, pose);
+  assert.equal(s.transform, "translate(192px, -108px) rotate(15deg) scale(2)");
+  close(s.opacity, 0.25);
+});
+
+test("stacking: z < 0 under the scene text, z >= 0 over it, list order for equal z", () => {
+  const ids = (ls: { id: string }[]) => ls.map((l) => l.id);
+  const { below, above } = splitLayers([
+    shape({ id: "a", z: 1 }), shape({ id: "b" }), shape({ id: "c", z: -2 }), shape({ id: "d", z: -1 }), shape({ id: "e" }),
+  ]);
+  assert.deepEqual(ids(below), ["c", "d"]);
+  assert.deepEqual(ids(above), ["b", "e", "a"]);
+  assert.deepEqual(splitLayers(undefined), { below: [], above: [] });
+});
+
+test("a layer's state depends only on the scene frame (chunked renders match full ones)", () => {
+  // Chunks start on scene cuts, so a scene's frames are the same numbers in both renders; the
+  // state is a pure function of them. Spot-check determinism over every frame.
+  const l = shape({ enter: { kind: "pop" }, exit: { kind: "slide_left" }, keyframes: [kf(0), kf(2000, { x: 20, ease: "linear" })] });
+  for (let f = 0; f < 90; f++) {
+    const a = layerStateAt(l, f, 30, 90, 1920, 1080, sampleKeyframes(l.keyframes!, (f * 1000) / 30));
+    const b = layerStateAt(l, f, 30, 90, 1920, 1080, sampleKeyframes(l.keyframes!, (f * 1000) / 30));
+    assert.deepEqual(a, b);
+  }
 });

@@ -1,0 +1,164 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1920, "height": 1080 },
+  "scenes": [
+    {
+      "id": "intro",
+      "duration_ms": 3500,
+      "text": null,
+      "highlights": [],
+      "image": "assets/sample.jpeg",
+      "motion": "zoom_in",
+      "audio": null,
+      "layers": [
+        {
+          "id": "panel", "kind": "shape", "shape": "rect",
+          "x": 0.06, "y": 0.5, "width": 0.56, "height": 0.34, "z": -1,
+          "fill": "#09090bcc", "stroke": "#ffffff22", "stroke_width": 0.002, "corner_radius": 0.025,
+          "enter": { "kind": "slide_up", "duration_ms": 500 }
+        },
+        {
+          "id": "title", "kind": "text",
+          "x": 0.09, "y": 0.54, "width": 0.5,
+          "text": "Layers stack graphics on any scene",
+          "font_size": 0.075, "weight": 700, "align": "left", "line_height": 1.1,
+          "highlights": ["Layers"], "reveal": "words", "start_ms": 200
+        },
+        {
+          "id": "subtitle", "kind": "text",
+          "x": 0.09, "y": 0.75, "width": 0.5,
+          "text": "image · text · shape · icon",
+          "font_size": 0.035, "weight": 500, "align": "left", "color": "#d4d4d8",
+          "start_ms": 900, "enter": { "kind": "fade", "duration_ms": 400 }
+        },
+        {
+          "id": "star", "kind": "icon", "src": "assets/icons/star.svg", "color": "#facc15",
+          "x": 0.84, "y": 0.22, "width": 0.09, "height": 0.16, "anchor": "center",
+          "enter": { "kind": "pop", "duration_ms": 500 },
+          "keyframes": [
+            { "at_ms": 0, "rotation": -15 },
+            { "at_ms": 3500, "rotation": 20, "ease": "linear" }
+          ]
+        },
+        {
+          "id": "progress", "kind": "shape", "fill": "#facc15",
+          "x": 0, "y": 0.982, "width": 1, "height": 0.018, "z": 5,
+          "keyframes": [
+            { "at_ms": 0, "x": -100, "ease": "linear" },
+            { "at_ms": 3500, "x": -70.833333 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stack",
+      "duration_ms": 4000,
+      "text": "Scene text sits between the layers",
+      "highlights": ["between"],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "transition_in": { "kind": "fade", "duration_ms": 500 },
+      "layers": [
+        {
+          "id": "glow", "kind": "shape", "shape": "ellipse",
+          "x": 0.5, "y": 0.66, "width": 0.8, "height": 0.42, "anchor": "center", "z": -2,
+          "fill": "#6366f155",
+          "keyframes": [
+            { "at_ms": 0, "scale": 0.9 },
+            { "at_ms": 4000, "scale": 1.1 }
+          ]
+        },
+        {
+          "id": "underline", "kind": "shape", "shape": "line",
+          "x": 0.2, "y": 0.86, "width": 0.6, "height": 0, "z": -1,
+          "stroke": "#a5b4fc", "stroke_width": 0.006,
+          "start_ms": 400, "enter": { "kind": "slide_right", "duration_ms": 500 }
+        },
+        {
+          "id": "photo", "kind": "image", "src": "assets/sample.png", "fit": "cover",
+          "x": 0.68, "y": 0.07, "width": 0.26, "height": 0.34, "corner_radius": 0.02, "rotation": 3,
+          "start_ms": 300, "end_ms": 3700,
+          "enter": { "kind": "slide_left", "duration_ms": 500 },
+          "exit": { "kind": "fade", "duration_ms": 400 }
+        },
+        {
+          "id": "check", "kind": "icon", "src": "assets/icons/check-circle.svg", "color": "#22c55e",
+          "x": 0.07, "y": 0.09, "width": 0.07, "height": 0.125,
+          "start_ms": 600, "enter": { "kind": "pop", "duration_ms": 400 }
+        },
+        {
+          "id": "badge", "kind": "text",
+          "x": 0.15, "y": 0.11, "width": 0.3,
+          "text": "z ≥ 0 draws over the text", "font_size": 0.035, "weight": 600, "align": "left",
+          "color": "#09090b", "background": { "color": "#fafafa", "padding": 0.45, "radius": 0.4 },
+          "z": 2, "start_ms": 700, "enter": { "kind": "fade", "duration_ms": 300 }
+        },
+        {
+          "id": "progress", "kind": "shape", "fill": "#facc15",
+          "x": 0, "y": 0.982, "width": 1, "height": 0.018, "z": 5,
+          "keyframes": [
+            { "at_ms": 0, "x": -70.833333, "ease": "linear" },
+            { "at_ms": 4000, "x": -37.5 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "outro",
+      "duration_ms": 4500,
+      "text": "Same box, any kind",
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "frame", "kind": "shape",
+          "x": 0.04, "y": 0.06, "width": 0.92, "height": 0.86,
+          "stroke": "#fafafa66", "stroke_width": 0.004, "corner_radius": 0.03
+        },
+        {
+          "id": "arrow", "kind": "icon", "src": "assets/icons/arrow-right.svg", "color": "#6366f1",
+          "x": 0.12, "y": 0.45, "width": 0.08, "height": 0.14, "anchor": "center",
+          "keyframes": [
+            { "at_ms": 0, "x": 0, "ease": "ease_in_out" },
+            { "at_ms": 2000, "x": 60 },
+            { "at_ms": 4500, "x": 0 }
+          ]
+        },
+        {
+          "id": "card", "kind": "shape",
+          "x": 0.62, "y": 0.12, "width": 0.3, "height": 0.2, "z": 1,
+          "fill": "#ef4444", "corner_radius": 0.02, "rotation": -4,
+          "enter": { "kind": "pop", "duration_ms": 500 }
+        },
+        {
+          "id": "card-text", "kind": "text",
+          "x": 0.62, "y": 0.12, "width": 0.3, "height": 0.2, "z": 2,
+          "text": "Exit slides up", "font_size": 0.045, "weight": 700, "rotation": -4,
+          "start_ms": 300, "end_ms": 3800,
+          "enter": { "kind": "fade", "duration_ms": 300 },
+          "exit": { "kind": "slide_up", "duration_ms": 500 }
+        },
+        {
+          "id": "dot", "kind": "shape", "shape": "ellipse",
+          "x": 0.18, "y": 0.7, "width": 0.05, "height": 0.089, "anchor": "center", "z": -1,
+          "fill": "#22c55e", "stroke": "#fafafa", "stroke_width": 0.004,
+          "exit": { "kind": "pop", "duration_ms": 400 }
+        },
+        {
+          "id": "progress", "kind": "shape", "fill": "#facc15",
+          "x": 0, "y": 0.982, "width": 1, "height": 0.018, "z": 5,
+          "keyframes": [
+            { "at_ms": 0, "x": -37.5, "ease": "linear" },
+            { "at_ms": 4500, "x": 0 }
+          ]
+        }
+      ]
+    }
+  ],
+  "subtitles": [
+    { "start_ms": 6800, "end_ms": 8600, "text": "Subtitles stay on top of every layer" }
+  ]
+}

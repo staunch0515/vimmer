@@ -17,12 +17,72 @@ const WORD_FADE_FRAMES = 12;
 
 const normalize = (word: string): string => word.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
+// One inline-block span per word. With `animate` (the default) each word fades and rises in,
+// STAGGER_FRAMES after the one before it, counting from `frame` 0; highlighted words glow in.
+// Without it, every word is shown at rest. Shared by the scene text and text layers.
+export const AnimatedWords: React.FC<{
+  words: string[];
+  highlightSet: Set<string>;
+  frame: number;
+  animate?: boolean;
+}> = ({ words, highlightSet, frame, animate = true }) => (
+  <>
+    {words.map((word, i) => {
+      const start = i * STAGGER_FRAMES;
+      const opacity = animate
+        ? interpolate(frame, [start, start + WORD_FADE_FRAMES], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          })
+        : 1;
+      const rise = animate
+        ? interpolate(frame, [start, start + WORD_FADE_FRAMES], [18, 0], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          })
+        : 0;
+      const isHighlight = highlightSet.has(normalize(word));
+      const glow = isHighlight
+        ? animate
+          ? interpolate(frame, [start, start + 30], [0, 1], {
+              extrapolateLeft: "clamp",
+              extrapolateRight: "clamp",
+            })
+          : 1
+        : 0;
+
+      return (
+        <span
+          key={`${word}-${i}`}
+          style={{
+            display: "inline-block",
+            opacity,
+            transform: `translateY(${rise}px)`,
+            marginRight: "0.25em",
+            ...(isHighlight
+              ? {
+                  color: "#a5b4fc",
+                  textShadow: `0 0 ${24 * glow}px rgba(99, 102, 241, ${0.6 * glow})`,
+                }
+              : {}),
+          }}
+        >
+          {word}
+        </span>
+      );
+    })}
+  </>
+);
+
+export const highlightKeys = (highlights: readonly string[]): Set<string> => new Set(highlights.map(normalize));
+export const splitWords = (text: string): string[] => text.split(/\s+/).filter(Boolean);
+
 // Word-by-word entrance with keyword highlights. Text wraps via CSS, and the
 // padding keeps content inside the safe area on phones.
 export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = false }) => {
   const frame = useCurrentFrame();
-  const highlightSet = new Set(highlights.map(normalize));
-  const words = text.split(/\s+/).filter(Boolean);
+  const highlightSet = highlightKeys(highlights);
+  const words = splitWords(text);
 
   const body = (
     <AbsoluteFill
@@ -48,44 +108,7 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = fals
           textWrap: "balance",
         }}
       >
-        {words.map((word, i) => {
-          const start = i * STAGGER_FRAMES;
-          const opacity = interpolate(frame, [start, start + WORD_FADE_FRAMES], [0, 1], {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-          });
-          const rise = interpolate(frame, [start, start + WORD_FADE_FRAMES], [18, 0], {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-          });
-          const isHighlight = highlightSet.has(normalize(word));
-          const glow = isHighlight
-            ? interpolate(frame, [start, start + 30], [0, 1], {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-              })
-            : 0;
-
-          return (
-            <span
-              key={`${word}-${i}`}
-              style={{
-                display: "inline-block",
-                opacity,
-                transform: `translateY(${rise}px)`,
-                marginRight: "0.25em",
-                ...(isHighlight
-                  ? {
-                      color: "#a5b4fc",
-                      textShadow: `0 0 ${24 * glow}px rgba(99, 102, 241, ${0.6 * glow})`,
-                    }
-                  : {}),
-              }}
-            >
-              {word}
-            </span>
-          );
-        })}
+        <AnimatedWords words={words} highlightSet={highlightSet} frame={frame} />
       </div>
     </AbsoluteFill>
   );
