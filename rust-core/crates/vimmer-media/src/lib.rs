@@ -1,9 +1,10 @@
 //! Asset preprocessing: normalize images to the output frame and probe audio durations,
-//! synthesize narration, and recognize it again to time subtitles word by word.
+//! synthesize narration (macOS `say` or local Kokoro), and recognize it again to time subtitles word by word.
 
 pub mod align;
 pub mod audio;
 pub mod image_norm;
+pub mod kokoro;
 pub mod process;
 pub mod speech;
 pub mod transcribe;
@@ -11,6 +12,10 @@ pub mod transcribe;
 pub use align::{align_words, is_cjk, split_units, AlignedWord, RecognizedToken};
 pub use audio::{has_audio_stream, parse_ffmpeg_duration_ms, AudioProbe, FfmpegProbe};
 pub use image_norm::{letterbox, normalize_image};
+pub use kokoro::{
+    batch_timeout, looks_like_kokoro_voice, resolve_kokoro_voice, KokoroItem, KokoroLang,
+    KokoroSpeech, TtsEngine, ENV_KOKORO_MODELS, ENV_KOKORO_PYTHON, ENV_TTS,
+};
 pub use process::{run_limited, Limits};
 pub use speech::{default_voice_for, SaySpeech, Speech};
 pub use transcribe::{
