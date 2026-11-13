@@ -62,7 +62,15 @@ fn foreign_object_iframe_image_and_links_are_removed() {
     );
     assert_free_of(
         &out,
-        &["foreignobject", "iframe", "<image", "evil", "passwd", "javascript", "<a "],
+        &[
+            "foreignobject",
+            "iframe",
+            "<image",
+            "evil",
+            "passwd",
+            "javascript",
+            "<a ",
+        ],
     );
 }
 
@@ -72,7 +80,10 @@ fn event_attributes_are_removed() {
         r#"<rect width="1" height="1" onclick="alert(1)" ONLOAD="x()" onmouseover='y()'/><g onfocusin="z()"><circle r="1"/></g>"#,
     );
     assert!(out.removed.iter().any(|r| r.contains("onclick")));
-    assert_free_of(&out, &["onclick", "onload", "onmouseover", "onfocusin", "alert"]);
+    assert_free_of(
+        &out,
+        &["onclick", "onload", "onmouseover", "onfocusin", "alert"],
+    );
 }
 
 #[test]
@@ -140,7 +151,10 @@ fn doctype_and_unknown_entities_are_rejected() {
     let xxe = r#"<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"><text>&xxe;</text></svg>"#;
     assert!(matches!(sanitize_svg(xxe, W, H), Err(SvgError::Parse(_))));
     let laughs = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"><text>&lol9;</text></svg>"#;
-    assert!(matches!(sanitize_svg(laughs, W, H), Err(SvgError::Parse(_))));
+    assert!(matches!(
+        sanitize_svg(laughs, W, H),
+        Err(SvgError::Parse(_))
+    ));
 }
 
 #[test]
@@ -157,10 +171,7 @@ fn malformed_xml_is_rejected() {
         r#"<svg viewBox="0 0 1920 1080"><!-- open"#,
     ] {
         let r = sanitize_svg(bad, W, H);
-        assert!(
-            matches!(r, Err(SvgError::Parse(_))),
-            "{bad:?} gave {r:?}"
-        );
+        assert!(matches!(r, Err(SvgError::Parse(_))), "{bad:?} gave {r:?}");
     }
 }
 
@@ -169,9 +180,15 @@ fn view_box_is_required_and_checked() {
     let none = r#"<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"><rect width="1" height="1"/></svg>"#;
     assert_eq!(sanitize_svg(none, W, H).unwrap_err(), SvgError::NoViewBox);
     let bad = r#"<svg viewBox="0 0 -5 10"><rect width="1" height="1"/></svg>"#;
-    assert!(matches!(sanitize_svg(bad, W, H), Err(SvgError::BadViewBox(_))));
+    assert!(matches!(
+        sanitize_svg(bad, W, H),
+        Err(SvgError::BadViewBox(_))
+    ));
     let nan = r#"<svg viewBox="0 0 NaN 10"><rect width="1" height="1"/></svg>"#;
-    assert!(matches!(sanitize_svg(nan, W, H), Err(SvgError::BadViewBox(_))));
+    assert!(matches!(
+        sanitize_svg(nan, W, H),
+        Err(SvgError::BadViewBox(_))
+    ));
     let square = r#"<svg viewBox="0 0 1000 1000"><rect width="1" height="1"/></svg>"#;
     assert!(matches!(
         sanitize_svg(square, W, H),
@@ -218,7 +235,10 @@ fn size_depth_and_element_limits() {
 fn nothing_drawable_left_is_empty() {
     let only_script =
         r#"<svg viewBox="0 0 1920 1080"><script>alert(1)</script><title>x</title></svg>"#;
-    assert_eq!(sanitize_svg(only_script, W, H).unwrap_err(), SvgError::Empty);
+    assert_eq!(
+        sanitize_svg(only_script, W, H).unwrap_err(),
+        SvgError::Empty
+    );
 }
 
 #[test]

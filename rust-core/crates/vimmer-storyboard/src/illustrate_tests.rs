@@ -54,7 +54,11 @@ fn png(w: u32, h: u32, pixel: impl Fn(u32, u32) -> [u8; 3]) -> Vec<u8> {
         for &b in data {
             crc ^= u32::from(b);
             for _ in 0..8 {
-                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
             }
         }
         !crc
@@ -119,10 +123,20 @@ impl Fixture {
             fs::write(&path, body).unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let shot = png(1920, 1080, |x, _| if x < 960 { [200, 120, 40] } else { [10, 20, 30] });
+        let shot = png(1920, 1080, |x, _| {
+            if x < 960 {
+                [200, 120, 40]
+            } else {
+                [10, 20, 30]
+            }
+        });
         fs::write(dir.join("shot.png"), shot).unwrap();
         fs::write(dir.join("flat.png"), png(1920, 1080, |_, _| [10, 20, 30])).unwrap();
-        let small = png(160, 90, |x, _| if x < 80 { [200, 120, 40] } else { [10, 20, 30] });
+        let small = png(
+            160,
+            90,
+            |x, _| if x < 80 { [200, 120, 40] } else { [10, 20, 30] },
+        );
         fs::write(dir.join("small.png"), small).unwrap();
         let mut helper = LlmHelper::locate(Some(&dir.join("python"))).unwrap();
         helper.dir = dir.join("helper");
@@ -228,13 +242,22 @@ fn draws_every_scene_then_reuses_the_cache() {
         assert_eq!(req["effort"], "medium");
     }
     let prompts: Vec<String> = (2..=4)
-        .map(|n| f.request(n)["scene"]["image_prompt"].as_str().unwrap().to_string())
+        .map(|n| {
+            f.request(n)["scene"]["image_prompt"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
         .collect();
     assert_eq!(prompts, ["picture 1", "picture 2", "picture 3"]);
     for s in &report.scenes {
         let png = f.opts.public_dir.join(s.image.as_ref().unwrap());
         assert!(png.is_file());
-        assert!(s.image.as_ref().unwrap().starts_with("generated/illustrations/"));
+        assert!(s
+            .image
+            .as_ref()
+            .unwrap()
+            .starts_with("generated/illustrations/"));
         let svg = fs::read_to_string(f.opts.public_dir.join(s.svg.as_ref().unwrap())).unwrap();
         assert!(svg.contains(r#"width="1920" height="1080""#));
         assert!(!s.cached);
@@ -269,7 +292,11 @@ fn hostile_svg_is_sanitized_not_retried() {
     assert_eq!(report.drawn(), 1);
     assert_eq!(f.runs(), 2);
     let s = &report.scenes[0];
-    assert!(s.removed.iter().any(|r| r.contains("script")), "{:?}", s.removed);
+    assert!(
+        s.removed.iter().any(|r| r.contains("script")),
+        "{:?}",
+        s.removed
+    );
     let svg = fs::read_to_string(f.opts.public_dir.join(s.svg.as_ref().unwrap())).unwrap();
     for bad in ["script", "onload", "evil", "<image"] {
         assert!(!svg.contains(bad), "{bad} in {svg}");
@@ -351,7 +378,11 @@ fn no_api_key_means_no_calls_and_a_clear_reason() {
     let f = Fixture::new("nokey");
     let (report, _) = f.run(&storyboard(2), false);
     assert_eq!(f.runs(), 0);
-    assert!(report.unavailable.as_deref().unwrap().contains("ANTHROPIC_API_KEY"));
+    assert!(report
+        .unavailable
+        .as_deref()
+        .unwrap()
+        .contains("ANTHROPIC_API_KEY"));
     assert_eq!(report.drawn(), 0);
 }
 
@@ -381,7 +412,11 @@ fn connection_loss_mid_run_stops_remaining_scenes() {
     let (report, _) = f.run(&storyboard(4), true);
     assert_eq!(report.drawn(), 1);
     assert_eq!(f.runs(), 3, "scene 3 and 4 are not tried");
-    assert!(report.unavailable.as_deref().unwrap().contains("could not reach"));
+    assert!(report
+        .unavailable
+        .as_deref()
+        .unwrap()
+        .contains("could not reach"));
     assert!(report.scenes[3].warnings[0].contains("unavailable"));
 }
 
@@ -413,7 +448,10 @@ fn scenes_with_an_image_are_kept_and_apply_fills_the_timeline() {
     assert_eq!(f.runs(), 2);
     let mut timeline = crate::convert(&sb).unwrap().timeline;
     assert_eq!(report.apply(&mut timeline).unwrap(), 1);
-    assert_eq!(timeline.scenes[0].image.as_deref(), Some("assets/sample.png"));
+    assert_eq!(
+        timeline.scenes[0].image.as_deref(),
+        Some("assets/sample.png")
+    );
     assert!(timeline.scenes[1]
         .image
         .as_deref()
@@ -480,7 +518,11 @@ fn broken_chrome_is_found_before_any_api_call() {
     f.reply(None, style_reply());
     let (report, _) = f.run(&storyboard(2), true);
     assert_eq!(f.runs(), 0);
-    assert!(report.unavailable.as_deref().unwrap().contains("cannot rasterize"));
+    assert!(report
+        .unavailable
+        .as_deref()
+        .unwrap()
+        .contains("cannot rasterize"));
     assert_eq!(report.usage, Usage::default());
 }
 

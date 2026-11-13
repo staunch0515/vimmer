@@ -90,21 +90,29 @@ const ALLOWED_ELEMENTS: &[&str] = &[
 /// Why an SVG was rejected. The text is what the model gets back for a correction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SvgError {
-    TooLarge { bytes: usize, max: usize },
+    TooLarge {
+        bytes: usize,
+        max: usize,
+    },
     /// Not well-formed XML (or uses a DTD / unknown entity).
     Parse(String),
     /// The root element is not `<svg>`.
     NotSvg(String),
     NoViewBox,
     BadViewBox(String),
-    AspectMismatch { view_box: String, expected: String },
+    AspectMismatch {
+        view_box: String,
+        expected: String,
+    },
     TooComplex(String),
     /// Nothing drawable is left after sanitizing.
     Empty,
     /// Chrome could not be run or produced no usable PNG.
     Raster(String),
     Cancelled,
-    TimedOut { secs: u64 },
+    TimedOut {
+        secs: u64,
+    },
 }
 
 impl fmt::Display for SvgError {
@@ -493,7 +501,13 @@ fn scrub_css(css: &str) -> (Option<String>, Vec<&'static str>) {
         notes.push("external url()");
     }
     let lower = scrubbed.to_ascii_lowercase();
-    for bad in ["expression(", "javascript:", "-moz-binding", "image-set(", "behavior:"] {
+    for bad in [
+        "expression(",
+        "javascript:",
+        "-moz-binding",
+        "image-set(",
+        "behavior:",
+    ] {
         if lower.contains(bad) {
             notes.push("script-like CSS");
             return (None, notes);
@@ -813,7 +827,12 @@ pub fn rasterize_svg(
         Ok(o) => o,
         Err(MediaError::Cancelled) => return Err(SvgError::Cancelled),
         Err(MediaError::TimedOut { secs }) => return Err(SvgError::TimedOut { secs }),
-        Err(e) => return Err(SvgError::Raster(format!("cannot run {}: {e}", chrome.display()))),
+        Err(e) => {
+            return Err(SvgError::Raster(format!(
+                "cannot run {}: {e}",
+                chrome.display()
+            )))
+        }
     };
     if !png.is_file() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -869,7 +888,15 @@ pub fn preflight_chrome(chrome: &Path, scratch: &Path, limits: &Limits) -> Resul
     let png = scratch.join("preflight.png");
     let clean = sanitize_svg(PREFLIGHT_SVG, 160, 90)?;
     std::fs::write(&svg, clean.svg).map_err(|e| SvgError::Raster(e.to_string()))?;
-    let result = rasterize_svg(chrome, &svg, &png, 160, 90, &scratch.join("profile"), limits);
+    let result = rasterize_svg(
+        chrome,
+        &svg,
+        &png,
+        160,
+        90,
+        &scratch.join("profile"),
+        limits,
+    );
     let _ = std::fs::remove_file(&svg);
     let _ = std::fs::remove_file(&png);
     result

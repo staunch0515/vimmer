@@ -389,7 +389,12 @@ impl Runner<'_> {
             return Call::Reply(reply);
         }
         let (kind, message) = reply.error.map_or_else(
-            || ("unknown".to_string(), "the helper reported a failure".to_string()),
+            || {
+                (
+                    "unknown".to_string(),
+                    "the helper reported a failure".to_string(),
+                )
+            },
             |e| (e.kind, e.message),
         );
         Call::Failed {
@@ -436,7 +441,15 @@ pub fn illustrate(
     limits: &Limits,
     on_event: &(dyn Fn(String) + Sync),
 ) -> IllustrationReport {
-    illustrate_with_key_check(helper, sb, opts, work_dir, limits, on_event, api_key_present())
+    illustrate_with_key_check(
+        helper,
+        sb,
+        opts,
+        work_dir,
+        limits,
+        on_event,
+        api_key_present(),
+    )
 }
 
 /// [`illustrate`] with the key check's outcome passed in (for tests).
@@ -548,10 +561,7 @@ pub fn illustrate_with_key_check(
                 .map(|i| json!({"text": sb.scenes[i].text, "image_prompt": picture_prompt(sb, i)}))
                 .collect(),
         );
-        on_event(format!(
-            "illustration style: asking {} ...",
-            opts.model
-        ));
+        on_event(format!("illustration style: asking {} ...", opts.model));
         match runner.call(&req, "illustration-style") {
             Call::Reply(reply) => {
                 let usage = reply.usage.unwrap_or_default();
@@ -569,8 +579,10 @@ pub fn illustrate_with_key_check(
                                 .warnings
                                 .push(format!("cannot cache the style guide: {e}"));
                         }
-                        on_event(format!("illustration style: \"{}\" ({usage})",
-                            style.get("name").and_then(Value::as_str).unwrap_or("?")));
+                        on_event(format!(
+                            "illustration style: \"{}\" ({usage})",
+                            style.get("name").and_then(Value::as_str).unwrap_or("?")
+                        ));
                         style
                     }
                     None => {
@@ -624,15 +636,7 @@ pub fn illustrate_with_key_check(
                 }
                 let k = next.fetch_add(1, Ordering::SeqCst);
                 let Some(&i) = todo.get(k) else { return };
-                let outcome = draw_scene(
-                    &runner,
-                    sb,
-                    i,
-                    &style,
-                    &dir,
-                    &canvas_key,
-                    key_present,
-                );
+                let outcome = draw_scene(&runner, sb, i, &style, &dir, &canvas_key, key_present);
                 let mut result = outcome.result;
                 match outcome.stop {
                     Stop::No => {}
@@ -756,8 +760,16 @@ fn draw_scene(
         // Sanitize again: the file could have been edited by hand.
         if let Ok(clean) = sanitize_svg(&text, w, h) {
             if write_atomic(&svg_path, clean.svg.as_bytes()).is_ok()
-                && raster(&opts.chrome, &svg_path, &png_path, w, h, &profile, &raster_limits)
-                    .is_ok()
+                && raster(
+                    &opts.chrome,
+                    &svg_path,
+                    &png_path,
+                    w,
+                    h,
+                    &profile,
+                    &raster_limits,
+                )
+                .is_ok()
             {
                 result.cached = true;
                 result.image = Some(rel_png);
@@ -768,9 +780,9 @@ fn draw_scene(
         }
     }
     if !key_present {
-        result
-            .warnings
-            .push(format!("{ENV_API_KEY} is not set and the picture is not cached"));
+        result.warnings.push(format!(
+            "{ENV_API_KEY} is not set and the picture is not cached"
+        ));
         return done(result, Stop::No);
     }
 
@@ -796,7 +808,11 @@ fn draw_scene(
                 result.warnings.push(message.clone());
                 return done(
                     result,
-                    if fatal { Stop::Fatal(message) } else { Stop::No },
+                    if fatal {
+                        Stop::Fatal(message)
+                    } else {
+                        Stop::No
+                    },
                 );
             }
         };
@@ -813,7 +829,15 @@ fn draw_scene(
                     result.warnings.push(format!("cannot write the SVG: {e}"));
                     return done(result, Stop::No);
                 }
-                match raster(&opts.chrome, &svg_path, &png_path, w, h, &profile, &raster_limits) {
+                match raster(
+                    &opts.chrome,
+                    &svg_path,
+                    &png_path,
+                    w,
+                    h,
+                    &profile,
+                    &raster_limits,
+                ) {
                     Ok(()) => {
                         result.image = Some(rel_png);
                         result.svg = Some(rel_svg);
@@ -849,9 +873,9 @@ fn draw_scene(
             .push(format!("attempt {attempt}: SVG rejected: {problem}"));
         history.push(json!({"assistant": truncate(&raw, 60_000), "feedback": problem}));
     }
-    result
-        .warnings
-        .push(format!("SVG still invalid after {MAX_ATTEMPTS} attempts; scene stays text only"));
+    result.warnings.push(format!(
+        "SVG still invalid after {MAX_ATTEMPTS} attempts; scene stays text only"
+    ));
     done(result, Stop::No)
 }
 
