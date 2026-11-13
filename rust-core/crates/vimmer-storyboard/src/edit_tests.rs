@@ -858,3 +858,54 @@ fn all_examples_and_fixtures_load_and_accept_an_empty_patch() {
         assert!(out.is_ok(), "{}: {:?}", f.display(), out.err());
     }
 }
+
+// --- music ducking (added with the audio merge) --------------------------------------------------
+
+fn with_music() -> Value {
+    let mut doc = small();
+    doc["music"] =
+        json!({"source": "assets/pad-loop.m4a", "volume": 0.3, "fade_in_ms": 0, "fade_out_ms": 0});
+    doc
+}
+
+#[test]
+fn music_duck_can_be_added_and_changed() {
+    let out = ok(
+        &with_music(),
+        json!([{"op": "add", "path": "/music/duck",
+                "value": {"enabled": true, "depth_db": -18.0, "attack_ms": 200, "release_ms": 400}}]),
+    );
+    assert!(
+        out.summary.iter().any(|l| l.contains("ducking -18 dB")),
+        "{:?}",
+        out.summary
+    );
+    let mut doc = with_music();
+    doc["music"]["duck"] =
+        json!({"enabled": true, "depth_db": -12.0, "attack_ms": 200, "release_ms": 400});
+    let out = ok(
+        &doc,
+        json!([{"op": "replace", "path": "/music/duck/enabled", "value": false}]),
+    );
+    assert!(
+        out.summary.iter().any(|l| l.contains("ducking off")),
+        "{:?}",
+        out.summary
+    );
+}
+
+#[test]
+fn music_duck_unknown_keys_and_bad_ranges_are_rejected() {
+    let e = err(
+        &with_music(),
+        json!([{"op": "add", "path": "/music/duck",
+                "value": {"enabled": true, "depth_db": -12.0, "attack_ms": 200, "release_ms": 400, "cmd": "rm"}}]),
+    );
+    assert_eq!(e.stage, Stage::Guard, "{e}");
+    let e = err(
+        &with_music(),
+        json!([{"op": "add", "path": "/music/duck",
+                "value": {"enabled": true, "depth_db": -90.0, "attack_ms": 200, "release_ms": 400}}]),
+    );
+    assert_eq!(e.stage, Stage::Validation, "{e}");
+}

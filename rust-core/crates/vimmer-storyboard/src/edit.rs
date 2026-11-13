@@ -590,6 +590,7 @@ enum Kind {
     Words,
     Word,
     Music,
+    Duck,
     /// A number, string, bool or enum value: no children.
     Leaf,
 }
@@ -642,6 +643,13 @@ impl Kind {
                 ("volume", Leaf),
                 ("fade_in_ms", Leaf),
                 ("fade_out_ms", Leaf),
+                ("duck", Duck),
+            ],
+            Duck => &[
+                ("enabled", Leaf),
+                ("depth_db", Leaf),
+                ("attack_ms", Leaf),
+                ("release_ms", Leaf),
             ],
             _ => return None,
         })
@@ -675,6 +683,7 @@ impl Kind {
             Kind::Words => "a word list",
             Kind::Word => "a word timing",
             Kind::Music => "the music settings",
+            Kind::Duck => "the music ducking settings",
             Kind::Leaf => "a plain value",
         }
     }
@@ -1700,13 +1709,23 @@ pub fn summarize(before: &VideoTimeline, after: &VideoTimeline) -> Vec<String> {
     if before.music != after.music {
         let describe = |m: &Option<vimmer_dsl::Music>| match m {
             None => "none".to_string(),
-            Some(m) => format!(
-                "\"{}\" volume {} fades {}/{} ms",
-                clip(&m.source, 40),
-                m.volume,
-                m.fade_in_ms,
-                m.fade_out_ms
-            ),
+            Some(m) => {
+                let duck = if !m.duck.enabled {
+                    "ducking off".to_string()
+                } else {
+                    format!(
+                        "ducking {} dB ({}/{} ms)",
+                        m.duck.depth_db, m.duck.attack_ms, m.duck.release_ms
+                    )
+                };
+                format!(
+                    "\"{}\" volume {} fades {}/{} ms, {duck}",
+                    clip(&m.source, 40),
+                    m.volume,
+                    m.fade_in_ms,
+                    m.fade_out_ms
+                )
+            }
         };
         out.push(format!(
             "music: {} -> {}",

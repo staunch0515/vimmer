@@ -20,7 +20,7 @@ Top level (no other keys exist):
 - `resolution`: `{"width": 1920, "height": 1080}` (landscape) or `{"width": 1080, "height": 1920}` (vertical / portrait). No other sizes.
 - `scenes`: array of scenes, played in order. 1 to 60 scenes, total at most 200000 ms.
 - `subtitles`: array of subtitle cues on the global clock (milliseconds from the video start, NOT from a scene start). May be empty.
-- `music`: `null` or `{"source": path, "volume": 0..1, "fade_in_ms": n, "fade_out_ms": n}`. Loops under the whole video. Fades together must fit in the video, each at most 30000.
+- `music`: `null` or `{"source": path, "volume": 0..1, "fade_in_ms": n, "fade_out_ms": n}`. Loops under the whole video. Fades together must fit in the video, each at most 30000. Optional `"duck": {"enabled": bool, "depth_db": -40..0, "attack_ms": 10..5000, "release_ms": 10..5000}` lowers the music while narration or scene audio plays; when it is missing, ducking is on at -12 dB, 200/400 ms. To change one setting when `duck` is missing, `add` the whole `duck` object.
 
 A scene (no other keys exist):
 
