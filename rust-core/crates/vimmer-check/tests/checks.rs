@@ -585,3 +585,20 @@ fn chart_labels_that_do_not_fit_are_warnings() {
     assert_eq!(about("chart.cramped", "flat"), 1, "{fs:#?}");
     assert!(fs.iter().all(|f| !f.message.contains("`good`")), "{fs:#?}");
 }
+
+#[test]
+fn ring_label_wider_than_the_hole_is_a_warning() {
+    let t = with_layers(
+        3000,
+        r##"[{"id":"pct","kind":"progress_ring","x":0.4,"y":0.3,"width":0.2,"height":0.356,"value":0.72},
+            {"id":"wordy","kind":"progress_ring","x":0.1,"y":0.3,"width":0.1,"height":0.178,"value":0.5,"thickness":0.3,"label":"Almost there now"}]"##,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let f = one(&fs, "ring.label_overflow", Some("s"), None);
+    assert!(f.message.contains("`wordy`"), "{}", f.message);
+    assert_eq!(
+        f.suggestion.path.as_deref(),
+        Some("/scenes/0/layers/1/label")
+    );
+}

@@ -16,9 +16,10 @@ import {
   formatNumber,
   frameProgress,
   lerpValue,
+  ringFraction,
 } from "../motion/data";
 import { lowerThirdPose } from "../motion/lowerThird";
-import type { BarChartLayer, CounterLayer, IconLayer, ImageLayer, LowerThirdLayer, ShapeLayer, TextLayer } from "../types/timeline";
+import type { BarChartLayer, CounterLayer, ProgressRingLayer, IconLayer, ImageLayer, LowerThirdLayer, ShapeLayer, TextLayer } from "../types/timeline";
 import { AnimatedWords, highlightKeys, highlightStyle, normalize, splitWords } from "./AnimatedText";
 
 // What each layer kind draws inside its box. The box itself (position, size, transform, opacity,
@@ -425,6 +426,75 @@ export const BarChartView: React.FC<{ layer: BarChartLayer; width: number; heigh
           </div>
         );
       })}
+    </div>
+  );
+};
+
+// Center label size, as a fraction of the ring's diameter (percentage / custom text).
+export const RING_PERCENT_SCALE = 0.22;
+export const RING_LABEL_SCALE = 0.15;
+
+// The largest circle that fits the box, centered: a full track and an arc from 12 o'clock,
+// clockwise, drawn with stroke-dasharray. The fill fraction is clamped to 0..1, so a springy ease
+// may overshoot `value` but never draws past a full ring. Nothing is drawn for an empty arc (a round cap would show a dot).
+export const ProgressRingView: React.FC<{ layer: ProgressRingLayer; width: number; height: number } & Ctx> = ({
+  layer,
+  width,
+  height,
+  frame,
+  span,
+  fps,
+}) => {
+  const d = Math.min(width, height);
+  const stroke = (layer.thickness ?? 0.12) * d;
+  const r = Math.max(0, (d - stroke) / 2);
+  const c = 2 * Math.PI * r;
+  const n = countFrames(layer, layer.duration_ms, span, fps);
+  const e = applyEasing(layer.ease ?? "ease_out", frameProgress(frame, n));
+  const frac = ringFraction(layer.from ?? 0, layer.value, e);
+  const cx = width / 2;
+  const cy = height / 2;
+  const custom = layer.label ?? null;
+  // The percentage follows the fill but does not overshoot with springy easings (like chart values).
+  const label = custom ?? formatNumber(ringFraction(layer.from ?? 0, layer.value, Math.min(1, e)) * 100, layer.decimals ?? 0, ",", ".", "", "%");
+  return (
+    <div style={{ position: "relative", width, height }}>
+      <svg width={width} height={height} style={{ display: "block", position: "absolute", left: 0, top: 0 }}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={layer.track_color ?? "#ffffff26"} strokeWidth={stroke} />
+        {frac > 0 ? (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke={layer.color ?? "#6366f1"}
+            strokeWidth={stroke}
+            strokeLinecap={frac >= 1 ? "butt" : "round"}
+            strokeDasharray={`${frac * c} ${c}`}
+            transform={`rotate(-90 ${cx} ${cy})`}
+          />
+        ) : null}
+      </svg>
+      {(layer.show_label ?? true) ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontFamily: LAYER_FONT_FAMILY,
+            fontSize: d * (custom != null ? RING_LABEL_SCALE : RING_PERCENT_SCALE),
+            fontWeight: 700,
+            letterSpacing: `${LAYER_LETTER_SPACING_EM}em`,
+            color: layer.label_color ?? "#fafafa",
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </div>
+      ) : null}
     </div>
   );
 };

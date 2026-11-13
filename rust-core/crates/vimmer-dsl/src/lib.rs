@@ -11,9 +11,10 @@ pub mod validation;
 pub use layer::{
     count_frames, format_number, frame_progress, is_hex_color, typing_units, Anchor, BarChartLayer,
     ChartBar, ChartOrientation, CounterLayer, IconLayer, ImageFit, ImageLayer, Layer,
-    LayerAnimation, LayerAnimationKind, LayerContent, LowerThirdLayer, ShapeKind, ShapeLayer,
-    TextAlign, TextBackground, TextLayer, TextReveal, DEFAULT_TYPING_CPS, MAX_BARS,
-    MAX_BAR_LABEL_CHARS, MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS, MAX_TYPING_CPS,
+    LayerAnimation, LayerAnimationKind, LayerContent, LowerThirdLayer, ProgressRingLayer,
+    ShapeKind, ShapeLayer, TextAlign, TextBackground, TextLayer, TextReveal, DEFAULT_TYPING_CPS,
+    MAX_BARS, MAX_BAR_LABEL_CHARS, MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS,
+    MAX_RING_LABEL_CHARS, MAX_TYPING_CPS,
 };
 pub use model::{
     AudioMapping, Duck, Easing, Keyframe, MotionType, Music, Narration, Resolution, Scene,

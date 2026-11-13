@@ -4,7 +4,7 @@
 import type { Layer, LayerAnimationKind, LayerKind, Resolution, Scene } from "../../src/types/timeline";
 import { splitLayers } from "../../src/motion/layers";
 
-export const LAYER_KINDS: LayerKind[] = ["text", "shape", "image", "icon", "lower_third", "counter", "bar_chart"];
+export const LAYER_KINDS: LayerKind[] = ["text", "shape", "image", "icon", "lower_third", "counter", "bar_chart", "progress_ring"];
 export const ANIMATION_KINDS: LayerAnimationKind[] = ["fade", "slide_up", "slide_down", "slide_left", "slide_right", "pop"];
 export const MAX_LAYERS = 32;
 export const MAX_LAYER_TEXT_CHARS = 400;
@@ -48,6 +48,11 @@ export const newLayer = (kind: LayerKind, scene: Scene, res: Resolution = { widt
           { label: "C", value: 90 },
         ],
       };
+    case "progress_ring":
+      // A square box: 0.2 of the width is 0.356 of the height in 16:9 (0.2 × 1920 / 1080).
+      return portrait
+        ? { id, kind, value: 0.75, x: 0.3, y: 0.3, width: 0.4, height: 0.225 }
+        : { id, kind, value: 0.75, x: 0.4, y: 0.3, width: 0.2, height: 0.356 };
   }
 };
 
@@ -193,6 +198,17 @@ export const checkLayers = (s: Scene): string[] => {
         if (l.font_size !== undefined && !(l.font_size > 0 && l.font_size <= 0.2)) out.push(`${name}: font size must be above 0 and at most 0.2.`);
         if (l.grow_ms !== undefined && !(l.grow_ms >= 1 && l.grow_ms <= 10000)) out.push(`${name}: grow time must be 1 to 10000 ms.`);
         if (l.stagger_ms !== undefined && !(l.stagger_ms >= 0 && l.stagger_ms <= 2000)) out.push(`${name}: stagger must be 0 to 2000 ms.`);
+        break;
+      }
+      case "progress_ring": {
+        const frac = (v: number | undefined) => v === undefined || (Number.isFinite(v) && v >= 0 && v <= 1);
+        if (!frac(l.value) || !frac(l.from)) out.push(`${name}: value and from must be between 0 and 1.`);
+        if (l.thickness !== undefined && !(l.thickness >= 0.02 && l.thickness <= 0.5)) out.push(`${name}: thickness must be 0.02 to 0.5 of the diameter.`);
+        if (l.label && [...l.label].length > 24) out.push(`${name}: the label is over 24 characters.`);
+        const span = (l.end_ms ?? s.duration_ms) - (l.start_ms ?? 0);
+        if (l.duration_ms != null && !(l.duration_ms > 0 && l.duration_ms <= span)) out.push(`${name}: fill duration must be above 0 and at most the layer's time (${span} ms).`);
+        numberFormat(name, out, l.decimals);
+        colors(name, out, [l.color, l.track_color, l.label_color]);
         break;
       }
     }

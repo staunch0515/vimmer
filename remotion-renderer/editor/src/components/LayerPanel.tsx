@@ -1,6 +1,6 @@
 import type { Dispatch } from "react";
 import { useEffect, useState } from "react";
-import type { BarChartLayer, ChartBar, CounterLayer, Easing, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
+import type { BarChartLayer, ChartBar, CounterLayer, Easing, ProgressRingLayer, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
 import { splitLayers } from "../../../src/motion/layers";
 import { ANIMATION_KINDS, LAYER_KINDS } from "../layers";
 import { EASINGS } from "../model";
@@ -305,6 +305,8 @@ const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, 
       return <CounterFields layer={layer} patch={patch} />;
     case "bar_chart":
       return <BarChartFields layer={layer} patch={patch} />;
+    case "progress_ring":
+      return <ProgressRingFields layer={layer} patch={patch} />;
   }
 };
 
@@ -471,6 +473,51 @@ const BarChartFields = ({ layer, patch }: { layer: BarChartLayer; patch: (p: Rec
     </>
   );
 };
+
+const ProgressRingFields = ({ layer, patch }: { layer: ProgressRingLayer; patch: (p: Record<string, unknown>) => void }) => (
+  <>
+    <div className="two-col">
+      <NumField label="Value" hint="0 to 1" value={layer.value} step={0.05} validate={(v) => (v >= 0 && v <= 1 ? null : "0 to 1")} onCommit={(v) => patch({ value: v })} />
+      <NumField label="From" value={layer.from ?? 0} step={0.05} validate={(v) => (v >= 0 && v <= 1 ? null : "0 to 1")} onCommit={(v) => patch({ from: v || undefined })} />
+    </div>
+    <div className="two-col">
+      <OptionalNum label="Fill time" suffix="ms" placeholder="until the exit" value={layer.duration_ms ?? undefined} step={100} onCommit={(v) => patch({ duration_ms: v })} />
+      <EaseField label="Easing" value={layer.ease ?? "ease_out"} onChange={(e) => patch({ ease: e })} />
+    </div>
+    <div className="two-col">
+      <ColorField label="Ring" value={layer.color ?? "#6366f1"} onChange={(c) => patch({ color: c })} />
+      <ColorField label="Track" value={layer.track_color ?? "#ffffff26"} onChange={(c) => patch({ track_color: c })} />
+    </div>
+    <div className="two-col">
+      <NumField
+        label="Thickness"
+        hint="of the diameter"
+        value={layer.thickness ?? 0.12}
+        step={0.01}
+        validate={(v) => (v >= 0.02 && v <= 0.5 ? null : "0.02 to 0.5")}
+        onCommit={(v) => patch({ thickness: v })}
+      />
+      <Field label="Center">
+        <select
+          value={layer.show_label === false ? "none" : layer.label != null ? "text" : "percent"}
+          onChange={(e) => {
+            const v = e.target.value;
+            patch(v === "none" ? { show_label: false, label: undefined } : v === "text" ? { show_label: undefined, label: layer.label ?? "Done" } : { show_label: undefined, label: undefined });
+          }}
+        >
+          <option value="percent">percentage</option>
+          <option value="text">custom text</option>
+          <option value="none">nothing</option>
+        </select>
+      </Field>
+    </div>
+    {layer.label != null && layer.show_label !== false && (
+      <Field label="Center text">
+        <input value={layer.label} onChange={(e) => patch({ label: e.target.value })} />
+      </Field>
+    )}
+  </>
+);
 
 /** Number input whose empty value means "default" (undefined). */
 const OptionalNum = ({

@@ -187,7 +187,31 @@ export type BarChartLayer = LayerCommon & {
   ease?: Easing; // default ease_out
 };
 
-export type Layer = ImageLayer | TextLayer | ShapeLayer | IconLayer | LowerThirdLayer | CounterLayer | BarChartLayer;
+// A ring filling clockwise from the top, from `from` to `value` (fractions of a full ring).
+export type ProgressRingLayer = LayerCommon & {
+  kind: "progress_ring";
+  value: number; // 0..1
+  from?: number; // 0..1, default 0
+  duration_ms?: number | null; // default: until the exit begins
+  ease?: Easing; // default ease_out
+  color?: string; // default #6366f1
+  track_color?: string; // default #ffffff26
+  thickness?: number; // fraction of the ring's diameter, 0.02..0.5, default 0.12
+  show_label?: boolean; // default true
+  label?: string | null; // custom center text (at most 24 characters); default the percentage
+  decimals?: number; // of the percentage, default 0
+  label_color?: string; // default #fafafa
+};
+
+export type Layer =
+  | ImageLayer
+  | TextLayer
+  | ShapeLayer
+  | IconLayer
+  | LowerThirdLayer
+  | CounterLayer
+  | BarChartLayer
+  | ProgressRingLayer;
 export type LayerKind = Layer["kind"];
 
 export type Resolution = {

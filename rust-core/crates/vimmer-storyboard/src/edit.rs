@@ -814,6 +814,22 @@ const LAYER_KIND_FIELDS: &[(&str, &[(&str, Kind)])] = &[
             ("ease", Kind::Leaf),
         ],
     ),
+    (
+        "progress_ring",
+        &[
+            ("value", Kind::Leaf),
+            ("from", Kind::Leaf),
+            ("duration_ms", Kind::Leaf),
+            ("ease", Kind::Leaf),
+            ("color", Kind::Leaf),
+            ("track_color", Kind::Leaf),
+            ("thickness", Kind::Leaf),
+            ("show_label", Kind::Leaf),
+            ("label", Kind::Leaf),
+            ("decimals", Kind::Leaf),
+            ("label_color", Kind::Leaf),
+        ],
+    ),
 ];
 
 /// The union of [`LAYER_COMMON`] and every kind's fields, for pointers (which do not know the
@@ -873,6 +889,11 @@ const LAYER_FIELDS_ALL: &[(&str, Kind)] = &[
     ("show_values", Kind::Leaf),
     ("grow_ms", Kind::Leaf),
     ("stagger_ms", Kind::Leaf),
+    ("value", Kind::Leaf),
+    ("track_color", Kind::Leaf),
+    ("thickness", Kind::Leaf),
+    ("show_label", Kind::Leaf),
+    ("label", Kind::Leaf),
 ];
 
 /// The fields a layer object may have: common fields plus those of its `kind`, when the kind is
@@ -2077,6 +2098,7 @@ mod layer_field_tables {
             "lower_third",
             "counter",
             "bar_chart",
+            "progress_ring",
         ] {
             assert!(
                 LAYER_KIND_FIELDS.iter().any(|(k, _)| *k == kind),

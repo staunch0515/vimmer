@@ -5,7 +5,8 @@ use thiserror::Error;
 use crate::layer::{
     is_hex_color, Layer, LayerContent, ShapeKind, MAX_ABS_NUMBER, MAX_AFFIX_CHARS, MAX_BARS,
     MAX_BAR_LABEL_CHARS, MAX_DECIMALS, MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS,
-    MAX_LOWER_THIRD_SUBTITLE_CHARS, MAX_LOWER_THIRD_TITLE_CHARS, MAX_TYPING_CPS,
+    MAX_LOWER_THIRD_SUBTITLE_CHARS, MAX_LOWER_THIRD_TITLE_CHARS, MAX_RING_LABEL_CHARS,
+    MAX_TYPING_CPS,
 };
 use crate::model::{
     Keyframe, Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
@@ -483,6 +484,40 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
             }
             color("color", &ch.color, &mut out);
             color("label_color", &ch.label_color, &mut out);
+        }
+        LayerContent::ProgressRing(r) => {
+            for (name, v) in [("value", r.value), ("from", r.from)] {
+                if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
+                    out.push(format!(
+                        "{name} must be between 0 and 1 (a fraction of the ring), got {v}"
+                    ));
+                }
+            }
+            if let Some(ms) = r.duration_ms {
+                if ms == 0 || ms > span {
+                    out.push(format!(
+                        "duration_ms must be above 0 and at most the layer's time ({span} ms), got {ms}"
+                    ));
+                }
+            }
+            if !in_range(r.thickness, 0.02, 0.5) {
+                out.push(format!(
+                    "thickness must be between 0.02 and 0.5 (fraction of the ring's diameter), got {}",
+                    r.thickness
+                ));
+            }
+            if let Some(l) = &r.label {
+                let n = l.chars().count();
+                if n > MAX_RING_LABEL_CHARS {
+                    out.push(format!(
+                        "the label is {n} characters; the limit is {MAX_RING_LABEL_CHARS}"
+                    ));
+                }
+            }
+            out.extend(number_format_problems(r.decimals, "", "", None));
+            color("color", &r.color, &mut out);
+            color("track_color", &r.track_color, &mut out);
+            color("label_color", &r.label_color, &mut out);
         }
         LayerContent::Shape(sh) => {
             if let Some(c) = &sh.fill {
@@ -1365,6 +1400,31 @@ mod tests {
         has("bad", "grow_ms");
         has("zero", "every bar is 0");
         has("nohead", "needs a height");
+    }
+
+    #[test]
+    fn progress_ring_rules() {
+        let mut a = scene("a", 3_000);
+        a.layers = vec![
+            layer(
+                r#"{"id":"ok","kind":"progress_ring","x":0.4,"y":0.3,"width":0.2,"height":0.35,"value":0.72,"from":0.1,"label":"72 of 100"}"#,
+            ),
+            layer(
+                r#"{"id":"bad","kind":"progress_ring","x":0.4,"y":0.3,"width":0.2,"height":0.35,"value":1.5,"thickness":0.9,"duration_ms":0,"track_color":"grey","label":"a label that is far too long"}"#,
+            ),
+        ];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(layer_messages(&errs, "ok").is_empty(), "{errs:?}");
+        let m = layer_messages(&errs, "bad");
+        for needle in [
+            "value must be",
+            "thickness",
+            "duration_ms",
+            "track_color",
+            "label is",
+        ] {
+            assert!(m.iter().any(|m| m.contains(needle)), "{needle}: {m:?}");
+        }
     }
 
     #[test]

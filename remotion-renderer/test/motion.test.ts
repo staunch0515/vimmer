@@ -321,3 +321,11 @@ test("bars grow one after another and the chart scale is max or the largest valu
   assert.equal(chartMax([10, 40, 25], 100), 100);
   assert.equal(chartMax([0, 0], null), 1);
 });
+
+test("ring fraction goes from `from` to `value` and never past a full ring", () => {
+  assert.equal(ringFraction(0.2, 0.8, 0), 0.2);
+  close(ringFraction(0.2, 0.8, 1), 0.8);
+  close(ringFraction(0, 0.5, 0.5), 0.25);
+  assert.equal(ringFraction(0, 1, 1.37), 1); // elastic overshoot is clamped
+  assert.equal(ringFraction(0.5, 0, 1.37), 0);
+});

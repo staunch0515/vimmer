@@ -591,6 +591,60 @@ impl BarChartLayer {
     }
 }
 
+/// Longest custom ring label, in characters.
+pub const MAX_RING_LABEL_CHARS: usize = 24;
+
+fn default_track_color() -> String {
+    "#ffffff26".into()
+}
+
+fn default_ring_thickness() -> f32 {
+    0.12
+}
+
+/// A ring that fills clockwise from the top, from `from` to `value` (fractions of a full ring)
+/// over `duration_ms` (default: the layer's time before its exit). The ring is the largest circle
+/// that fits the box, centered; `thickness` is a fraction of its diameter. The center shows the
+/// animated percentage, or `label`, or nothing (`show_label: false`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProgressRingLayer {
+    /// 0..=1.
+    pub value: f64,
+    /// 0..=1, where the fill starts.
+    #[serde(default)]
+    pub from: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default = "ease_out")]
+    pub ease: Easing,
+    #[serde(default = "default_accent_color")]
+    pub color: String,
+    #[serde(default = "default_track_color")]
+    pub track_color: String,
+    #[serde(default = "default_ring_thickness")]
+    pub thickness: f32,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub show_label: bool,
+    /// Custom center text instead of the percentage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Decimals of the percentage.
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default = "default_text_color")]
+    pub label_color: String,
+}
+
+impl ProgressRingLayer {
+    /// The center text for a filled fraction `fraction` (custom label or percentage).
+    pub fn label_text(&self, fraction: f64) -> String {
+        match &self.label {
+            Some(l) => l.clone(),
+            None => format_number(fraction * 100.0, self.decimals, ",", ".", "", "%"),
+        }
+    }
+}
+
 /// What a layer draws, tagged by `kind` in the JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -602,6 +656,7 @@ pub enum LayerContent {
     LowerThird(LowerThirdLayer),
     Counter(CounterLayer),
     BarChart(BarChartLayer),
+    ProgressRing(ProgressRingLayer),
 }
 
 impl LayerContent {
@@ -615,6 +670,7 @@ impl LayerContent {
             LayerContent::LowerThird(_) => "lower_third",
             LayerContent::Counter(_) => "counter",
             LayerContent::BarChart(_) => "bar_chart",
+            LayerContent::ProgressRing(_) => "progress_ring",
         }
     }
 

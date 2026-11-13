@@ -14,8 +14,8 @@ use std::path::Path;
 use serde_json::{json, Value};
 use vimmer_dsl::{
     count_frames, frame_progress, typing_units, Anchor, BarChartLayer, ChartOrientation,
-    CounterLayer, ImageFit, Layer, LayerContent, LowerThirdLayer, Resolution, Scene, TextLayer,
-    TextReveal, VideoTimeline,
+    CounterLayer, ImageFit, Layer, LayerContent, LowerThirdLayer, ProgressRingLayer, Resolution,
+    Scene, TextLayer, TextReveal, VideoTimeline,
 };
 
 use crate::assets::{UPSCALE_INFO, UPSCALE_WARN};
@@ -226,6 +226,12 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
                 }
             }
 
+            if let LayerContent::ProgressRing(r) = &layer.content {
+                if let Some(f) = ring_label_overflow(&name, r, layer, res, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
+                }
+            }
+
             let rect = place(layer, res, box_h);
             if !poses(layer, rect, res)
                 .into_iter()
@@ -432,6 +438,52 @@ fn chart_findings(
         ));
     }
     out
+}
+
+/// Ring center label sizes, fractions of the diameter (`LayerKinds.tsx`).
+const RING_PERCENT_SCALE: f64 = 0.22;
+const RING_LABEL_SCALE: f64 = 0.15;
+
+/// A center label wider than the hole of the ring.
+fn ring_label_overflow(
+    name: &str,
+    r: &ProgressRingLayer,
+    layer: &Layer,
+    res: Resolution,
+    si: usize,
+    li: usize,
+) -> Option<Finding> {
+    if !r.show_label {
+        return None;
+    }
+    let d = (f64::from(layer.width) * f64::from(res.width))
+        .min(f64::from(layer.height.unwrap_or(0.0)) * f64::from(res.height));
+    let hole = d * (1.0 - 2.0 * f64::from(r.thickness));
+    let (text, font) = match &r.label {
+        Some(l) => (l.clone(), d * RING_LABEL_SCALE),
+        // The widest percentage it can show: 100 % with its decimals.
+        None => (r.label_text(1.0), d * RING_PERCENT_SCALE),
+    };
+    let w = width(&text, font, SCENE_LETTER_SPACING_EM);
+    if w <= hole * 0.92 {
+        return None;
+    }
+    let field = if r.label.is_some() {
+        "label"
+    } else {
+        "decimals"
+    };
+    Some(Finding::new(
+        Severity::Warning,
+        "ring.label_overflow",
+        format!(
+            "{name}: the center text `{text}` is about {w:.0} px wide but the ring's hole is {hole:.0} px"
+        ),
+        Suggestion::field(
+            "shorten the label, make the ring bigger or thinner",
+            layer_path(si, li, field),
+        ),
+    ))
 }
 
 fn reading_speed(
