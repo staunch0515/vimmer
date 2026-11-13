@@ -223,9 +223,10 @@ fn timed_hypothesis(
 ) -> (Vec<Vec<char>>, Vec<(u64, u64)>) {
     let mut words: Vec<Vec<char>> = Vec::new();
     let mut spans: Vec<(u64, u64)> = Vec::new();
-    let mut open = false; // whether the last word can still grow
-                          // Whether the last word is a CJK character a small kana or long mark may join, so that
-                          // recognized きょ, コー, ショッ form one word, as split_units makes them one unit.
+    // Whether the last word can still grow.
+    let mut open = false;
+    // Whether the last word is a CJK character a small kana or long mark may join, so that
+    // recognized きょ, コー, ショッ form one word, as split_units makes them one unit.
     let mut kana_open = false;
     let mut floor = 0u64;
     for token in tokens {

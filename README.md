@@ -9,7 +9,8 @@ repo_vimmer/
 │   ├── sample-timeline.json  # 15-second single-scene baseline
 │   └── motion-demo.json      # 3 scenes: a slide transition and keyframes
 ├── rust-core/                # Cargo workspace: orchestration + DSL
-│   └── crates/vimmer-dsl/    # serde model, validation, frame math
+│   ├── crates/vimmer-dsl/    # serde model, validation, frame math
+│   └── crates/vimmer-storyboard/  # storyboard JSON → timeline (offline)
 └── remotion-renderer/        # Node/TS Remotion project: frame-based composition
     ├── public/assets/        # Images/audio referenced by the timeline (relative paths)
     └── src/                  # Root, Timeline composition, Ken Burns + text components
@@ -68,8 +69,17 @@ keyframes. Its scene 2 is a transition, and scenes 1 and 2 share a chunk with
 # Rust: DSL tests
 cd rust-core && cargo test
 
+# Rust: storyboard conversion tests
+cd rust-core && cargo test -p vimmer-storyboard
+
+# Rust: word alignment tests (align.rs)
+cd rust-core && cargo test -p vimmer-media --lib align
+
 # Remotion: motion unit tests (keyframe sampling, transition poses; Node >= 22.6)
 cd remotion-renderer && npm run test:motion
+
+# Remotion: word-subtitle tests (which word is current; Node >= 22.6)
+cd remotion-renderer && npm run test:words
 
 # Remotion: typecheck, studio, and render the 15 s test scene
 cd remotion-renderer
@@ -88,6 +98,8 @@ npm run render:test      # writes out/test-scene.mp4
   pipeline: preprocess images → check audio → render chunks through Remotion with
   bounded concurrency → concatenate with ffmpeg `-c copy`.
 - `vimmer-cli`: `vimmer <timeline.json> -o out.mp4`.
+- `vimmer-storyboard`: offline converter from a storyboard JSON (the format an LLM writes, see
+  below) to a validated timeline JSON. It calls no model or service. Bin: `vimmer-storyboard`.
 
 ```bash
 cd rust-core && cargo run -p vimmer-cli -- ../fixtures/sample-timeline.json \
@@ -101,6 +113,83 @@ lower band; scene text keeps a 260 px bottom inset to stay clear of it.
 
 Image and audio paths are relative to `remotion-renderer/public/`. Normalized
 images are written to `public/generated/`, which is gitignored.
+
+## Storyboard (storyboard JSON → timeline)
+
+`vimmer-storyboard` turns a storyboard into the timeline JSON that `vimmer` renders. It is
+the format a language model is asked to write (the prompt is `rust-core/crates/vimmer-storyboard/prompts/storyboard.md`),
+so the model never writes timeline fields directly. Run from `rust-core/`:
+
+```bash
+cargo run -p vimmer-storyboard -- crates/vimmer-storyboard/examples/zh-xian.storyboard.json -o ../out/zh.timeline.json
+cargo run -p vimmer-storyboard -- crates/vimmer-storyboard/examples/en-coffee.storyboard.json -o ../out/en.timeline.json \
+  --public-dir ../remotion-renderer/public --emphasis-out ../out/en.emphasis.json
+```
+
+- `-o` / `--output`: the timeline JSON to write (required).
+- `--public-dir <dir>`: the renderer's `public/` folder. When given, every scene `image` and
+  `music` must exist there, or the conversion stops and names the scene and field.
+- `--emphasis-out <file>`: also write the emphasis map (scene id → words), which the timeline
+  does not carry.
+- Warnings (unknown camera, a transition on the first scene, …) go to stderr; the output is
+  still written. A summary line (`N scenes, M ms -> …`) is printed at the end.
+- Output is checked with the DSL validator, so a storyboard that converts always renders.
+
+### Global fields
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `title` | yes | Non-empty. |
+| `language` | yes | `zh`, `en` or `ja`. Chooses the duration estimate and, for `ja`, the voice `Kyoko`. |
+| `orientation` | no (`landscape`) | `landscape` = 1920×1080, `portrait` = 1080×1920. |
+| `narration` | no (`true`) | When true, each scene's `text` is read aloud at render time. |
+| `voice` | no | Overrides the speech voice (macOS `say`). Default: chosen by language. |
+| `music` | no | Background track, relative to `remotion-renderer/public/`. Fades: in = min(500 ms, total/4), out = min(1500 ms, total/4). |
+| `scenes` | yes | At least one scene. |
+
+### Scene fields
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `text` | yes | Narration and on-screen text. Trimmed; must not be empty. |
+| `duration_ms` | no | Integer > 0, at most 200 000. Omit to estimate from the text. |
+| `emphasis` | no | Words copied from `text`. Those found in `text` become `highlights`; others are warned about and not highlighted. |
+| `camera` | no (`static`) | Camera move, see the mapping below. |
+| `transition` | no | Transition into this scene, see the mapping below. Ignored on the first scene. |
+| `transition_ms` | no (`500`) | Transition length. Clamped to the scene length. Given without `transition`, it is ignored. |
+| `image` | no | Relative path under `public/`, e.g. `assets/sample.png`. No `..`, no URL, no leading `/`. No `image` means text only. |
+| `image_prompt` | no | Description of a wanted picture. Stored only; nothing generates images from it. |
+
+Unknown field names are rejected (`deny_unknown_fields`). Unknown `camera` or `transition`
+values do not fail: they fall back to `static` or `none` with a warning. Values are trimmed,
+lower-cased, and `-` or space is read as `_`, so `Slide-Left` means `slide_left`.
+
+### Camera and transition mapping
+
+| Storyboard `camera` | Timeline |
+| --- | --- |
+| `static` (default) | `motion: "static"` |
+| `push_in`, `zoom_in` | `motion: "zoom_in"` |
+| `pull_out`, `zoom_out` | `motion: "zoom_out"` |
+| `pan_left` | `motion: "pan_left"` |
+| `pan_right` | `motion: "pan_right"` |
+| `ken_burns` | two keyframes over the whole scene: scale 1 → 1.15, x 0 → −3 %, y 0 → −2 %, `ease_in_out` |
+
+| Storyboard `transition` | Timeline `transition_in` |
+| --- | --- |
+| `none` (default), `cut` | none |
+| `fade`, `slide_left`, `slide_right`, `slide_up`, `slide_down`, `zoom_in`, `wipe_left` | the same `kind`, `duration_ms` = `transition_ms` (default 500, clamped to the scene) |
+
+The first scene's transition is dropped with a warning.
+
+### Duration estimate (when `duration_ms` is omitted)
+
+- `zh`: 230 ms per CJK character. `ja`: 200 ms per character. Punctuation and whitespace are free.
+  A run of ASCII letters or digits counts as 2 characters.
+- `en`: 400 ms per word (whitespace-separated tokens with a letter or digit).
+- Then 600 ms of padding is added, and the result is at least 2000 ms.
+
+The total length must stay within the 200 s limit, or the conversion fails.
 
 ## Desktop app (Tauri 2)
 
@@ -172,6 +261,16 @@ curl -L -o ~/.local/share/vimmer/models/ggml-large-v3-turbo-q5_0.bin \
 cd rust-core && cargo run -p vimmer-cli -- ../fixtures/word-subtitles-demo.json -o /tmp/words.mp4 --remotion-dir ../remotion-renderer
 ```
 
+Where things live:
+
+- **`whisper-cli`**: the lookup order is `--whisper-cli`, then `$VIMMER_WHISPER_CLI`, then `whisper-cli`
+  on `PATH`. A self-built copy at `~/.local/bin/whisper-cli` is found only when `~/.local/bin` is on
+  `PATH`; otherwise pass it explicitly, e.g. `export VIMMER_WHISPER_CLI=$HOME/.local/bin/whisper-cli`.
+- **Model**: `~/.local/share/vimmer/models/ggml-large-v3-turbo-q5_0.bin` (the default when
+  `--whisper-model` and `$VIMMER_WHISPER_MODEL` are not set).
+- **Intel Mac**: builds for x86_64 run whisper CPU-only (see Timing below). Expect it to be slow
+  with the large model; use a smaller model for quick checks.
+
 - **Two switches.**
   - `--word-subtitles on|off` (default **on**): add word timing to subtitle cues that cover a
     synthesized narration. Scenes without narration, and cues that already have `words`, are
@@ -238,8 +337,16 @@ cd remotion-renderer && npm install && npm run editor   # http://localhost:5180
   Validation mirrors the Rust rules and appears above the workspace.
 - The draft autosaves to localStorage. Export JSON, then render it with the CLI.
 
+## For developers
+
+- **Building a `SubtitleCue`**: use `SubtitleCue::new(start_ms, end_ms, text)` or
+  `SubtitleCue { ..Default::default() }`. A struct literal with every field listed breaks
+  whenever a field is added (as `words` was).
+- **Building a `Scene` or `VideoTimeline`**: neither implements `Default`. Build them from JSON
+  with `serde_json::from_value` (as `vimmer-storyboard` does) so that new DSL fields take their
+  serde defaults. A literal would fail to compile when a field is added.
+
 ## Not yet built
 
-- TTS generation (duration tracking exists for existing audio files).
 - Studio: no direct render from the editor yet (export JSON, then run the CLI).
   Subtitle cues are not drag-movable on the timeline; edit them in the inspector.
