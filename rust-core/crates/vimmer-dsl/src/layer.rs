@@ -359,6 +359,143 @@ impl LowerThirdLayer {
     }
 }
 
+/// Largest magnitude of a number a counter, chart or ring shows.
+pub const MAX_ABS_NUMBER: f64 = 1e15;
+/// Most decimals of a formatted number.
+pub const MAX_DECIMALS: u8 = 6;
+/// Longest number prefix or suffix, in characters.
+pub const MAX_AFFIX_CHARS: usize = 16;
+
+fn ease_out() -> Easing {
+    Easing::EaseOut
+}
+
+fn default_separator() -> String {
+    ",".into()
+}
+
+fn default_decimal_mark() -> String {
+    ".".into()
+}
+
+fn default_counter_size() -> f32 {
+    0.12
+}
+
+fn default_counter_weight() -> u16 {
+    700
+}
+
+/// `value` with `decimals` decimals, `separator` between groups of three integer digits and
+/// `decimal_mark` before the decimals; `-` before the prefix for negatives (never `-0`). Does not
+/// depend on the machine's locale. The renderer's `formatNumber` (`motion/data.ts`) gives the same
+/// text except, rarely, for a value exactly halfway between two roundings.
+pub fn format_number(
+    value: f64,
+    decimals: u8,
+    separator: &str,
+    decimal_mark: &str,
+    prefix: &str,
+    suffix: &str,
+) -> String {
+    let fixed = format!("{:.*}", usize::from(decimals), value.abs());
+    let (int, frac) = fixed.split_once('.').unwrap_or((&fixed, ""));
+    let negative = value < 0.0 && fixed.chars().any(|c| c.is_ascii_digit() && c != '0');
+    let mut grouped = String::new();
+    for (i, c) in int.chars().enumerate() {
+        if i > 0 && (int.len() - i) % 3 == 0 {
+            grouped.push_str(separator);
+        }
+        grouped.push(c);
+    }
+    let mut out = String::new();
+    if negative {
+        out.push('-');
+    }
+    out.push_str(prefix);
+    out.push_str(&grouped);
+    if !frac.is_empty() {
+        out.push_str(decimal_mark);
+        out.push_str(frac);
+    }
+    out.push_str(suffix);
+    out
+}
+
+/// A number that counts from `from` to `to` while the layer is shown. One line, no wrapping;
+/// without `height` the box is one line tall.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CounterLayer {
+    #[serde(default)]
+    pub from: f64,
+    pub to: f64,
+    /// How long the count takes, from the layer's start. Absent: until the layer's exit begins
+    /// (its whole time without an exit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default = "ease_out")]
+    pub ease: Easing,
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub prefix: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub suffix: String,
+    /// Between groups of three digits; empty for none.
+    #[serde(default = "default_separator")]
+    pub separator: String,
+    #[serde(default = "default_decimal_mark")]
+    pub decimal_mark: String,
+    /// Fraction of the frame height.
+    #[serde(default = "default_counter_size")]
+    pub font_size: f32,
+    #[serde(default = "default_text_color")]
+    pub color: String,
+    #[serde(default = "default_counter_weight")]
+    pub weight: u16,
+    #[serde(default)]
+    pub align: TextAlign,
+}
+
+impl CounterLayer {
+    /// The text shown for `value`.
+    pub fn format(&self, value: f64) -> String {
+        format_number(
+            value,
+            self.decimals,
+            &self.separator,
+            &self.decimal_mark,
+            &self.prefix,
+            &self.suffix,
+        )
+    }
+}
+
+/// Frames a count (or a chart/ring animation) of `duration_ms` takes at `fps`, or, without a
+/// duration, the layer's frames before its exit. At least 1. Mirrors `countFrames` in
+/// `remotion-renderer/src/motion/data.ts`.
+pub fn count_frames(layer: &Layer, duration_ms: Option<u64>, scene_ms: u64, fps: u32) -> u64 {
+    let frames = |ms: u64| (ms * u64::from(fps) + 500) / 1000;
+    let n = match duration_ms {
+        Some(ms) => frames(ms),
+        None => {
+            let span = frames(layer.end_ms_in(scene_ms)).saturating_sub(frames(layer.start_ms));
+            span.saturating_sub(layer.exit.map_or(0, |e| frames(e.duration_ms)))
+        }
+    };
+    n.max(1)
+}
+
+/// Progress 0..=1 of an animation `n` frames long on layer frame `frame`: 0 on the first frame, 1
+/// from frame `n - 1` on.
+pub fn frame_progress(frame: u64, n: u64) -> f64 {
+    if n <= 1 {
+        1.0
+    } else {
+        (frame as f64 / (n - 1) as f64).min(1.0)
+    }
+}
+
 /// What a layer draws, tagged by `kind` in the JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -368,6 +505,7 @@ pub enum LayerContent {
     Shape(ShapeLayer),
     Icon(IconLayer),
     LowerThird(LowerThirdLayer),
+    Counter(CounterLayer),
 }
 
 impl LayerContent {
@@ -379,12 +517,16 @@ impl LayerContent {
             LayerContent::Shape(_) => "shape",
             LayerContent::Icon(_) => "icon",
             LayerContent::LowerThird(_) => "lower_third",
+            LayerContent::Counter(_) => "counter",
         }
     }
 
     /// Kinds whose box may leave out `height` (it is then as tall as the content).
     pub fn auto_height(&self) -> bool {
-        matches!(self, LayerContent::Text(_) | LayerContent::LowerThird(_))
+        matches!(
+            self,
+            LayerContent::Text(_) | LayerContent::LowerThird(_) | LayerContent::Counter(_)
+        )
     }
 
     /// The asset file the layer draws, if any.
@@ -555,6 +697,47 @@ mod tests {
         assert_eq!(text.typing_ms(), 1667);
         let json = serde_json::to_string(&t).unwrap();
         assert!(!json.contains("cursor"));
+    }
+
+    #[test]
+    fn numbers_are_formatted_without_a_locale() {
+        assert_eq!(
+            format_number(1234567.891, 2, ",", ".", "$", ""),
+            "$1,234,567.89"
+        );
+        assert_eq!(
+            format_number(1234567.0, 0, " ", ",", "", " €"),
+            "1 234 567 €"
+        );
+        assert_eq!(format_number(999.0, 0, ",", ".", "", ""), "999");
+        assert_eq!(format_number(1000.0, 0, ",", ".", "", ""), "1,000");
+        assert_eq!(format_number(-1500.26, 1, ".", ",", "", "%"), "-1.500,3%");
+        assert_eq!(format_number(-0.004, 2, ",", ".", "", ""), "0.00");
+        assert_eq!(format_number(0.0, 0, ",", ".", "", ""), "0");
+        assert_eq!(format_number(12345.0, 0, "", ".", "", ""), "12345");
+        assert_eq!(
+            format_number(1e15, 0, ",", ".", "", ""),
+            "1,000,000,000,000,000"
+        );
+    }
+
+    #[test]
+    fn count_frames_default_to_the_time_before_the_exit() {
+        let l: Layer = serde_json::from_str(
+            r#"{"id":"c","kind":"counter","x":0,"y":0,"width":0.3,"to":100,"start_ms":1000,"end_ms":4000,"exit":{"kind":"fade","duration_ms":500}}"#,
+        )
+        .unwrap();
+        assert_eq!(count_frames(&l, None, 5000, 30), 75);
+        assert_eq!(count_frames(&l, Some(1000), 5000, 30), 30);
+        assert_eq!(frame_progress(0, 30), 0.0);
+        assert_eq!(frame_progress(29, 30), 1.0);
+        assert_eq!(frame_progress(100, 30), 1.0);
+        assert_eq!(frame_progress(0, 1), 1.0);
+        let LayerContent::Counter(c) = &l.content else {
+            panic!()
+        };
+        assert_eq!(c.ease, Easing::EaseOut);
+        assert_eq!(c.format(1234.0), "1,234");
     }
 
     #[test]

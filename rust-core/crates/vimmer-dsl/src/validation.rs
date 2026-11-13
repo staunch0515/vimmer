@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use crate::layer::{
-    is_hex_color, Layer, LayerContent, ShapeKind, MAX_LAYERS, MAX_LAYER_KEYFRAMES,
-    MAX_LAYER_TEXT_CHARS, MAX_LOWER_THIRD_SUBTITLE_CHARS, MAX_LOWER_THIRD_TITLE_CHARS,
-    MAX_TYPING_CPS,
+    is_hex_color, Layer, LayerContent, ShapeKind, MAX_ABS_NUMBER, MAX_AFFIX_CHARS, MAX_DECIMALS,
+    MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS, MAX_LOWER_THIRD_SUBTITLE_CHARS,
+    MAX_LOWER_THIRD_TITLE_CHARS, MAX_TYPING_CPS,
 };
 use crate::model::{
     Keyframe, Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
@@ -395,6 +395,37 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
                 color("background_color", c, &mut out);
             }
         }
+        LayerContent::Counter(c) => {
+            for (name, v) in [("from", c.from), ("to", c.to)] {
+                number(name, v, &mut out);
+            }
+            out.extend(number_format_problems(
+                c.decimals,
+                &c.prefix,
+                &c.suffix,
+                Some((&c.separator, &c.decimal_mark)),
+            ));
+            if let Some(ms) = c.duration_ms {
+                if ms == 0 || ms > span {
+                    out.push(format!(
+                        "duration_ms must be above 0 and at most the layer's time ({span} ms), got {ms}"
+                    ));
+                }
+            }
+            if !(c.font_size.is_finite() && c.font_size > 0.0 && c.font_size <= 0.5) {
+                out.push(format!(
+                    "font_size must be above 0 and at most 0.5 (fraction of the frame height), got {}",
+                    c.font_size
+                ));
+            }
+            if !(100..=900).contains(&c.weight) || c.weight % 100 != 0 {
+                out.push(format!(
+                    "weight must be 100, 200, ... 900, got {}",
+                    c.weight
+                ));
+            }
+            color("color", &c.color, &mut out);
+        }
         LayerContent::Shape(sh) => {
             if let Some(c) = &sh.fill {
                 color("fill", c, &mut out);
@@ -414,6 +445,50 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
             if !in_range(sh.corner_radius, 0.0, 0.5) {
                 out.push("corner_radius must be between 0 and 0.5".to_string());
             }
+        }
+    }
+    out
+}
+
+/// A finite number within ±[`MAX_ABS_NUMBER`].
+fn number(name: &str, v: f64, out: &mut Vec<String>) {
+    if !(v.is_finite() && v.abs() <= MAX_ABS_NUMBER) {
+        out.push(format!(
+            "{name} must be a number within ±{MAX_ABS_NUMBER:e}, got {v}"
+        ));
+    }
+}
+
+/// Decimals, prefix and suffix of a formatted number, and its separator and decimal mark when
+/// the kind has them.
+fn number_format_problems(
+    decimals: u8,
+    prefix: &str,
+    suffix: &str,
+    marks: Option<(&str, &str)>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if decimals > MAX_DECIMALS {
+        out.push(format!(
+            "decimals must be 0..{MAX_DECIMALS}, got {decimals}"
+        ));
+    }
+    for (name, s) in [("prefix", prefix), ("suffix", suffix)] {
+        if s.chars().count() > MAX_AFFIX_CHARS {
+            out.push(format!(
+                "{name} is longer than {MAX_AFFIX_CHARS} characters"
+            ));
+        }
+    }
+    if let Some((sep, mark)) = marks {
+        let digit = |s: &str| s.chars().any(|c| c.is_ascii_digit());
+        if sep.chars().count() > 2 || digit(sep) {
+            out.push("separator must be at most 2 characters and no digits".to_string());
+        }
+        if mark.chars().count() != 1 || digit(mark) || mark == sep {
+            out.push(
+                "decimal_mark must be one character, not a digit and not the separator".to_string(),
+            );
         }
     }
     out
@@ -1162,6 +1237,32 @@ mod tests {
         ))];
         let errs = validate(&timeline(vec![b])).unwrap_err();
         assert!(layer_messages(&errs, "long")[0].contains("limit is 120"));
+    }
+
+    #[test]
+    fn counter_rules() {
+        let mut a = scene("a", 3_000);
+        a.layers = vec![
+            layer(
+                r#"{"id":"ok","kind":"counter","x":0.3,"y":0.3,"width":0.4,"from":-5,"to":1250.5,"decimals":1,"prefix":"$","separator":" ","decimal_mark":",","duration_ms":3000}"#,
+            ),
+            layer(
+                r#"{"id":"bad","kind":"counter","x":0.3,"y":0.3,"width":0.4,"to":1e16,"decimals":7,"suffix":"a very long suffix!","separator":"1","decimal_mark":"..","duration_ms":4000}"#,
+            ),
+        ];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(layer_messages(&errs, "ok").is_empty(), "{errs:?}");
+        let m = layer_messages(&errs, "bad");
+        for needle in [
+            "to must be",
+            "decimals",
+            "suffix",
+            "separator",
+            "decimal_mark",
+            "duration_ms",
+        ] {
+            assert!(m.iter().any(|m| m.contains(needle)), "{needle}: {m:?}");
+        }
     }
 
     #[test]

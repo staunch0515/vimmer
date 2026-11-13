@@ -13,13 +13,15 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 use vimmer_dsl::{
-    typing_units, Anchor, ImageFit, Layer, LayerContent, LowerThirdLayer, Resolution, Scene,
-    TextLayer, TextReveal, VideoTimeline,
+    count_frames, frame_progress, typing_units, Anchor, CounterLayer, ImageFit, Layer,
+    LayerContent, LowerThirdLayer, Resolution, Scene, TextLayer, TextReveal, VideoTimeline,
 };
 
 use crate::assets::{UPSCALE_INFO, UPSCALE_WARN};
 use crate::layout::{title_safe, SceneTextArea, SCENE_LETTER_SPACING_EM, SCENE_WORD_GAP_EM};
-use crate::text::{capacity_chars, cps_limit, reading_chars, scene_text_lines, Lang, OPTIMISTIC};
+use crate::text::{
+    capacity_chars, cps_limit, reading_chars, scene_text_lines, width, Lang, OPTIMISTIC,
+};
 use crate::{is_url, scene_starts_ms, Finding, Severity, Suggestion};
 
 fn layer_path(scene: usize, layer: usize, field: &str) -> String {
@@ -185,6 +187,35 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
                 }
             }
 
+            if let LayerContent::Counter(c) = &layer.content {
+                let font_px = f64::from(c.font_size) * f64::from(res.height);
+                if fixed_h.is_none() {
+                    box_h = font_px * 1.2;
+                }
+                let box_w = f64::from(layer.width) * f64::from(res.width);
+                let (widest, text) = widest_count(c, layer, scene, timeline.fps, font_px);
+                if widest > box_w + 0.5 {
+                    let fit =
+                        (f64::from(c.font_size) * box_w / widest * 0.95 * 1000.0).floor() / 1000.0;
+                    out.push(
+                        Finding::new(
+                            Severity::Warning,
+                            "counter.overflow",
+                            format!(
+                                "{name} shows `{text}` at its widest, about {widest:.0} px, but its box is {box_w:.0} px wide"
+                            ),
+                            Suggestion::set(
+                                format!("make the font smaller ({fit}) or the box wider"),
+                                layer_path(si, li, "font_size"),
+                                json!(fit),
+                            ),
+                        )
+                        .scene(&scene.id)
+                        .at(at),
+                    );
+                }
+            }
+
             let rect = place(layer, res, box_h);
             if !poses(layer, rect, res)
                 .into_iter()
@@ -282,6 +313,27 @@ fn lower_third_height(lt: &LowerThirdLayer, layer: &Layer, res: Resolution) -> (
         h
     };
     (at(1.0), at(OPTIMISTIC))
+}
+
+/// The widest text a counter shows on any frame (an elastic ease overshoots `to`), in px.
+fn widest_count(
+    c: &CounterLayer,
+    layer: &Layer,
+    scene: &Scene,
+    fps: u32,
+    font_px: f64,
+) -> (f64, String) {
+    let n = count_frames(layer, c.duration_ms, scene.duration_ms, fps);
+    let mut best = (0.0, String::new());
+    for f in 0..n {
+        let e = c.ease.apply(frame_progress(f, n));
+        let text = c.format(c.from + (c.to - c.from) * e);
+        let w = width(&text, font_px, SCENE_LETTER_SPACING_EM);
+        if w > best.0 {
+            best = (w, text);
+        }
+    }
+    best
 }
 
 fn reading_speed(

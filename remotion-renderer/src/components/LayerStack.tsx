@@ -2,7 +2,7 @@ import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { applyEasing, sampleKeyframes } from "../motion/keyframes";
 import { layerFrames, layerStateAt, splitLayers } from "../motion/layers";
 import type { Layer } from "../types/timeline";
-import { IconLayerView, ImageLayerView, LowerThirdView, ShapeLayerView, TextLayerView } from "./LayerKinds";
+import { CounterView, IconLayerView, ImageLayerView, LowerThirdView, ShapeLayerView, TextLayerView } from "./LayerKinds";
 
 // One layer in its box. Rendered inside the scene's Sequence, so `useCurrentFrame` is the
 // scene-relative frame (frozen on the last frame while a transition holds the scene).
@@ -32,6 +32,9 @@ const LayerBox: React.FC<{ layer: Layer; sceneFrames: number }> = ({ layer, scen
       break;
     case "lower_third":
       content = <LowerThirdView layer={layer} boxHeight={boxHeight} {...ctx} />;
+      break;
+    case "counter":
+      content = <CounterView layer={layer} boxHeight={boxHeight} {...ctx} />;
       break;
     default:
       // A kind this renderer does not know (a newer timeline): draw nothing rather than fail.

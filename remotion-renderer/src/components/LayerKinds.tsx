@@ -3,8 +3,10 @@ import { Img, useVideoConfig } from "remotion";
 import { AssetUrlContext, resolveAsset } from "../assets";
 import { strokePx } from "../motion/layers";
 import { DEFAULT_TYPING_CPS, cursorVisible, typedCount, typedSegments, typingUnits } from "../motion/typewriter";
+import { applyEasing } from "../motion/keyframes";
+import { countFrames, formatNumber, frameProgress, lerpValue } from "../motion/data";
 import { lowerThirdPose } from "../motion/lowerThird";
-import type { IconLayer, ImageLayer, LowerThirdLayer, ShapeLayer, TextLayer } from "../types/timeline";
+import type { CounterLayer, IconLayer, ImageLayer, LowerThirdLayer, ShapeLayer, TextLayer } from "../types/timeline";
 import { AnimatedWords, highlightKeys, highlightStyle, normalize, splitWords } from "./AnimatedText";
 
 // What each layer kind draws inside its box. The box itself (position, size, transform, opacity,
@@ -260,6 +262,41 @@ export const LowerThirdView: React.FC<{ layer: LowerThirdLayer; boxHeight: numbe
           </div>
         ) : null}
       </div>
+    </div>
+  );
+};
+
+// One line, tabular digits so the width does not jitter while counting. A fixed height centers it.
+export const CounterView: React.FC<{ layer: CounterLayer; boxHeight: number | null } & Ctx> = ({
+  layer,
+  boxHeight,
+  frameHeight,
+  frame,
+  span,
+  fps,
+}) => {
+  const n = countFrames(layer, layer.duration_ms, span, fps);
+  const value = lerpValue(layer.from ?? 0, layer.to, applyEasing(layer.ease ?? "ease_out", frameProgress(frame, n)));
+  const text = formatNumber(value, layer.decimals ?? 0, layer.separator ?? ",", layer.decimal_mark ?? ".", layer.prefix ?? "", layer.suffix ?? "");
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: { left: "flex-start", center: "center", right: "flex-end" }[layer.align ?? "center"],
+        width: "100%",
+        height: boxHeight == null ? undefined : "100%",
+        fontFamily: LAYER_FONT_FAMILY,
+        fontSize: (layer.font_size ?? 0.12) * frameHeight,
+        fontWeight: layer.weight ?? 700,
+        letterSpacing: `${LAYER_LETTER_SPACING_EM}em`,
+        lineHeight: 1.2,
+        color: layer.color ?? "#fafafa",
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {text}
     </div>
   );
 };

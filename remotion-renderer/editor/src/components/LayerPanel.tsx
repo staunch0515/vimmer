@@ -1,6 +1,6 @@
 import type { Dispatch } from "react";
 import { useEffect, useState } from "react";
-import type { Easing, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
+import type { CounterLayer, Easing, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
 import { splitLayers } from "../../../src/motion/layers";
 import { ANIMATION_KINDS, LAYER_KINDS } from "../layers";
 import { EASINGS } from "../model";
@@ -301,6 +301,8 @@ const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, 
       );
     case "lower_third":
       return <LowerThirdFields layer={layer} patch={patch} />;
+    case "counter":
+      return <CounterFields layer={layer} patch={patch} />;
   }
 };
 
@@ -334,6 +336,54 @@ const LowerThirdFields = ({ layer, patch }: { layer: LowerThirdLayer; patch: (p:
       onChange={(c) => patch({ background_color: c === "" ? null : c })}
     />
     <p className="dim">Wipes in and out by itself unless Enter / Exit is set.</p>
+  </>
+);
+
+const EaseField = ({ label, value, onChange }: { label: string; value: Easing; onChange: (e: Easing) => void }) => (
+  <Field label={label}>
+    <select value={value} onChange={(e) => onChange(e.target.value as Easing)}>
+      {EASINGS.map((k) => (
+        <option key={k} value={k}>{k.replace(/_/g, " ")}</option>
+      ))}
+    </select>
+  </Field>
+);
+
+const CounterFields = ({ layer, patch }: { layer: CounterLayer; patch: (p: Record<string, unknown>) => void }) => (
+  <>
+    <div className="two-col">
+      <NumField label="From" value={layer.from ?? 0} step={1} validate={(v) => (Math.abs(v) <= 1e15 ? null : "±1e15")} onCommit={(v) => patch({ from: v })} />
+      <NumField label="To" value={layer.to} step={1} validate={(v) => (Math.abs(v) <= 1e15 ? null : "±1e15")} onCommit={(v) => patch({ to: v })} />
+    </div>
+    <div className="two-col">
+      <OptionalNum label="Count time" suffix="ms" placeholder="until the exit" value={layer.duration_ms ?? undefined} step={100} onCommit={(v) => patch({ duration_ms: v })} />
+      <EaseField label="Easing" value={layer.ease ?? "ease_out"} onChange={(e) => patch({ ease: e })} />
+    </div>
+    <div className="two-col">
+      <NumField label="Decimals" value={layer.decimals ?? 0} step={1} validate={(v) => (Number.isInteger(v) && v >= 0 && v <= 6 ? null : "0 to 6")} onCommit={(v) => patch({ decimals: v || undefined })} />
+      <Field label="Separator" hint="thousands; empty = none">
+        <input value={layer.separator ?? ","} onChange={(e) => patch({ separator: e.target.value === "," ? undefined : e.target.value })} />
+      </Field>
+    </div>
+    <div className="two-col">
+      <Field label="Prefix">
+        <input value={layer.prefix ?? ""} onChange={(e) => patch({ prefix: e.target.value || undefined })} />
+      </Field>
+      <Field label="Suffix">
+        <input value={layer.suffix ?? ""} onChange={(e) => patch({ suffix: e.target.value || undefined })} />
+      </Field>
+    </div>
+    <div className="two-col">
+      <NumField
+        label="Font size"
+        hint="of frame height"
+        value={layer.font_size ?? 0.12}
+        step={0.01}
+        validate={(v) => (v > 0 && v <= 0.5 ? null : "above 0, at most 0.5")}
+        onCommit={(v) => patch({ font_size: v })}
+      />
+      <ColorField label="Color" value={layer.color ?? "#fafafa"} onChange={(c) => patch({ color: c })} />
+    </div>
   </>
 );
 

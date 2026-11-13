@@ -149,7 +149,25 @@ export type LowerThirdLayer = LayerCommon & {
   background_color?: string | null; // default #09090bd9; null = no box
 };
 
-export type Layer = ImageLayer | TextLayer | ShapeLayer | IconLayer | LowerThirdLayer;
+// A number counting from `from` to `to` (motion/data.ts). One line; height may be left out.
+export type CounterLayer = LayerCommon & {
+  kind: "counter";
+  from?: number; // default 0
+  to: number;
+  duration_ms?: number | null; // default: until the exit begins
+  ease?: Easing; // default ease_out
+  decimals?: number; // 0..6, default 0
+  prefix?: string;
+  suffix?: string;
+  separator?: string; // thousands, default ","; "" for none
+  decimal_mark?: string; // default "."
+  font_size?: number; // fraction of the frame height, default 0.12
+  color?: string; // default #fafafa
+  weight?: number; // default 700
+  align?: "left" | "center" | "right"; // default center
+};
+
+export type Layer = ImageLayer | TextLayer | ShapeLayer | IconLayer | LowerThirdLayer | CounterLayer;
 export type LayerKind = Layer["kind"];
 
 export type Resolution = {

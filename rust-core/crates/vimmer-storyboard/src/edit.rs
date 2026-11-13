@@ -771,6 +771,24 @@ const LAYER_KIND_FIELDS: &[(&str, &[(&str, Kind)])] = &[
             ("background_color", Kind::Leaf),
         ],
     ),
+    (
+        "counter",
+        &[
+            ("from", Kind::Leaf),
+            ("to", Kind::Leaf),
+            ("duration_ms", Kind::Leaf),
+            ("ease", Kind::Leaf),
+            ("decimals", Kind::Leaf),
+            ("prefix", Kind::Leaf),
+            ("suffix", Kind::Leaf),
+            ("separator", Kind::Leaf),
+            ("decimal_mark", Kind::Leaf),
+            ("font_size", Kind::Leaf),
+            ("color", Kind::Leaf),
+            ("weight", Kind::Leaf),
+            ("align", Kind::Leaf),
+        ],
+    ),
 ];
 
 /// The union of [`LAYER_COMMON`] and every kind's fields, for pointers (which do not know the
@@ -814,6 +832,15 @@ const LAYER_FIELDS_ALL: &[(&str, Kind)] = &[
     ("subtitle_color", Kind::Leaf),
     ("accent_color", Kind::Leaf),
     ("background_color", Kind::Leaf),
+    ("from", Kind::Leaf),
+    ("to", Kind::Leaf),
+    ("duration_ms", Kind::Leaf),
+    ("ease", Kind::Leaf),
+    ("decimals", Kind::Leaf),
+    ("prefix", Kind::Leaf),
+    ("suffix", Kind::Leaf),
+    ("separator", Kind::Leaf),
+    ("decimal_mark", Kind::Leaf),
 ];
 
 /// The fields a layer object may have: common fields plus those of its `kind`, when the kind is
@@ -2010,7 +2037,7 @@ mod layer_field_tables {
         union.sort_by_key(|f| f.0);
         expected.sort_by_key(|f| f.0);
         assert_eq!(union, expected);
-        for kind in ["image", "text", "shape", "icon", "lower_third"] {
+        for kind in ["image", "text", "shape", "icon", "lower_third", "counter"] {
             assert!(
                 LAYER_KIND_FIELDS.iter().any(|(k, _)| *k == kind),
                 "no fields for {kind}"

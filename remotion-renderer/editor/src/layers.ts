@@ -4,7 +4,7 @@
 import type { Layer, LayerAnimationKind, LayerKind, Resolution, Scene } from "../../src/types/timeline";
 import { splitLayers } from "../../src/motion/layers";
 
-export const LAYER_KINDS: LayerKind[] = ["text", "shape", "image", "icon", "lower_third"];
+export const LAYER_KINDS: LayerKind[] = ["text", "shape", "image", "icon", "lower_third", "counter"];
 export const ANIMATION_KINDS: LayerAnimationKind[] = ["fade", "slide_up", "slide_down", "slide_left", "slide_right", "pop"];
 export const MAX_LAYERS = 32;
 export const MAX_LAYER_TEXT_CHARS = 400;
@@ -32,6 +32,8 @@ export const newLayer = (kind: LayerKind, scene: Scene, res: Resolution = { widt
       return portrait
         ? { id, kind, title: "Name Surname", subtitle: "Role, Company", x: 0.06, y: 0.62, width: 0.8, font_size: 0.03 }
         : { id, kind, title: "Name Surname", subtitle: "Role, Company", x: 0.06, y: 0.66, width: 0.5 };
+    case "counter":
+      return { id, kind, from: 0, to: 1000, x: 0.3, y: 0.3, width: 0.4 };
   }
 };
 
@@ -78,16 +80,23 @@ export const outlineHeight = (layer: Layer): number => {
       const f = layer.font_size ?? 0.045;
       return f * (2 * 0.38 + 1.15 + (layer.subtitle ? 0.62 * (1.3 + 0.25) : 0));
     }
+    case "counter":
+      return (layer.font_size ?? 0.12) * 1.2;
     default:
       return 0.05;
   }
 };
 
 // Kinds whose box may leave out `height` (mirrors LayerContent::auto_height).
-const AUTO_HEIGHT = new Set<LayerKind>(["text", "lower_third"]);
+const AUTO_HEIGHT = new Set<LayerKind>(["text", "lower_third", "counter"]);
 
 const colors = (name: string, out: string[], list: (string | null | undefined)[]) => {
   if (list.some((c) => c != null && !isColor(c))) out.push(`${name}: colors must be #rgb, #rrggbb or #rrggbbaa.`);
+};
+
+const numberFormat = (name: string, out: string[], decimals?: number, prefix?: string, suffix?: string) => {
+  if (decimals !== undefined && !(Number.isInteger(decimals) && decimals >= 0 && decimals <= 6)) out.push(`${name}: decimals must be 0 to 6.`);
+  if ([...(prefix ?? "")].length > 16 || [...(suffix ?? "")].length > 16) out.push(`${name}: prefix and suffix are at most 16 characters.`);
 };
 
 /** Problems with the scene's layers, in words for the problem bar. */
@@ -142,6 +151,20 @@ export const checkLayers = (s: Scene): string[] => {
         if (l.font_size !== undefined && !(l.font_size > 0 && l.font_size <= 0.2)) out.push(`${name}: font size must be above 0 and at most 0.2.`);
         colors(name, out, [l.color, l.subtitle_color, l.accent_color, l.background_color]);
         break;
+      case "counter": {
+        const big = (v: number | undefined) => v !== undefined && !(Number.isFinite(v) && Math.abs(v) <= 1e15);
+        if (big(l.from) || big(l.to)) out.push(`${name}: from and to must be numbers within ±1e15.`);
+        numberFormat(name, out, l.decimals, l.prefix, l.suffix);
+        const sep = l.separator ?? ",";
+        const mark = l.decimal_mark ?? ".";
+        if ([...sep].length > 2 || /\d/.test(sep)) out.push(`${name}: separator must be at most 2 characters and no digits.`);
+        if ([...mark].length !== 1 || /\d/.test(mark) || mark === sep) out.push(`${name}: decimal mark must be one character, not a digit and not the separator.`);
+        const span = (l.end_ms ?? s.duration_ms) - (l.start_ms ?? 0);
+        if (l.duration_ms != null && !(l.duration_ms > 0 && l.duration_ms <= span)) out.push(`${name}: count duration must be above 0 and at most the layer's time (${span} ms).`);
+        if (l.font_size !== undefined && !(l.font_size > 0 && l.font_size <= 0.5)) out.push(`${name}: font size must be above 0 and at most 0.5.`);
+        colors(name, out, [l.color]);
+        break;
+      }
     }
   }
   return out;

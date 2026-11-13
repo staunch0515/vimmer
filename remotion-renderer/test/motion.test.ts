@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { IDENTITY_POSE, applyEasing, sampleKeyframes } from "../src/motion/keyframes.ts";
 import { transitionPose } from "../src/motion/transitions.ts";
 import { animationPose, layerFrames, layerStateAt, splitLayers } from "../src/motion/layers.ts";
+import { countFrames, formatNumber, frameProgress } from "../src/motion/data.ts";
 import { lowerThirdPose } from "../src/motion/lowerThird.ts";
 import { cursorVisible, typedCount, typedSegments, typingUnits } from "../src/motion/typewriter.ts";
 import type { Easing, Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
@@ -283,4 +284,27 @@ test("lower third: built-in wipe starts hidden, rests fully shown, ends hidden; 
   const short = 10;
   assert.equal(lowerThirdPose(4, short, 30, true, true).reveal, 1);
   assert.equal(lowerThirdPose(short - 1, short, 30, true, true).reveal, 0);
+});
+
+test("numbers are formatted without the machine's locale", () => {
+  assert.equal(formatNumber(1234567.891, 2, ",", ".", "$", ""), "$1,234,567.89");
+  assert.equal(formatNumber(1234567, 0, " ", ",", "", " €"), "1 234 567 €");
+  assert.equal(formatNumber(999, 0), "999");
+  assert.equal(formatNumber(1000, 0), "1,000");
+  assert.equal(formatNumber(-1500.26, 1, ".", ",", "", "%"), "-1.500,3%");
+  assert.equal(formatNumber(-0.004, 2), "0.00");
+  assert.equal(formatNumber(0, 0), "0");
+  assert.equal(formatNumber(12345, 0, ""), "12345");
+  assert.equal(formatNumber(1e15, 0), "1,000,000,000,000,000");
+});
+
+test("counts reach their end value on the last counting frame", () => {
+  const counter = { id: "c", kind: "counter", x: 0, y: 0, width: 0.3, to: 100, exit: { kind: "fade", duration_ms: 500 } } as const;
+  // 3 s layer at 30 fps with a 500 ms exit: 75 counting frames.
+  assert.equal(countFrames(counter, undefined, 90, 30), 75);
+  assert.equal(countFrames(counter, 1000, 90, 30), 30);
+  assert.equal(frameProgress(0, 75), 0);
+  assert.equal(frameProgress(74, 75), 1);
+  assert.equal(frameProgress(200, 75), 1);
+  assert.equal(frameProgress(0, 1), 1);
 });

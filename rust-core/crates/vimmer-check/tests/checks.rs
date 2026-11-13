@@ -540,3 +540,24 @@ fn lower_third_overflow_and_safe_area() {
     let fixed = apply(&t, f);
     assert!(find(&run(&fixed, None), "text.overflow", None, None).is_empty());
 }
+
+#[test]
+fn counter_whose_widest_value_overflows_is_a_warning() {
+    // Elastic overshoot: 0 -> 900 springs past 1,000, so the widest text is "1,2xx", not "900".
+    let t = with_layers(
+        3000,
+        r##"[{"id":"narrow","kind":"counter","x":0.4,"y":0.3,"width":0.1,"to":900,"ease":"elastic_out"},
+            {"id":"roomy","kind":"counter","x":0.3,"y":0.6,"width":0.4,"from":0,"to":12500000,"prefix":"$"}]"##,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let f = one(&fs, "counter.overflow", Some("s"), None);
+    assert!(f.message.contains("`narrow`"), "{}", f.message);
+    assert!(
+        f.message.contains("`1,"),
+        "overshoot counted: {}",
+        f.message
+    );
+    let fixed = apply(&t, f);
+    assert!(find(&run(&fixed, None), "counter.overflow", None, None).is_empty());
+}
