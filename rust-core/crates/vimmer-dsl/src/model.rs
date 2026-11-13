@@ -144,12 +144,38 @@ impl Scene {
     }
 }
 
+/// When one word (or CJK character) of a subtitle cue is spoken, in milliseconds from the
+/// video start, like the cue itself. Produced by aligning speech recognition to the known text.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WordTiming {
+    /// The word as it appears in the cue, including attached punctuation and trailing space.
+    pub text: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
 /// A subtitle line on the global timeline, in milliseconds from the video start.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SubtitleCue {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    /// Per-word timing for karaoke-style highlighting. Empty means the line is shown as a whole.
+    /// When present, the concatenated word texts are what the renderer shows for this cue.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<WordTiming>,
+}
+
+impl SubtitleCue {
+    /// A cue without word timing.
+    pub fn new(start_ms: u64, end_ms: u64, text: impl Into<String>) -> Self {
+        Self {
+            start_ms,
+            end_ms,
+            text: text.into(),
+            words: Vec::new(),
+        }
+    }
 }
 
 fn default_music_volume() -> f32 {
@@ -244,12 +270,29 @@ mod tests {
 
     #[test]
     fn easing_and_transition_kinds_use_snake_case() {
-        let kf: Keyframe =
-            serde_json::from_str(r#"{"at_ms":0,"ease":"ease_in_out"}"#).unwrap();
+        let kf: Keyframe = serde_json::from_str(r#"{"at_ms":0,"ease":"ease_in_out"}"#).unwrap();
         assert_eq!(kf.ease, Easing::EaseInOut);
         let t: Transition =
             serde_json::from_str(r#"{"kind":"wipe_left","duration_ms":400}"#).unwrap();
         assert_eq!(t.kind, TransitionKind::WipeLeft);
+    }
+
+    #[test]
+    fn cue_words_default_to_empty_and_are_not_written_when_empty() {
+        let cue: SubtitleCue =
+            serde_json::from_str(r#"{"start_ms":0,"end_ms":1000,"text":"hi"}"#).unwrap();
+        assert!(cue.words.is_empty());
+        let json = serde_json::to_string(&cue).unwrap();
+        assert_eq!(json, r#"{"start_ms":0,"end_ms":1000,"text":"hi"}"#);
+    }
+
+    #[test]
+    fn cue_words_round_trip() {
+        let json = r#"{"start_ms":0,"end_ms":1000,"text":"hi you","words":[{"text":"hi ","start_ms":0,"end_ms":400},{"text":"you","start_ms":400,"end_ms":900}]}"#;
+        let cue: SubtitleCue = serde_json::from_str(json).unwrap();
+        assert_eq!(cue.words.len(), 2);
+        assert_eq!(cue.words[1].start_ms, 400);
+        assert_eq!(serde_json::to_string(&cue).unwrap(), json);
     }
 
     #[test]

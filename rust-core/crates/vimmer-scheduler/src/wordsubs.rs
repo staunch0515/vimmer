@@ -1,0 +1,1335 @@
+//! Word-by-word subtitles: recognize each synthesized narration clip again with a local
+//! speech recognizer, align the result to the scene text, and attach per-word timing to the
+//! subtitle cues that cover the clip (or create cues when there are none).
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use vimmer_dsl::{SubtitleCue, VideoTimeline, WordTiming};
+use vimmer_media::{
+    align_words, guess_language, split_units, AlignedWord, AudioProbe, Limits, MediaError,
+    RecognizedToken, TranscribeRequest, Transcriber, WhisperCli,
+};
+
+use crate::control::{Progress, RenderContext};
+use crate::run::{SchedulerConfig, SchedulerError};
+
+/// How long a generated line stays up after its last word, unless the next line comes sooner.
+const LINE_HOLD_MS: u64 = 600;
+/// Gaps shorter than this between two generated lines are closed, so the band does not blink.
+const LINE_JOIN_MS: u64 = 1_000;
+
+/// Settings for word-by-word subtitles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WordSubtitleConfig {
+    /// On by default. It only touches scenes whose narration is synthesized, and it falls back to
+    /// plain subtitles with a warning when the recognizer is not installed.
+    pub enabled: bool,
+    /// `whisper-cli` binary. `None`: `$VIMMER_WHISPER_CLI`, then `whisper-cli` on PATH.
+    pub whisper_cli: Option<PathBuf>,
+    /// Model file. `None`: `$VIMMER_WHISPER_MODEL`, then the default model under the home dir.
+    pub model: Option<PathBuf>,
+    /// Recognition language: a whisper code (`zh`, `en`, `ja`, ...) or `auto` to let whisper
+    /// detect it. `None` guesses it from each scene's text.
+    pub language: Option<String>,
+    /// Create subtitle cues from the narration text where no cue covers a narrated scene.
+    /// Off by default, so a timeline renders the same subtitles it always did: word timing
+    /// is only added to cues the timeline already has.
+    pub auto_subtitles: bool,
+}
+
+impl Default for WordSubtitleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            whisper_cli: None,
+            model: None,
+            language: None,
+            auto_subtitles: false,
+        }
+    }
+}
+
+/// A synthesized narration clip on the global timeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NarrationClip {
+    pub scene_index: usize,
+    pub text: String,
+    pub wav: PathBuf,
+    /// Where the clip starts, in ms from the video start.
+    pub start_ms: u64,
+    /// The latest a cue for this clip may end: the end of its scene.
+    pub scene_end_ms: u64,
+}
+
+/// Synthesized narration clips: scenes with `narration` whose audio is the generated file.
+pub(crate) fn narration_clips(
+    timeline: &VideoTimeline,
+    cfg: &SchedulerConfig,
+) -> Vec<NarrationClip> {
+    let fps = u64::from(timeline.fps);
+    let frame_ms = |frame: u32| (u64::from(frame) * 1000 + fps / 2) / fps;
+    let starts = timeline.scene_start_frames();
+    timeline
+        .scenes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, scene)| {
+            scene.narration.as_ref()?;
+            let audio = scene.audio.as_ref()?;
+            if !audio.source.starts_with("generated/tts/") {
+                return None;
+            }
+            let text = scene.text.clone().filter(|t| !t.trim().is_empty())?;
+            let scene_start = frame_ms(starts[i]);
+            // Validation measures the timeline as the sum of `duration_ms`, which can be a few
+            // ms shorter than the frame-rounded end, so cues must stay inside both.
+            let ms_end: u64 = timeline.scenes[..=i].iter().map(|s| s.duration_ms).sum();
+            let scene_end = frame_ms(starts[i] + scene.duration_frames(timeline.fps)).min(ms_end);
+            Some(NarrationClip {
+                scene_index: i,
+                text,
+                wav: cfg.public_dir.join(&audio.source),
+                start_ms: scene_start + audio.offset_ms,
+                scene_end_ms: scene_end,
+            })
+        })
+        .collect()
+}
+
+/// Runs recognition and alignment for every synthesized narration clip. Returns the number of
+/// clips that got word timing. A missing engine or a failing clip only adds a warning: the
+/// affected cues keep their plain behaviour.
+pub async fn add_word_subtitles(
+    timeline: &mut VideoTimeline,
+    cfg: &SchedulerConfig,
+    probe: Arc<dyn AudioProbe>,
+    ctx: &RenderContext,
+    warnings: &mut Vec<String>,
+) -> Result<usize, SchedulerError> {
+    if !cfg.word_subtitles.enabled {
+        return Ok(0);
+    }
+    let clips = clips_to_time(
+        &timeline.subtitles,
+        narration_clips(timeline, cfg),
+        cfg.word_subtitles.auto_subtitles,
+    );
+    if clips.is_empty() {
+        return Ok(0);
+    }
+    let ws = &cfg.word_subtitles;
+    let engine = WhisperCli::locate(
+        ws.whisper_cli.as_deref(),
+        ws.model.as_deref(),
+        cfg.child_path.as_deref(),
+    )
+    .map(|mut engine| {
+        engine.ffmpeg = cfg.ffmpeg.clone();
+        engine
+    });
+    let engine: Arc<dyn Transcriber> = match engine {
+        Ok(engine) => Arc::new(engine),
+        Err(e) => {
+            warnings.push(format!(
+                "word-by-word subtitles skipped, subtitles stay as they are: {e}"
+            ));
+            return Ok(0);
+        }
+    };
+    apply_word_subtitles(timeline, &clips, engine, probe, ws, ctx, warnings).await
+}
+
+/// Time budget for one recognition call: a fixed allowance for loading the model plus a
+/// multiple of the audio length. Measured on a loaded 4-core Intel CPU: about 40 s for 4.6 s.
+const TIMEOUT_BASE: Duration = Duration::from_secs(180);
+const TIMEOUT_PER_AUDIO: u32 = 30;
+
+/// Time budget for recognizing `audio_ms` of audio.
+pub(crate) fn recognition_timeout(audio_ms: u64) -> Duration {
+    TIMEOUT_BASE + Duration::from_millis(audio_ms) * TIMEOUT_PER_AUDIO
+}
+
+/// Batches never exceed one whisper window (30 s), since every call encodes a full window
+/// however short the audio is.
+const BATCH_MAX_MS: u64 = 28_000;
+/// Silence between clips joined into one batch, so words cannot run from one clip into the next.
+const BATCH_GAP_MS: u64 = 1_000;
+
+/// Clips recognized in one whisper call: same language, joined with silence in between.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Batch {
+    pub language: Option<String>,
+    /// `(clip index, offset of the clip in the joined audio, clip length)`, in ms.
+    pub members: Vec<(usize, u64, u64)>,
+}
+
+/// Groups clips by language, in timeline order, into batches of at most `BATCH_MAX_MS` of audio
+/// (gaps included). A clip longer than that gets a batch of its own.
+pub(crate) fn plan_batches(languages: &[Option<String>], durations: &[u64]) -> Vec<Batch> {
+    let mut batches: Vec<Batch> = Vec::new();
+    let mut open: Vec<(Option<String>, usize, u64)> = Vec::new(); // (language, batch, end ms)
+    for (clip, (language, &ms)) in languages.iter().zip(durations).enumerate() {
+        let slot = open.iter_mut().find(|(l, _, _)| l == language);
+        match slot {
+            Some((_, batch, end)) if *end + BATCH_GAP_MS + ms <= BATCH_MAX_MS => {
+                let offset = *end + BATCH_GAP_MS;
+                batches[*batch].members.push((clip, offset, ms));
+                *end = offset + ms;
+            }
+            _ => {
+                open.retain(|(l, _, _)| l != language);
+                open.push((language.clone(), batches.len(), ms));
+                batches.push(Batch {
+                    language: language.clone(),
+                    members: vec![(clip, 0, ms)],
+                });
+            }
+        }
+    }
+    batches
+}
+
+/// Hands each recognized token of a joined batch back to the clip whose span (plus half the
+/// surrounding gaps) holds the token's midpoint, with times made relative to that clip.
+pub(crate) fn split_tokens(
+    tokens: &[RecognizedToken],
+    members: &[(usize, u64, u64)],
+) -> Vec<Vec<RecognizedToken>> {
+    let mut out = vec![Vec::new(); members.len()];
+    for token in tokens {
+        let mid = (token.start_ms + token.end_ms.max(token.start_ms)) / 2;
+        let k = members
+            .iter()
+            .rposition(|&(_, offset, _)| offset <= mid + BATCH_GAP_MS / 2)
+            .unwrap_or(0);
+        let (_, offset, ms) = members[k];
+        let rebase = |t: u64| t.saturating_sub(offset).min(ms);
+        out[k].push(RecognizedToken::new(
+            token.text.clone(),
+            rebase(token.start_ms),
+            rebase(token.end_ms.max(token.start_ms)),
+        ));
+    }
+    out
+}
+
+/// Recognizes one batch: a lone clip directly, several clips joined into one file first.
+fn recognize_batch(
+    engine: &dyn Transcriber,
+    batch: &Batch,
+    clips: &[NarrationClip],
+    limits: &Limits,
+) -> Result<Vec<Vec<RecognizedToken>>, vimmer_media::MediaError> {
+    let texts: Vec<&str> = batch
+        .members
+        .iter()
+        .map(|&(c, _, _)| clips[c].text.as_str())
+        .collect();
+    let separator = if batch
+        .language
+        .as_deref()
+        .is_some_and(|l| matches!(l, "zh" | "ja"))
+    {
+        ""
+    } else {
+        " "
+    };
+    let request = TranscribeRequest {
+        language: batch.language.clone(),
+        prompt: Some(texts.join(separator)),
+    };
+    if let [(clip, _, _)] = batch.members[..] {
+        return Ok(vec![engine.transcribe(
+            &clips[clip].wav,
+            &request,
+            limits,
+        )?]);
+    }
+    let wavs: Vec<PathBuf> = batch
+        .members
+        .iter()
+        .map(|&(c, _, _)| clips[c].wav.clone())
+        .collect();
+    let names: Vec<String> = wavs
+        .iter()
+        .map(|w| {
+            w.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        })
+        .collect();
+    let dir = wavs[0].parent().map(PathBuf::from).unwrap_or_default();
+    let joined = dir.join(format!(
+        "batch-{:016x}.wav",
+        fnv1a(&format!("{BATCH_GAP_MS}\n{}", names.join("\n")))
+    ));
+    // The joined file is only an intermediate: the recognition result is cached under its
+    // name, and joining again is quick, so it is removed whatever happens.
+    let result = engine
+        .join_clips(&wavs, BATCH_GAP_MS, &joined, limits)
+        .and_then(|()| engine.transcribe(&joined, &request, limits));
+    let _ = std::fs::remove_file(&joined);
+    Ok(split_tokens(&result?, &batch.members))
+}
+
+fn fnv1a(s: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in s.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
+/// Whether a clip's scene has a subtitle cue without words that overlaps it.
+fn has_cue_to_fill(subtitles: &[SubtitleCue], clip: &NarrationClip) -> bool {
+    subtitles
+        .iter()
+        .any(|c| c.words.is_empty() && c.start_ms < clip.scene_end_ms && c.end_ms > clip.start_ms)
+}
+
+/// The clips worth recognizing: all of them when cues may be generated, else only those with a
+/// cue to fill. Skipping the others saves a whisper call each.
+pub(crate) fn clips_to_time(
+    subtitles: &[SubtitleCue],
+    clips: Vec<NarrationClip>,
+    auto_subtitles: bool,
+) -> Vec<NarrationClip> {
+    clips
+        .into_iter()
+        .filter(|clip| auto_subtitles || has_cue_to_fill(subtitles, clip))
+        .collect()
+}
+
+pub(crate) async fn apply_word_subtitles(
+    timeline: &mut VideoTimeline,
+    clips: &[NarrationClip],
+    engine: Arc<dyn Transcriber>,
+    probe: Arc<dyn AudioProbe>,
+    ws: &WordSubtitleConfig,
+    ctx: &RenderContext,
+    warnings: &mut Vec<String>,
+) -> Result<usize, SchedulerError> {
+    let scene_id = |timeline: &VideoTimeline, clip: &NarrationClip| {
+        timeline.scenes[clip.scene_index].id.clone()
+    };
+    let languages: Vec<Option<String>> = clips
+        .iter()
+        .map(|clip| match ws.language.as_deref() {
+            Some("auto") => None,
+            Some(code) => Some(code.to_string()),
+            None => guess_language(&clip.text).map(String::from),
+        })
+        .collect();
+    let wavs: Vec<PathBuf> = clips.iter().map(|c| c.wav.clone()).collect();
+    let probe2 = probe.clone();
+    let durations = tokio::task::spawn_blocking(move || {
+        wavs.iter()
+            .map(|w| probe2.duration_ms(w))
+            .collect::<Result<Vec<u64>, _>>()
+    })
+    .await
+    .map_err(|e| SchedulerError::Join(e.to_string()))??;
+
+    // One whisper call per batch of same-language clips; results land per clip.
+    let batches = plan_batches(&languages, &durations);
+    let mut recognized: Vec<Option<Vec<RecognizedToken>>> = vec![None; clips.len()];
+    // Child processes poll the render's cancel flag, so a cancel stops whisper mid-run.
+    let cancel = ctx.cancel.clone();
+    let base_limits = Limits {
+        timeout: None,
+        cancelled: Arc::new(move || cancel.is_cancelled()),
+    };
+    let mut timed_out = false;
+    for (n, batch) in batches.iter().enumerate() {
+        if timed_out {
+            // One call already ran out of time: the engine is too slow here, so do not spend the
+            // same budget again on every remaining batch.
+            for &(clip, _, _) in &batch.members {
+                warnings.push(format!(
+                    "scene `{}`: word-by-word subtitles skipped after an earlier recognition timed out",
+                    scene_id(timeline, &clips[clip])
+                ));
+            }
+            continue;
+        }
+        ctx.emit(Progress::Stage {
+            name: format!("Timing subtitles ({}/{})", n + 1, batches.len()),
+        });
+        let audio_ms = batch
+            .members
+            .last()
+            .map_or(0, |&(_, offset, ms)| offset + ms);
+        let limits = base_limits.with_timeout(recognition_timeout(audio_ms));
+        let (engine, batch_owned, clips_owned) = (engine.clone(), batch.clone(), clips.to_vec());
+        let result = tokio::task::spawn_blocking(move || {
+            recognize_batch(engine.as_ref(), &batch_owned, &clips_owned, &limits)
+        })
+        .await
+        .map_err(|e| SchedulerError::Join(e.to_string()))?;
+        ctx.check()?;
+        match result {
+            Ok(per_clip) => {
+                for (&(clip, _, _), tokens) in batch.members.iter().zip(per_clip) {
+                    recognized[clip] = Some(tokens);
+                }
+            }
+            Err(MediaError::Cancelled) => return Err(SchedulerError::Cancelled),
+            Err(e) => {
+                timed_out |= matches!(e, MediaError::TimedOut { .. });
+                for &(clip, _, _) in &batch.members {
+                    warnings.push(format!(
+                        "scene `{}`: word-by-word subtitles skipped: {e}",
+                        scene_id(timeline, &clips[clip])
+                    ));
+                }
+            }
+        }
+    }
+
+    let max_cols = if timeline.resolution.width >= timeline.resolution.height {
+        42
+    } else {
+        28
+    };
+    let mut timed = 0;
+    for (k, clip) in clips.iter().enumerate() {
+        let Some(tokens) = &recognized[k] else {
+            continue;
+        };
+        let id = scene_id(timeline, clip);
+        if tokens.is_empty() {
+            warnings.push(format!(
+                "scene `{id}`: speech recognition heard nothing; word timing is estimated from text length"
+            ));
+        }
+        let words: Vec<AlignedWord> = align_words(&clip.text, tokens, durations[k])
+            .into_iter()
+            .map(|w| AlignedWord {
+                start_ms: w.start_ms + clip.start_ms,
+                end_ms: w.end_ms + clip.start_ms,
+                text: w.text,
+            })
+            .collect();
+        if merge_clip_words(
+            &mut timeline.subtitles,
+            clip,
+            &words,
+            max_cols,
+            ws.auto_subtitles,
+        ) {
+            timed += 1;
+        } else {
+            warnings.push(format!(
+                "scene `{id}`: existing subtitle cues do not match the narration text; they keep plain timing"
+            ));
+        }
+    }
+    timeline.subtitles.sort_by_key(|c| c.start_ms);
+    Ok(timed)
+}
+
+/// Puts a clip's aligned words (absolute times) into the subtitle track. Cues overlapping the
+/// clip that have no words get the words of their own text; with no such cues, new cues are made
+/// from the words. Cues that already carry words are left alone. Returns false when existing
+/// cues could not be matched to the narration.
+pub(crate) fn merge_clip_words(
+    subtitles: &mut Vec<SubtitleCue>,
+    clip: &NarrationClip,
+    words: &[AlignedWord],
+    max_cols: usize,
+    generate: bool,
+) -> bool {
+    let Some(last) = words.last() else {
+        return true;
+    };
+    let clip_end = last.end_ms.max(clip.start_ms);
+    let overlapping: Vec<usize> = subtitles
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.start_ms < clip.scene_end_ms.max(clip_end) && c.end_ms > clip.start_ms)
+        .map(|(i, _)| i)
+        .collect();
+
+    if overlapping.is_empty() {
+        if !generate {
+            return true;
+        }
+        // The next cue after this clip bounds how long generated lines may stay up.
+        let limit = subtitles
+            .iter()
+            .map(|c| c.start_ms)
+            .filter(|&s| s >= clip.start_ms)
+            .min()
+            .unwrap_or(u64::MAX)
+            .min(clip.scene_end_ms.max(clip_end));
+        subtitles.extend(cues_from_words(words, max_cols, limit));
+        return true;
+    }
+
+    let targets: Vec<usize> = overlapping
+        .into_iter()
+        .filter(|&i| subtitles[i].words.is_empty())
+        .collect();
+    if targets.is_empty() {
+        return true;
+    }
+    // The cues split the narration into lines: match their units, in order, to the clip's.
+    let script_keys: Vec<String> = words.iter().map(|w| unit_key(&w.text)).collect();
+    let mut cue_units: Vec<Vec<String>> = Vec::new();
+    for &i in &targets {
+        cue_units.push(split_units(&subtitles[i].text));
+    }
+    let cue_keys: Vec<String> = cue_units.iter().flatten().map(|u| unit_key(u)).collect();
+    let Some(mapping) = map_units(&cue_keys, &script_keys) else {
+        return false;
+    };
+
+    let mut next = 0;
+    for (k, &i) in targets.iter().enumerate() {
+        let cue = &mut subtitles[i];
+        let mut floor = cue.start_ms;
+        let mut timed = Vec::with_capacity(cue_units[k].len());
+        for unit in &cue_units[k] {
+            let (s, e) = match mapping[next] {
+                Some(j) => (words[j].start_ms, words[j].end_ms),
+                None => (floor, floor),
+            };
+            next += 1;
+            let start = s.clamp(floor, cue.end_ms);
+            let end = e.clamp(start, cue.end_ms);
+            floor = end;
+            timed.push(WordTiming {
+                text: unit.clone(),
+                start_ms: start,
+                end_ms: end,
+            });
+        }
+        cue.words = timed;
+    }
+    true
+}
+
+fn unit_key(unit: &str) -> String {
+    unit.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Maps cue units onto narration units by exact key, in order (a monotone greedy walk with a
+/// small lookahead). `None` when fewer than half of the cue units are found.
+fn map_units(cue_keys: &[String], script_keys: &[String]) -> Option<Vec<Option<usize>>> {
+    const LOOKAHEAD: usize = 8;
+    let mut out = Vec::with_capacity(cue_keys.len());
+    let mut j = 0;
+    let mut found = 0;
+    for key in cue_keys {
+        let hit = (j..script_keys.len().min(j + LOOKAHEAD)).find(|&k| &script_keys[k] == key);
+        match hit {
+            Some(k) => {
+                out.push(Some(k));
+                found += 1;
+                j = k + 1;
+            }
+            None => out.push(None),
+        }
+    }
+    (found * 2 >= cue_keys.len()).then_some(out)
+}
+
+/// Display width: CJK characters count double.
+fn width(text: &str) -> usize {
+    text.trim()
+        .chars()
+        .map(|c| {
+            if vimmer_media::is_cjk(c)
+                || ('\u{3000}'..='\u{303F}').contains(&c)
+                || ('\u{FF00}'..='\u{FFEF}').contains(&c)
+            {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+fn ends_sentence(text: &str) -> bool {
+    text.trim_end()
+        .ends_with(['。', '！', '？', '.', '!', '?', '；', ';', '…'])
+}
+
+fn ends_clause(text: &str) -> bool {
+    text.trim_end().ends_with([',', '，', '、', ':', '：'])
+}
+
+/// Groups words into subtitle lines: a sentence end always closes a line, and a line longer than
+/// `max_cols` is broken at its last comma when that is past a third of the line, else before the
+/// word that overflows.
+pub(crate) fn line_breaks(words: &[AlignedWord], max_cols: usize) -> Vec<std::ops::Range<usize>> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut cols = 0;
+    let mut last_comma: Option<usize> = None;
+    let mut i = 0;
+    while i < words.len() {
+        let w = width(&words[i].text);
+        if i > start && cols + w > max_cols {
+            let cut = match last_comma {
+                Some(c) if width_of(&words[start..=c]) * 3 >= max_cols => c + 1,
+                _ => i,
+            };
+            lines.push(start..cut);
+            start = cut;
+            cols = width_of(&words[start..i]);
+            last_comma = None;
+            continue;
+        }
+        cols += w;
+        if ends_sentence(&words[i].text) {
+            lines.push(start..i + 1);
+            start = i + 1;
+            cols = 0;
+            last_comma = None;
+        } else if ends_clause(&words[i].text) {
+            last_comma = Some(i);
+        }
+        i += 1;
+    }
+    if start < words.len() {
+        lines.push(start..words.len());
+    }
+    lines
+}
+
+fn width_of(words: &[AlignedWord]) -> usize {
+    words.iter().map(|w| width(&w.text)).sum()
+}
+
+/// Builds cues from aligned words (absolute times). A line shows from its first word until the
+/// next line starts (when that is soon) or briefly after its last word, never past `limit`.
+pub(crate) fn cues_from_words(
+    words: &[AlignedWord],
+    max_cols: usize,
+    limit: u64,
+) -> Vec<SubtitleCue> {
+    let lines = line_breaks(words, max_cols);
+    let mut cues = Vec::new();
+    for (n, range) in lines.iter().enumerate() {
+        let line = &words[range.clone()];
+        let start = line[0].start_ms;
+        let last_end = line.last().expect("lines are non-empty").end_ms;
+        let next_start = lines.get(n + 1).map(|r| words[r.start].start_ms);
+        let end = match next_start {
+            Some(next) if next <= last_end + LINE_JOIN_MS => next,
+            _ => last_end + LINE_HOLD_MS,
+        }
+        .min(limit)
+        .max(last_end.min(limit));
+        if end <= start {
+            continue;
+        }
+        let count = line.len();
+        let words: Vec<WordTiming> = line
+            .iter()
+            .enumerate()
+            .map(|(k, w)| {
+                let mut text = w.text.clone();
+                if k == 0 {
+                    text = text.trim_start().to_string();
+                }
+                if k + 1 == count {
+                    text = text.trim_end().to_string();
+                }
+                WordTiming {
+                    text,
+                    start_ms: w.start_ms.clamp(start, end),
+                    end_ms: w.end_ms.clamp(start, end),
+                }
+            })
+            .collect();
+        cues.push(SubtitleCue {
+            start_ms: start,
+            end_ms: end,
+            text: words.iter().map(|w| w.text.as_str()).collect(),
+            words,
+        });
+    }
+    cues
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    use vimmer_dsl::{validate, AudioMapping, MotionType, Narration, Resolution, Scene};
+    use vimmer_media::MediaError;
+
+    use super::*;
+
+    fn w(text: &str, start_ms: u64, end_ms: u64) -> AlignedWord {
+        AlignedWord {
+            text: text.into(),
+            start_ms,
+            end_ms,
+        }
+    }
+
+    fn clip(start_ms: u64, scene_end_ms: u64) -> NarrationClip {
+        NarrationClip {
+            scene_index: 0,
+            text: String::new(),
+            wav: PathBuf::from("x.wav"),
+            start_ms,
+            scene_end_ms,
+        }
+    }
+
+    fn auto() -> WordSubtitleConfig {
+        WordSubtitleConfig {
+            auto_subtitles: true,
+            ..WordSubtitleConfig::default()
+        }
+    }
+
+    #[test]
+    fn sentences_and_long_lines_are_broken() {
+        let words = vec![
+            w("Hello ", 0, 100),
+            w("there. ", 100, 200),
+            w("This ", 300, 400),
+            w("line, ", 400, 500),
+            w("is ", 500, 600),
+            w("long", 600, 700),
+        ];
+        assert_eq!(line_breaks(&words, 80), vec![0..2, 2..6]);
+        // 11 columns: "This line, is" fits, adding "long" overflows, so the line is cut at
+        // the comma and "is long" moves on.
+        assert_eq!(line_breaks(&words, 11), vec![0..2, 2..4, 4..6]);
+    }
+
+    #[test]
+    fn cjk_counts_double_and_breaks_at_commas() {
+        let text = "我们在西安，看钟楼和鼓楼。";
+        let units = split_units(text);
+        let words: Vec<AlignedWord> = units
+            .iter()
+            .enumerate()
+            .map(|(i, u)| w(u, i as u64 * 100, i as u64 * 100 + 100))
+            .collect();
+        // 11 characters = 22 columns. With 16 columns the line breaks after the comma.
+        let lines = line_breaks(&words, 16);
+        assert_eq!(lines, vec![0..5, 5..11]);
+    }
+
+    #[test]
+    fn generated_cues_hold_join_and_respect_the_limit() {
+        let words = vec![
+            w(" One. ", 0, 400),
+            w("Two. ", 900, 1300),
+            w("Three.", 4000, 4500),
+        ];
+        let cues = cues_from_words(&words, 42, 4800);
+        assert_eq!(cues.len(), 3);
+        assert_eq!(
+            (cues[0].start_ms, cues[0].end_ms),
+            (0, 900),
+            "joined to the next line"
+        );
+        assert_eq!(
+            (cues[1].start_ms, cues[1].end_ms),
+            (900, 1900),
+            "held 600 ms"
+        );
+        assert_eq!(
+            (cues[2].start_ms, cues[2].end_ms),
+            (4000, 4800),
+            "cut at the limit"
+        );
+        assert_eq!(cues[0].text, "One.");
+        assert_eq!(cues[0].words[0].text, "One.");
+        assert_eq!(cues[2].words[0].end_ms, 4500);
+    }
+
+    #[test]
+    fn fills_words_into_existing_cues_and_clamps_to_them() {
+        let mut subs = vec![
+            SubtitleCue::new(0, 1000, "Hello world"),
+            SubtitleCue::new(1000, 3000, "again"),
+            SubtitleCue::new(5000, 6000, "elsewhere"),
+        ];
+        let words = vec![
+            w("Hello ", 100, 400),
+            w("world ", 400, 1100),
+            w("again", 1200, 1500),
+        ];
+        assert!(merge_clip_words(
+            &mut subs,
+            &clip(100, 3000),
+            &words,
+            42,
+            true
+        ));
+        assert_eq!(subs.len(), 3);
+        let spans: Vec<(u64, u64)> = subs[0]
+            .words
+            .iter()
+            .map(|x| (x.start_ms, x.end_ms))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![(100, 400), (400, 1000)],
+            "clamped to the cue end"
+        );
+        assert_eq!(subs[1].words[0].start_ms, 1200);
+        assert!(subs[2].words.is_empty(), "cue outside the clip untouched");
+    }
+
+    #[test]
+    fn unrelated_existing_cues_are_reported_and_left_alone() {
+        let mut subs = vec![SubtitleCue::new(0, 1000, "完全不同")];
+        let words = vec![w("Hello ", 100, 400), w("world", 400, 900)];
+        assert!(!merge_clip_words(
+            &mut subs,
+            &clip(0, 1000),
+            &words,
+            42,
+            true
+        ));
+        assert!(subs[0].words.is_empty());
+    }
+
+    #[test]
+    fn generates_cues_when_none_cover_the_clip() {
+        let mut subs = vec![SubtitleCue::new(9000, 9500, "later")];
+        let words = vec![w("你", 1000, 1200), w("好。", 1200, 1500)];
+        assert!(merge_clip_words(
+            &mut subs,
+            &clip(1000, 3000),
+            &words,
+            42,
+            true
+        ));
+        assert_eq!(subs.len(), 2);
+        assert_eq!(subs[1].text, "你好。");
+        assert_eq!((subs[1].start_ms, subs[1].end_ms), (1000, 2100));
+    }
+
+    #[test]
+    fn batches_group_by_language_up_to_one_window() {
+        let l = |s: &str| Some(s.to_string());
+        let langs = vec![l("zh"), l("en"), l("zh"), l("zh"), None, l("zh")];
+        let ms = vec![5_000, 4_000, 6_000, 20_000, 3_000, 30_000];
+        let batches = plan_batches(&langs, &ms);
+        assert_eq!(
+            batches,
+            vec![
+                Batch {
+                    language: l("zh"),
+                    members: vec![(0, 0, 5_000), (2, 6_000, 6_000)]
+                },
+                Batch {
+                    language: l("en"),
+                    members: vec![(1, 0, 4_000)]
+                },
+                Batch {
+                    language: l("zh"),
+                    members: vec![(3, 0, 20_000)]
+                },
+                Batch {
+                    language: None,
+                    members: vec![(4, 0, 3_000)]
+                },
+                Batch {
+                    language: l("zh"),
+                    members: vec![(5, 0, 30_000)]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn tokens_of_a_joined_batch_go_back_to_their_clips() {
+        let members = vec![(0, 0, 2_000), (1, 3_000, 1_500), (2, 5_500, 1_000)];
+        let tokens = vec![
+            RecognizedToken::new("a", 100, 900),
+            RecognizedToken::new("b", 1_800, 2_300), // runs a little into the gap
+            RecognizedToken::new("c", 2_900, 3_400), // starts a little early
+            RecognizedToken::new("d", 5_600, 6_400),
+        ];
+        let split = split_tokens(&tokens, &members);
+        assert_eq!(
+            split[0],
+            vec![
+                RecognizedToken::new("a", 100, 900),
+                RecognizedToken::new("b", 1_800, 2_000)
+            ]
+        );
+        assert_eq!(split[1], vec![RecognizedToken::new("c", 0, 400)]);
+        assert_eq!(split[2], vec![RecognizedToken::new("d", 100, 900)]);
+    }
+
+    struct FixedTranscriber(Vec<RecognizedToken>, Mutex<Vec<TranscribeRequest>>);
+    impl Transcriber for FixedTranscriber {
+        fn transcribe(
+            &self,
+            _wav: &Path,
+            request: &TranscribeRequest,
+            _limits: &Limits,
+        ) -> Result<Vec<RecognizedToken>, MediaError> {
+            self.1.lock().unwrap().push(request.clone());
+            Ok(self.0.clone())
+        }
+    }
+
+    struct FixedProbe(u64);
+    impl AudioProbe for FixedProbe {
+        fn duration_ms(&self, _path: &Path) -> Result<u64, MediaError> {
+            Ok(self.0)
+        }
+    }
+
+    fn narrated(id: &str, ms: u64, text: &str) -> Scene {
+        Scene {
+            id: id.into(),
+            duration_ms: ms,
+            text: Some(text.into()),
+            highlights: vec![],
+            image: None,
+            motion: MotionType::Static,
+            audio: Some(AudioMapping {
+                source: format!("generated/tts/{id}.wav"),
+                offset_ms: 0,
+            }),
+            narration: Some(Narration::default()),
+            transition_in: None,
+            keyframes: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn end_to_end_with_a_fixed_recognizer() {
+        let mut t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![
+                narrated("intro", 2000, "Hello world."),
+                narrated("zh", 2000, "你好世界。"),
+            ],
+            subtitles: vec![],
+            music: None,
+        };
+        t.scenes[0].audio = None; // not narrated by us: ignored
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let clips = narration_clips(&t, &cfg);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].start_ms, 2000);
+
+        let engine = Arc::new(FixedTranscriber(
+            vec![
+                RecognizedToken::new("你好", 100, 500),
+                RecognizedToken::new("世界", 500, 1200),
+            ],
+            Mutex::new(vec![]),
+        ));
+        let mut warnings = vec![];
+        let n = apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine.clone(),
+            Arc::new(FixedProbe(1500)),
+            &auto(),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
+        assert!(warnings.is_empty());
+        let requests = engine.1.lock().unwrap().clone();
+        assert_eq!(requests[0].language.as_deref(), Some("zh"));
+        assert_eq!(t.subtitles.len(), 1);
+        let cue = &t.subtitles[0];
+        assert_eq!(cue.text, "你好世界。");
+        assert_eq!(cue.start_ms, 2100);
+        let spans: Vec<(u64, u64)> = cue.words.iter().map(|x| (x.start_ms, x.end_ms)).collect();
+        assert_eq!(
+            spans,
+            vec![(2100, 2300), (2300, 2500), (2500, 2850), (2850, 3200)]
+        );
+        assert_eq!(validate(&t), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn missing_engine_warns_and_changes_nothing() {
+        let mut t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![narrated("a", 2000, "Hello")],
+            subtitles: vec![SubtitleCue::new(0, 1000, "Hello")],
+            music: None,
+        };
+        let before = t.clone();
+        let mut cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        cfg.child_path = Some("/nonexistent-dir".into());
+        cfg.word_subtitles.whisper_cli = Some(PathBuf::from("whisper-cli-missing"));
+        let mut warnings = vec![];
+        let n = add_word_subtitles(
+            &mut t,
+            &cfg,
+            Arc::new(FixedProbe(1000)),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(t, before);
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].contains("word-by-word subtitles skipped"),
+            "{warnings:?}"
+        );
+
+        cfg.word_subtitles.enabled = false;
+        let mut warnings = vec![];
+        add_word_subtitles(
+            &mut t,
+            &cfg,
+            Arc::new(FixedProbe(1000)),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert!(warnings.is_empty(), "disabled: not even a warning");
+    }
+
+    #[test]
+    fn clip_end_never_passes_the_validated_timeline_length() {
+        // 4920 ms and 4650 ms round up to 148 and 140 frames: frame time 9600 ms, sum 9570 ms.
+        let t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![
+                narrated("zh", 4920, "你好。"),
+                narrated("ja", 4650, "こんにちは。"),
+            ],
+            subtitles: vec![],
+            music: None,
+        };
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let clips = narration_clips(&t, &cfg);
+        assert_eq!(clips[1].scene_end_ms, 9_570);
+        assert_eq!(t.total_duration_ms(), 9_570);
+        let mut subs = vec![];
+        let words = vec![w("こん", 4_950, 6_000), w("にちは。", 6_000, 9_500)];
+        assert!(merge_clip_words(&mut subs, &clips[1], &words, 42, true));
+        assert_eq!(
+            subs[0].end_ms, 9_570,
+            "held line is cut at the validated end"
+        );
+    }
+
+    struct JoiningTranscriber {
+        joined: Mutex<Vec<(Vec<PathBuf>, u64)>>,
+        calls: Mutex<Vec<PathBuf>>,
+    }
+    impl Transcriber for JoiningTranscriber {
+        fn transcribe(
+            &self,
+            wav: &Path,
+            _request: &TranscribeRequest,
+            _limits: &Limits,
+        ) -> Result<Vec<RecognizedToken>, MediaError> {
+            self.calls.lock().unwrap().push(wav.to_path_buf());
+            // Joined audio: clip 1 (1000 ms) at 0, gap 1000 ms, clip 2 at 2000.
+            Ok(vec![
+                RecognizedToken::new("你好", 0, 1000),
+                RecognizedToken::new("再见", 2000, 2800),
+            ])
+        }
+        fn join_clips(
+            &self,
+            inputs: &[PathBuf],
+            gap_ms: u64,
+            out: &Path,
+            _limits: &Limits,
+        ) -> Result<(), MediaError> {
+            self.joined.lock().unwrap().push((inputs.to_vec(), gap_ms));
+            std::fs::write(out, b"joined").map_err(MediaError::from)
+        }
+    }
+
+    #[tokio::test]
+    async fn same_language_clips_are_recognized_in_one_call() {
+        let dir = std::env::temp_dir().join(format!("vimmer-batch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![narrated("a", 2000, "你好"), narrated("b", 2000, "再见")],
+            subtitles: vec![],
+            music: None,
+        };
+        let mut clips = narration_clips(
+            &t,
+            &SchedulerConfig::new(dir.clone(), dir.join("o.mp4"), dir.clone()),
+        );
+        for clip in &mut clips {
+            clip.wav = dir.join(clip.wav.file_name().unwrap());
+        }
+        let engine = Arc::new(JoiningTranscriber {
+            joined: Mutex::new(vec![]),
+            calls: Mutex::new(vec![]),
+        });
+        let mut warnings = vec![];
+        let n = apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine.clone(),
+            Arc::new(FixedProbe(1000)),
+            &auto(),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 2, "{warnings:?}");
+        assert_eq!(
+            engine.calls.lock().unwrap().len(),
+            1,
+            "one whisper call for both clips"
+        );
+        assert_eq!(engine.joined.lock().unwrap()[0].1, BATCH_GAP_MS);
+        let joined_wav = engine.calls.lock().unwrap()[0].clone();
+        assert!(
+            !joined_wav.exists(),
+            "the joined batch file is removed after recognition"
+        );
+        let spans: Vec<Vec<(u64, u64)>> = t
+            .subtitles
+            .iter()
+            .map(|c| c.words.iter().map(|w| (w.start_ms, w.end_ms)).collect())
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                vec![(0, 500), (500, 1000)],
+                vec![(2000, 2400), (2400, 2800)]
+            ]
+        );
+        assert_eq!(validate(&t), Ok(()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Fails every call with the given error and counts the calls.
+    struct FailingTranscriber(fn() -> MediaError, Mutex<usize>);
+    impl Transcriber for FailingTranscriber {
+        fn transcribe(
+            &self,
+            _wav: &Path,
+            _request: &TranscribeRequest,
+            limits: &Limits,
+        ) -> Result<Vec<RecognizedToken>, MediaError> {
+            *self.1.lock().unwrap() += 1;
+            assert!(limits.timeout.is_some(), "every call has a time budget");
+            Err((self.0)())
+        }
+    }
+
+    fn three_languages() -> (VideoTimeline, Vec<NarrationClip>) {
+        let t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![
+                narrated("en", 2000, "Hello."),
+                narrated("zh", 2000, "你好。"),
+                narrated("ja", 2000, "こんにちは。"),
+            ],
+            subtitles: vec![SubtitleCue::new(0, 1000, "Hello.")],
+            music: None,
+        };
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let clips = narration_clips(&t, &cfg);
+        (t, clips)
+    }
+
+    #[tokio::test]
+    async fn a_timeout_falls_back_and_skips_the_remaining_batches() {
+        let (mut t, clips) = three_languages();
+        let before = t.subtitles.clone();
+        let engine = Arc::new(FailingTranscriber(
+            || MediaError::TimedOut { secs: 1 },
+            Mutex::new(0),
+        ));
+        let mut warnings = vec![];
+        let n = apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine.clone(),
+            Arc::new(FixedProbe(1000)),
+            &auto(),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(
+            *engine.1.lock().unwrap(),
+            1,
+            "no second call after a timeout"
+        );
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(warnings[0].contains("timed out"), "{warnings:?}");
+        assert_eq!(t.subtitles, before, "plain subtitles kept");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_during_recognition_cancels_the_render() {
+        let (mut t, clips) = three_languages();
+        let engine = Arc::new(FailingTranscriber(|| MediaError::Cancelled, Mutex::new(0)));
+        let ctx = RenderContext::silent();
+        let result = apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine.clone(),
+            Arc::new(FixedProbe(1000)),
+            &auto(),
+            &ctx,
+            &mut vec![],
+        )
+        .await;
+        assert!(matches!(result, Err(SchedulerError::Cancelled)));
+        assert_eq!(*engine.1.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn timeout_grows_with_the_audio() {
+        assert_eq!(recognition_timeout(0), Duration::from_secs(180));
+        assert_eq!(recognition_timeout(28_000), Duration::from_secs(180 + 840));
+    }
+
+    #[test]
+    fn by_default_only_clips_with_cues_are_timed() {
+        let (t, clips) = three_languages();
+        // Only the English scene has a cue.
+        let kept = clips_to_time(&t.subtitles, clips.clone(), false);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(t.scenes[kept[0].scene_index].id, "en");
+        assert_eq!(clips_to_time(&t.subtitles, clips.clone(), true).len(), 3);
+        // A cue that already has words needs nothing.
+        let mut filled = t.subtitles.clone();
+        filled[0].words = vec![WordTiming {
+            text: "Hello.".into(),
+            start_ms: 0,
+            end_ms: 500,
+        }];
+        assert!(clips_to_time(&filled, clips, false).is_empty());
+    }
+
+    #[test]
+    fn by_default_no_cue_is_generated_for_narration_without_cues() {
+        let mut subs = vec![SubtitleCue::new(9000, 9500, "later")];
+        let words = vec![w("你", 1000, 1200), w("好。", 1200, 1500)];
+        assert!(merge_clip_words(
+            &mut subs,
+            &clip(1000, 3000),
+            &words,
+            42,
+            false
+        ));
+        assert_eq!(subs, vec![SubtitleCue::new(9000, 9500, "later")]);
+        assert!(merge_clip_words(
+            &mut subs,
+            &clip(1000, 3000),
+            &words,
+            42,
+            true
+        ));
+        assert_eq!(subs.len(), 2, "generated when switched on");
+    }
+
+    #[tokio::test]
+    async fn default_config_leaves_a_timeline_without_cues_untouched() {
+        let mut t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![narrated("zh", 2000, "你好。")],
+            subtitles: vec![],
+            music: None,
+        };
+        let before = t.clone();
+        let mut cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        // Point at a missing engine: with nothing to time, it must not even be looked up.
+        cfg.word_subtitles.whisper_cli = Some(PathBuf::from("/nonexistent/whisper-cli"));
+        let mut warnings = vec![];
+        let n = add_word_subtitles(
+            &mut t,
+            &cfg,
+            Arc::new(FixedProbe(1000)),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(t, before);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // Switched on, the same timeline would need the engine (and warns that it is missing).
+        cfg.word_subtitles.auto_subtitles = true;
+        add_word_subtitles(
+            &mut t,
+            &cfg,
+            Arc::new(FixedProbe(1000)),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+}

@@ -11,10 +11,14 @@ pub trait Speech: Send + Sync {
     fn synthesize(&self, text: &str, voice: &str, out_wav: &Path) -> Result<(), MediaError>;
 }
 
-/// The voice used when a scene does not name one. Any CJK character selects a Chinese voice.
+/// The voice used when a scene does not name one. Any kana selects a Japanese voice; otherwise
+/// any CJK ideograph selects a Chinese voice.
 pub fn default_voice_for(text: &str) -> &'static str {
+    let kana = text.chars().any(|c| ('\u{3040}'..='\u{30ff}').contains(&c));
     let cjk = text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
-    if cjk {
+    if kana {
+        "Kyoko"
+    } else if cjk {
         "Tingting"
     } else {
         "Samantha"
@@ -91,5 +95,6 @@ mod tests {
         assert_eq!(default_voice_for("西安钟楼"), "Tingting");
         assert_eq!(default_voice_for("Hello world"), "Samantha");
         assert_eq!(default_voice_for("mixed 中文 text"), "Tingting");
+        assert_eq!(default_voice_for("今日はいい天気"), "Kyoko");
     }
 }

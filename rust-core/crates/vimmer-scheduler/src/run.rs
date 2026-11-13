@@ -11,6 +11,7 @@ use vimmer_media::{normalize_image, AudioProbe, MediaError, Speech};
 use crate::control::{Progress, RenderContext};
 use crate::narrate::narrate_scenes;
 use crate::plan::{chunk_timeline, plan_chunks, Chunk, DEFAULT_CHUNK_MS};
+use crate::wordsubs::{add_word_subtitles, WordSubtitleConfig};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SchedulerError {
@@ -59,6 +60,8 @@ pub struct SchedulerConfig {
     pub ffmpeg: PathBuf,
     /// PATH for child processes. Set this when the parent's PATH is minimal (e.g. a GUI app).
     pub child_path: Option<String>,
+    /// Word-by-word subtitle timing for synthesized narration (on by default).
+    pub word_subtitles: WordSubtitleConfig,
 }
 
 impl SchedulerConfig {
@@ -74,7 +77,24 @@ impl SchedulerConfig {
             render_concurrency: 2,
             ffmpeg: PathBuf::from("ffmpeg"),
             child_path: None,
+            word_subtitles: WordSubtitleConfig::default(),
         }
+    }
+}
+
+impl SchedulerConfig {
+    /// The same config with `work_dir`, `output`, `remotion_dir` and `public_dir` made absolute
+    /// against the current directory (without touching the filesystem).
+    pub fn absolutized(mut self) -> Result<Self, SchedulerError> {
+        for path in [
+            &mut self.work_dir,
+            &mut self.output,
+            &mut self.remotion_dir,
+            &mut self.public_dir,
+        ] {
+            *path = std::path::absolute(&*path)?;
+        }
+        Ok(self)
     }
 }
 
@@ -104,6 +124,9 @@ pub async fn render_timeline_with(
     speech: Arc<dyn Speech>,
     ctx: RenderContext,
 ) -> Result<RunReport, SchedulerError> {
+    // Remotion runs inside `remotion_dir`, so a relative props or output path handed to it
+    // would resolve against the wrong directory. Anchor every path at our own cwd first.
+    let cfg = cfg.absolutized()?;
     ctx.emit(Progress::Stage {
         name: "Checking timeline".into(),
     });
@@ -131,6 +154,21 @@ pub async fn render_timeline_with(
     .await?;
     if narrated > 0 {
         validate(&timeline).map_err(SchedulerError::Invalid)?;
+    }
+
+    // Recognize the narration again to time subtitles word by word. Without an engine this
+    // only warns, and subtitles stay as they were.
+    let plain_subtitles = timeline.subtitles.clone();
+    let timed = add_word_subtitles(&mut timeline, &cfg, probe.clone(), &ctx, &mut warnings).await?;
+    if timed > 0 {
+        // A word-timing bug must never fail the render: fall back to the plain subtitles.
+        if let Err(errors) = validate(&timeline) {
+            warnings.push(format!(
+                "word-by-word subtitles dropped, they did not validate: {}",
+                join(&errors)
+            ));
+            timeline.subtitles = plain_subtitles;
+        }
     }
 
     ctx.emit(Progress::Stage {
@@ -422,4 +460,30 @@ fn sanitize(rel: &str) -> String {
         .collect::<String>()
         .trim_matches('-')
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_paths_are_anchored_at_the_current_dir() {
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("target/vimmer-work"),
+            PathBuf::from("out.mp4"),
+            PathBuf::from("../remotion-renderer"),
+        )
+        .absolutized()
+        .unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(cfg.work_dir, cwd.join("target/vimmer-work"));
+        assert_eq!(cfg.output, cwd.join("out.mp4"));
+        assert!(cfg.remotion_dir.is_absolute());
+        assert!(cfg.public_dir.is_absolute());
+        assert!(cfg.public_dir.ends_with("remotion-renderer/public"));
+        let abs = SchedulerConfig::new(PathBuf::from("/w"), PathBuf::from("/o.mp4"), PathBuf::from("/r"))
+            .absolutized()
+            .unwrap();
+        assert_eq!(abs.work_dir, PathBuf::from("/w"));
+    }
 }

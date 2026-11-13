@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use thiserror::Error;
 
-use crate::model::{Scene, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS};
+use crate::model::{Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS};
 
 const ALLOWED_RESOLUTIONS: [(u32, u32); 2] = [(1920, 1080), (1080, 1920)];
 
@@ -40,6 +40,19 @@ pub enum ValidationError {
     },
     #[error("subtitle {0} has empty text")]
     EmptySubtitle(usize),
+    #[error("subtitle {cue} word {word} ({start_ms}..{end_ms} ms) is outside the cue ({cue_start_ms}..{cue_end_ms} ms) or ends before it starts")]
+    WordOutOfCue {
+        cue: usize,
+        word: usize,
+        start_ms: u64,
+        end_ms: u64,
+        cue_start_ms: u64,
+        cue_end_ms: u64,
+    },
+    #[error("subtitle {cue} word {word} starts before the previous word ends; words must be in time order without overlap")]
+    WordsNotMonotonic { cue: usize, word: usize },
+    #[error("subtitle {cue} word {word} has empty text")]
+    EmptyWord { cue: usize, word: usize },
     #[error("music has an empty source")]
     EmptyMusicSource,
     #[error("music volume {0} must be between 0 and 1")]
@@ -50,13 +63,17 @@ pub enum ValidationError {
     TransitionOnFirstScene(String),
     #[error("scene `{0}` has a zero-length transition")]
     ZeroTransition(String),
-    #[error("scene `{scene}` transition is {transition_ms} ms, longer than the scene ({scene_ms} ms)")]
+    #[error(
+        "scene `{scene}` transition is {transition_ms} ms, longer than the scene ({scene_ms} ms)"
+    )]
     TransitionTooLong {
         scene: String,
         transition_ms: u64,
         scene_ms: u64,
     },
-    #[error("scene `{scene}` keyframe {index} is at {at_ms} ms, after the scene ends at {scene_ms} ms")]
+    #[error(
+        "scene `{scene}` keyframe {index} is at {at_ms} ms, after the scene ends at {scene_ms} ms"
+    )]
     KeyframeOutOfScene {
         scene: String,
         index: usize,
@@ -67,13 +84,17 @@ pub enum ValidationError {
     KeyframesNotSorted { scene: String, index: usize },
     #[error("scene `{scene}` has two keyframes at {at_ms} ms")]
     DuplicateKeyframe { scene: String, at_ms: u64 },
-    #[error("scene `{scene}` keyframe {index} has scale {value}; scale must be a finite number above 0")]
+    #[error(
+        "scene `{scene}` keyframe {index} has scale {value}; scale must be a finite number above 0"
+    )]
     BadKeyframeScale {
         scene: String,
         index: usize,
         value: f32,
     },
-    #[error("scene `{scene}` keyframe {index} has opacity {value}; opacity must be between 0 and 1")]
+    #[error(
+        "scene `{scene}` keyframe {index} has opacity {value}; opacity must be between 0 and 1"
+    )]
     BadKeyframeOpacity {
         scene: String,
         index: usize,
@@ -148,6 +169,30 @@ fn validate_keyframes(scene: &Scene, errors: &mut Vec<ValidationError>) {
     }
 }
 
+/// Word timings must sit inside their cue, in order, without overlapping. Zero-length words are
+/// allowed: chunking clamps words outside a chunk to the chunk edge, which keeps them in order.
+fn validate_words(cue: &SubtitleCue, index: usize, errors: &mut Vec<ValidationError>) {
+    let mut prev_end = cue.start_ms;
+    for (word, w) in cue.words.iter().enumerate() {
+        if w.text.trim().is_empty() {
+            errors.push(ValidationError::EmptyWord { cue: index, word });
+        }
+        if w.start_ms > w.end_ms || w.start_ms < cue.start_ms || w.end_ms > cue.end_ms {
+            errors.push(ValidationError::WordOutOfCue {
+                cue: index,
+                word,
+                start_ms: w.start_ms,
+                end_ms: w.end_ms,
+                cue_start_ms: cue.start_ms,
+                cue_end_ms: cue.end_ms,
+            });
+        } else if word > 0 && w.start_ms < prev_end {
+            errors.push(ValidationError::WordsNotMonotonic { cue: index, word });
+        }
+        prev_end = prev_end.max(w.end_ms);
+    }
+}
+
 /// Checks a timeline against the DSL rules. Returns every violation found,
 /// not just the first, so callers can report them all at once.
 pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
@@ -212,6 +257,7 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
         if cue.text.trim().is_empty() {
             errors.push(ValidationError::EmptySubtitle(index));
         }
+        validate_words(cue, index, &mut errors);
     }
 
     if let Some(music) = &timeline.music {
@@ -239,7 +285,7 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{MotionType, Resolution, Scene, SubtitleCue};
+    use crate::model::{MotionType, Resolution, Scene, SubtitleCue, WordTiming};
 
     fn scene(id: &str, ms: u64) -> Scene {
         Scene {
@@ -318,16 +364,19 @@ mod tests {
                 start_ms: 2_000,
                 end_ms: 1_000,
                 text: "backwards".into(),
+                words: Vec::new(),
             },
             SubtitleCue {
                 start_ms: 4_000,
                 end_ms: 6_000,
                 text: "too late".into(),
+                words: Vec::new(),
             },
             SubtitleCue {
                 start_ms: 0,
                 end_ms: 1_000,
                 text: "  ".into(),
+                words: Vec::new(),
             },
         ];
         let errs = validate(&t).unwrap_err();
@@ -342,6 +391,59 @@ mod tests {
             total_ms: 5_000
         }));
         assert!(errs.contains(&ValidationError::EmptySubtitle(2)));
+    }
+
+    fn word(text: &str, start_ms: u64, end_ms: u64) -> WordTiming {
+        WordTiming {
+            text: text.into(),
+            start_ms,
+            end_ms,
+        }
+    }
+
+    #[test]
+    fn valid_words_pass_including_zero_length_edges() {
+        let mut t = timeline(vec![scene("a", 5_000)]);
+        let mut cue = SubtitleCue::new(1_000, 3_000, "你好 world");
+        cue.words = vec![
+            word("你", 1_000, 1_000),
+            word("好 ", 1_000, 1_400),
+            word("world", 1_500, 3_000),
+        ];
+        t.subtitles = vec![cue];
+        assert_eq!(validate(&t), Ok(()));
+    }
+
+    #[test]
+    fn words_must_sit_inside_their_cue_in_order() {
+        let mut t = timeline(vec![scene("a", 5_000)]);
+        let mut cue = SubtitleCue::new(1_000, 3_000, "a b c d e");
+        cue.words = vec![
+            word("a", 900, 1_200),
+            word("b", 1_200, 1_600),
+            word("c", 1_500, 1_800),
+            word("d", 2_000, 1_900),
+            word(" ", 2_900, 3_100),
+        ];
+        t.subtitles = vec![cue];
+        let errs = validate(&t).unwrap_err();
+        assert!(errs.iter().any(|e| matches!(
+            e,
+            ValidationError::WordOutOfCue {
+                cue: 0,
+                word: 0,
+                ..
+            }
+        )));
+        assert!(errs.contains(&ValidationError::WordsNotMonotonic { cue: 0, word: 2 }));
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ValidationError::WordOutOfCue { word: 3, .. })));
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ValidationError::WordOutOfCue { word: 4, .. })));
+        assert!(errs.contains(&ValidationError::EmptyWord { cue: 0, word: 4 }));
+        assert!(!errs.contains(&ValidationError::WordsNotMonotonic { cue: 0, word: 1 }));
     }
 
     #[test]

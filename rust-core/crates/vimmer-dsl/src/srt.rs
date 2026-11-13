@@ -40,11 +40,7 @@ pub fn parse_srt(input: &str) -> Result<Vec<SubtitleCue>, SrtError> {
         if text.trim().is_empty() {
             return Err(SrtError::EmptyText { cue: number });
         }
-        cues.push(SubtitleCue {
-            start_ms: start,
-            end_ms: end,
-            text,
-        });
+        cues.push(SubtitleCue::new(start, end, text));
     }
     Ok(cues)
 }
@@ -90,7 +86,8 @@ mod tests {
             SubtitleCue {
                 start_ms: 1000,
                 end_ms: 3500,
-                text: "Hello there".into()
+                text: "Hello there".into(),
+                words: Vec::new(),
             }
         );
         assert_eq!(cues[1].text, "Line one line two");

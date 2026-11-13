@@ -1,6 +1,6 @@
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use vimmer_dsl::VideoTimeline;
 use vimmer_media::{FfmpegProbe, SaySpeech};
 use vimmer_scheduler::{render_timeline, SchedulerConfig, DEFAULT_CHUNK_MS};
@@ -32,6 +32,33 @@ struct Cli {
     /// Parallel Remotion render jobs.
     #[arg(long, default_value_t = 2)]
     render_jobs: usize,
+    /// Time subtitles word by word from synthesized narration, using local speech recognition
+    /// (whisper.cpp). Falls back to plain subtitles with a warning when whisper-cli or the model
+    /// is missing.
+    #[arg(long, value_enum, default_value_t = Toggle::On)]
+    word_subtitles: Toggle,
+    /// Create subtitle cues from the narration text for narrated scenes that no cue covers.
+    /// Off by default: only cues already in the timeline get word timing, so a timeline keeps
+    /// the subtitles it always had.
+    #[arg(long, value_enum, default_value_t = Toggle::Off)]
+    auto_subtitles: Toggle,
+    /// whisper-cli binary (default: $VIMMER_WHISPER_CLI, then `whisper-cli` on PATH).
+    #[arg(long)]
+    whisper_cli: Option<PathBuf>,
+    /// Whisper model file (default: $VIMMER_WHISPER_MODEL, then
+    /// ~/.local/share/vimmer/models/ggml-large-v3-turbo-q5_0.bin).
+    #[arg(long)]
+    whisper_model: Option<PathBuf>,
+    /// Recognition language: a whisper code such as zh, en or ja, or `auto` to let whisper detect
+    /// it (default: guessed from each scene's text).
+    #[arg(long)]
+    whisper_language: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Toggle {
+    On,
+    Off,
 }
 
 #[tokio::main]
@@ -58,6 +85,11 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     cfg.chunk_ms = cli.chunk_ms;
     cfg.preprocess_concurrency = cli.preprocess_jobs;
     cfg.render_concurrency = cli.render_jobs;
+    cfg.word_subtitles.enabled = cli.word_subtitles == Toggle::On;
+    cfg.word_subtitles.auto_subtitles = cli.auto_subtitles == Toggle::On;
+    cfg.word_subtitles.whisper_cli = cli.whisper_cli;
+    cfg.word_subtitles.model = cli.whisper_model;
+    cfg.word_subtitles.language = cli.whisper_language;
 
     let report = render_timeline(
         timeline,

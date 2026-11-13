@@ -62,10 +62,21 @@ export type Resolution = {
   height: number;
 };
 
+// Mirrors `WordTiming` in model.rs: when one word (one character for Chinese and Japanese)
+// is spoken, in absolute milliseconds like the cue. `text` keeps attached punctuation and spacing.
+export type WordTiming = {
+  text: string;
+  start_ms: number;
+  end_ms: number;
+};
+
 export type SubtitleCue = {
   start_ms: number;
   end_ms: number;
   text: string;
+  // Absent or empty: the cue is shown as one line, as before. Present: shown word by word,
+  // with the word being spoken highlighted.
+  words?: WordTiming[];
 };
 
 // Background music: loops under the whole video. Mixed in by the Rust core after rendering.
