@@ -1,5 +1,6 @@
 import type { Keyframe, Music, Scene, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
 import { emptyScene, type Selection } from "./model";
+import { patchCue } from "../../src/subtitles/words";
 
 export type EditorState = {
   timeline: VideoTimeline;
@@ -163,7 +164,7 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
       return commit(state, { ...t, scenes: normalizeScenes(scenes) }, { kind: "scene", index: target });
     }
     case "patchSubtitle": {
-      const subtitles = t.subtitles.map((c, i) => (i === action.index ? { ...c, ...action.patch } : c));
+      const subtitles = t.subtitles.map((c, i) => (i === action.index ? patchCue(c, action.patch) : c));
       return commit(state, { ...t, subtitles });
     }
     case "addSubtitle": {

@@ -111,6 +111,7 @@ pub async fn add_word_subtitles(
     if !cfg.word_subtitles.enabled {
         return Ok(0);
     }
+    drop_stale_words(&mut timeline.subtitles, warnings);
     let clips = clips_to_time(
         &timeline.subtitles,
         narration_clips(timeline, cfg),
@@ -283,6 +284,27 @@ fn fnv1a(s: &str) -> u64 {
     hash
 }
 
+/// Whether a cue's words still spell its text, ignoring whitespace. Same rule as `wordsMatchText`
+/// in remotion-renderer/src/subtitles/words.ts, which draws a failing cue as one plain line.
+pub(crate) fn words_match_text(text: &str, words: &[WordTiming]) -> bool {
+    let squash = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    squash(&words.iter().map(|w| w.text.as_str()).collect::<String>()) == squash(text)
+}
+
+/// Clears the words of cues whose text was changed after the words were timed (an edited JSON),
+/// so they are timed again like a cue that never had words.
+pub(crate) fn drop_stale_words(subtitles: &mut [SubtitleCue], warnings: &mut Vec<String>) {
+    for (i, cue) in subtitles.iter_mut().enumerate() {
+        if !cue.words.is_empty() && !words_match_text(&cue.text, &cue.words) {
+            cue.words.clear();
+            warnings.push(format!(
+                "subtitle {}: its words no longer match its text; timing it again",
+                i + 1
+            ));
+        }
+    }
+}
+
 /// Whether a clip's scene has a subtitle cue without words that overlaps it.
 fn has_cue_to_fill(subtitles: &[SubtitleCue], clip: &NarrationClip) -> bool {
     subtitles
@@ -394,31 +416,44 @@ pub(crate) async fn apply_word_subtitles(
     } else {
         28
     };
+    let clip_words: Vec<Option<Vec<AlignedWord>>> = clips
+        .iter()
+        .zip(&recognized)
+        .zip(&durations)
+        .map(|((clip, tokens), &ms)| {
+            let tokens = tokens.as_ref()?;
+            Some(
+                align_words(&clip.text, tokens, ms)
+                    .into_iter()
+                    .map(|w| AlignedWord {
+                        start_ms: w.start_ms + clip.start_ms,
+                        end_ms: w.end_ms + clip.start_ms,
+                        text: w.text,
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    // Each cue is timed from the one clip whose narration its text matches best.
+    let owners = assign_cues(&timeline.subtitles, clips, &clip_words);
     let mut timed = 0;
     for (k, clip) in clips.iter().enumerate() {
-        let Some(tokens) = &recognized[k] else {
+        let Some(words) = &clip_words[k] else {
             continue;
         };
         let id = scene_id(timeline, clip);
-        if tokens.is_empty() {
+        if recognized[k].as_ref().is_some_and(Vec::is_empty) {
             warnings.push(format!(
                 "scene `{id}`: speech recognition heard nothing; word timing is estimated from text length"
             ));
         }
-        let words: Vec<AlignedWord> = align_words(&clip.text, tokens, durations[k])
-            .into_iter()
-            .map(|w| AlignedWord {
-                start_ms: w.start_ms + clip.start_ms,
-                end_ms: w.end_ms + clip.start_ms,
-                text: w.text,
-            })
-            .collect();
         if merge_clip_words(
             &mut timeline.subtitles,
             clip,
-            &words,
+            words,
             max_cols,
             ws.auto_subtitles,
+            &|i| owners[i] == Some(k),
         ) {
             timed += 1;
         } else {
@@ -431,25 +466,104 @@ pub(crate) async fn apply_word_subtitles(
     Ok(timed)
 }
 
+/// The span of the timeline a clip's words may be shown in: from the clip start to the end of
+/// its scene, or of its last word when that is later. `None` without words.
+fn clip_window(clip: &NarrationClip, words: &[AlignedWord]) -> Option<(u64, u64)> {
+    let clip_end = words.last()?.end_ms.max(clip.start_ms);
+    Some((clip.start_ms, clip.scene_end_ms.max(clip_end)))
+}
+
+/// Picks, for every cue without words, the clip to time it from: among the clips whose window it
+/// overlaps, the one whose narration contains the largest share of the cue's text (in order),
+/// then the one it overlaps longest, then the earliest. A cue imported from an SRT that starts a
+/// little before a scene ends but carries the next scene's text therefore goes to the next
+/// scene's clip instead of being squeezed into the first one. `None` for cues with words or
+/// outside every clip.
+pub(crate) fn assign_cues(
+    subtitles: &[SubtitleCue],
+    clips: &[NarrationClip],
+    clip_words: &[Option<Vec<AlignedWord>>],
+) -> Vec<Option<usize>> {
+    let script_keys: Vec<Option<Vec<String>>> = clip_words
+        .iter()
+        .map(|w| {
+            w.as_ref()
+                .map(|w| w.iter().map(|x| unit_key(&x.text)).collect())
+        })
+        .collect();
+    subtitles
+        .iter()
+        .map(|cue| {
+            if !cue.words.is_empty() {
+                return None;
+            }
+            let candidates: Vec<(usize, u64)> = clips
+                .iter()
+                .enumerate()
+                .filter_map(|(k, clip)| {
+                    let (start, end) = clip_window(clip, clip_words[k].as_deref()?)?;
+                    let overlap = cue.end_ms.min(end).saturating_sub(cue.start_ms.max(start));
+                    (overlap > 0).then_some((k, overlap))
+                })
+                .collect();
+            if candidates.len() < 2 {
+                return candidates.first().map(|&(k, _)| k);
+            }
+            let cue_keys: Vec<String> = split_units(&cue.text)
+                .iter()
+                .map(|u| unit_key(u))
+                .filter(|k| !k.is_empty())
+                .collect();
+            candidates
+                .into_iter()
+                .max_by_key(|&(k, overlap)| {
+                    let script = script_keys[k].as_deref().unwrap_or_default();
+                    (
+                        common_units(&cue_keys, script),
+                        overlap,
+                        std::cmp::Reverse(k),
+                    )
+                })
+                .map(|(k, _)| k)
+        })
+        .collect()
+}
+
+/// How many of `a` appear in `b` in the same order (longest common subsequence).
+fn common_units(a: &[String], b: &[String]) -> usize {
+    let mut row = vec![0usize; b.len() + 1];
+    for x in a {
+        let mut diag = 0;
+        for (j, y) in b.iter().enumerate() {
+            let up = row[j + 1];
+            row[j + 1] = if x == y { diag + 1 } else { up.max(row[j]) };
+            diag = up;
+        }
+    }
+    row[b.len()]
+}
+
 /// Puts a clip's aligned words (absolute times) into the subtitle track. Cues overlapping the
-/// clip that have no words get the words of their own text; with no such cues, new cues are made
-/// from the words. Cues that already carry words are left alone. Returns false when existing
-/// cues could not be matched to the narration.
+/// clip that have no words and that `claims` (see `assign_cues`) get the words of their own
+/// text; with no overlapping cues at all, new cues are made from the words. Cues that already
+/// carry words are left alone, and so is a cue whose words would mostly be zero-length (most of
+/// its text is not in this narration): it stays plain rather than showing a line that never
+/// lights up. Returns false when existing cues could not be matched to the narration.
 pub(crate) fn merge_clip_words(
     subtitles: &mut Vec<SubtitleCue>,
     clip: &NarrationClip,
     words: &[AlignedWord],
     max_cols: usize,
     generate: bool,
+    claims: &dyn Fn(usize) -> bool,
 ) -> bool {
-    let Some(last) = words.last() else {
+    let Some((window_start, window_end)) = clip_window(clip, words) else {
         return true;
     };
-    let clip_end = last.end_ms.max(clip.start_ms);
     let overlapping: Vec<usize> = subtitles
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.start_ms < clip.scene_end_ms.max(clip_end) && c.end_ms > clip.start_ms)
+        .filter(|(_, c)| c.start_ms < window_end && c.end_ms > window_start)
         .map(|(i, _)| i)
         .collect();
 
@@ -464,14 +578,14 @@ pub(crate) fn merge_clip_words(
             .filter(|&s| s >= clip.start_ms)
             .min()
             .unwrap_or(u64::MAX)
-            .min(clip.scene_end_ms.max(clip_end));
+            .min(window_end);
         subtitles.extend(cues_from_words(words, max_cols, limit));
         return true;
     }
 
     let targets: Vec<usize> = overlapping
         .into_iter()
-        .filter(|&i| subtitles[i].words.is_empty())
+        .filter(|&i| subtitles[i].words.is_empty() && claims(i))
         .collect();
     if targets.is_empty() {
         return true;
@@ -506,6 +620,10 @@ pub(crate) fn merge_clip_words(
                 start_ms: start,
                 end_ms: end,
             });
+        }
+        let zero = timed.iter().filter(|w| w.start_ms == w.end_ms).count();
+        if zero * 2 > timed.len() {
+            continue;
         }
         cue.words = timed;
     }
@@ -772,7 +890,8 @@ mod tests {
             &clip(100, 3000),
             &words,
             42,
-            true
+            true,
+            &|_| true
         ));
         assert_eq!(subs.len(), 3);
         let spans: Vec<(u64, u64)> = subs[0]
@@ -789,6 +908,144 @@ mod tests {
         assert!(subs[2].words.is_empty(), "cue outside the clip untouched");
     }
 
+    /// Two narrated scenes, 0-3 s and 3-6 s, and an imported cue that starts 300 ms before the
+    /// first scene ends but carries the second scene's text.
+    fn cross_scene_setup() -> (Vec<SubtitleCue>, Vec<NarrationClip>, Vec<Vec<AlignedWord>>) {
+        let subs = vec![
+            SubtitleCue::new(0, 2600, "Hello big world."),
+            SubtitleCue::new(2700, 5500, "Bye now friends."),
+        ];
+        let mut b = clip(3000, 6000);
+        b.scene_index = 1;
+        let clips = vec![clip(0, 3000), b];
+        let words = vec![
+            vec![
+                w("Hello ", 100, 500),
+                w("big ", 500, 900),
+                w("world.", 900, 2000),
+            ],
+            vec![
+                w("Bye ", 3100, 3500),
+                w("now ", 3500, 4000),
+                w("friends.", 4000, 5000),
+            ],
+        ];
+        (subs, clips, words)
+    }
+
+    fn spans(cue: &SubtitleCue) -> Vec<(u64, u64)> {
+        cue.words.iter().map(|x| (x.start_ms, x.end_ms)).collect()
+    }
+
+    #[test]
+    fn a_cue_crossing_into_the_next_scene_is_timed_from_the_narration_it_matches() {
+        let (mut subs, clips, words) = cross_scene_setup();
+        let clip_words: Vec<Option<Vec<AlignedWord>>> = words.iter().cloned().map(Some).collect();
+        let owners = assign_cues(&subs, &clips, &clip_words);
+        assert_eq!(
+            owners,
+            vec![Some(0), Some(1)],
+            "assigned by text, not by first overlap"
+        );
+        for (k, clip) in clips.iter().enumerate() {
+            assert!(merge_clip_words(
+                &mut subs,
+                clip,
+                &words[k],
+                42,
+                false,
+                &|i| owners[i] == Some(k)
+            ));
+        }
+        assert_eq!(spans(&subs[0]), vec![(100, 500), (500, 900), (900, 2000)]);
+        assert_eq!(
+            spans(&subs[1]),
+            vec![(3100, 3500), (3500, 4000), (4000, 5000)],
+            "real timing from the second scene, not zero-length words at the cue start"
+        );
+    }
+
+    #[test]
+    fn mostly_zero_length_words_are_not_written_and_a_later_clip_fills_them() {
+        // Without the assignment (every overlapping cue claimed), the first clip still matches
+        // more than half of all cue text, which used to stamp the second cue with zero-length
+        // words at 2700 ms and stop the second clip from fixing it.
+        let (mut subs, clips, words) = cross_scene_setup();
+        assert!(merge_clip_words(
+            &mut subs,
+            &clips[0],
+            &words[0],
+            42,
+            false,
+            &|_| true
+        ));
+        assert_eq!(spans(&subs[0]), vec![(100, 500), (500, 900), (900, 2000)]);
+        assert!(subs[1].words.is_empty(), "left for a later clip");
+        assert!(merge_clip_words(
+            &mut subs,
+            &clips[1],
+            &words[1],
+            42,
+            false,
+            &|_| true
+        ));
+        assert_eq!(
+            spans(&subs[1]),
+            vec![(3100, 3500), (3500, 4000), (4000, 5000)]
+        );
+    }
+
+    #[test]
+    fn a_cue_inside_one_clip_still_goes_to_that_clip() {
+        let (subs, clips, words) = cross_scene_setup();
+        // Only the first clip was recognized: the second cue has no other candidate.
+        let clip_words = vec![Some(words[0].clone()), None];
+        assert_eq!(
+            assign_cues(&subs, &clips, &clip_words),
+            vec![Some(0), Some(0)]
+        );
+        // A cue that already has words is never reassigned.
+        let mut filled = subs.clone();
+        filled[0].words = vec![WordTiming {
+            text: "Hello big world.".into(),
+            start_ms: 0,
+            end_ms: 2000,
+        }];
+        let clip_words: Vec<Option<Vec<AlignedWord>>> = words.into_iter().map(Some).collect();
+        assert_eq!(
+            assign_cues(&filled, &clips, &clip_words),
+            vec![None, Some(1)]
+        );
+    }
+
+    #[test]
+    fn words_that_no_longer_spell_the_text_are_dropped() {
+        let word = |text: &str, start_ms: u64, end_ms: u64| WordTiming {
+            text: text.into(),
+            start_ms,
+            end_ms,
+        };
+        let mut a = SubtitleCue::new(0, 1000, "Hello there");
+        a.words = vec![word("Hello ", 0, 400), word("world", 400, 900)];
+        let mut b = SubtitleCue::new(1000, 2000, " Hello  world ");
+        b.words = vec![word("Hello ", 1000, 1400), word("world", 1400, 1900)];
+        let mut subs = vec![a, b.clone()];
+        let mut warnings = vec![];
+        drop_stale_words(&mut subs, &mut warnings);
+        assert!(subs[0].words.is_empty(), "edited text: timed again");
+        assert_eq!(subs[1], b, "whitespace-only difference keeps the words");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("subtitle 1:"), "{warnings:?}");
+        assert!(words_match_text(
+            "你好",
+            &[word("你", 0, 1), word("好", 1, 2)]
+        ));
+        assert!(!words_match_text(
+            "你好！",
+            &[word("你", 0, 1), word("好", 1, 2)]
+        ));
+    }
+
     #[test]
     fn unrelated_existing_cues_are_reported_and_left_alone() {
         let mut subs = vec![SubtitleCue::new(0, 1000, "完全不同")];
@@ -798,7 +1055,8 @@ mod tests {
             &clip(0, 1000),
             &words,
             42,
-            true
+            true,
+            &|_| true
         ));
         assert!(subs[0].words.is_empty());
     }
@@ -812,7 +1070,8 @@ mod tests {
             &clip(1000, 3000),
             &words,
             42,
-            true
+            true,
+            &|_| true
         ));
         assert_eq!(subs.len(), 2);
         assert_eq!(subs[1].text, "你好。");
@@ -972,6 +1231,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_cue_edited_after_timing_is_timed_again() {
+        let mut t = VideoTimeline {
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![narrated("zh", 2000, "你好世界。")],
+            subtitles: vec![SubtitleCue::new(0, 2000, "你好世界。")],
+            music: None,
+        };
+        // Words from an earlier text, and times that no longer fit the edited cue.
+        t.subtitles[0].words = ["再", "见", "。"]
+            .iter()
+            .enumerate()
+            .map(|(i, c)| WordTiming {
+                text: (*c).into(),
+                start_ms: i as u64 * 100,
+                end_ms: i as u64 * 100 + 100,
+            })
+            .collect();
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let mut warnings = vec![];
+        drop_stale_words(&mut t.subtitles, &mut warnings);
+        let clips = clips_to_time(&t.subtitles, narration_clips(&t, &cfg), false);
+        assert_eq!(clips.len(), 1, "the edited cue needs timing again");
+        let engine = Arc::new(FixedTranscriber(
+            vec![
+                RecognizedToken::new("你好", 100, 500),
+                RecognizedToken::new("世界", 500, 1200),
+            ],
+            Mutex::new(vec![]),
+        ));
+        let n = apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine,
+            Arc::new(FixedProbe(1500)),
+            &WordSubtitleConfig::default(),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
+        let cue = &t.subtitles[0];
+        assert!(words_match_text(&cue.text, &cue.words));
+        assert_eq!(
+            spans(cue),
+            vec![(100, 300), (300, 500), (500, 850), (850, 1200)]
+        );
+        assert_eq!(validate(&t), Ok(()));
+    }
+
+    #[tokio::test]
     async fn missing_engine_warns_and_changes_nothing() {
         let mut t = VideoTimeline {
             fps: 30,
@@ -1049,7 +1367,14 @@ mod tests {
         assert_eq!(t.total_duration_ms(), 9_570);
         let mut subs = vec![];
         let words = vec![w("こん", 4_950, 6_000), w("にちは。", 6_000, 9_500)];
-        assert!(merge_clip_words(&mut subs, &clips[1], &words, 42, true));
+        assert!(merge_clip_words(
+            &mut subs,
+            &clips[1],
+            &words,
+            42,
+            true,
+            &|_| true
+        ));
         assert_eq!(
             subs[0].end_ms, 9_570,
             "held line is cut at the validated end"
@@ -1273,7 +1598,8 @@ mod tests {
             &clip(1000, 3000),
             &words,
             42,
-            false
+            false,
+            &|_| true
         ));
         assert_eq!(subs, vec![SubtitleCue::new(9000, 9500, "later")]);
         assert!(merge_clip_words(
@@ -1281,7 +1607,8 @@ mod tests {
             &clip(1000, 3000),
             &words,
             42,
-            true
+            true,
+            &|_| true
         ));
         assert_eq!(subs.len(), 2, "generated when switched on");
     }
