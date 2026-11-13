@@ -2,7 +2,7 @@ use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
 use clap::{Parser, ValueEnum};
 use vimmer_dsl::VideoTimeline;
-use vimmer_media::{FfmpegProbe, SaySpeech};
+use vimmer_media::{FfmpegProbe, SaySpeech, TtsEngine};
 use vimmer_scheduler::{render_timeline, SchedulerConfig, DEFAULT_CHUNK_MS};
 
 /// Render a timeline JSON to MP4.
@@ -53,6 +53,25 @@ struct Cli {
     /// it (default: guessed from each scene's text).
     #[arg(long)]
     whisper_language: Option<String>,
+    /// Narration engine: `say` (macOS, the default) or `kokoro` (local neural TTS, see README).
+    /// Without this flag, $VIMMER_TTS decides, else `say`. When Kokoro cannot run, narration
+    /// falls back to `say` with a warning.
+    #[arg(long, value_enum)]
+    tts: Option<Tts>,
+    /// Python interpreter with Kokoro installed (default: $VIMMER_KOKORO_PYTHON, then
+    /// ~/.local/share/vimmer/kokoro-venv/bin/python).
+    #[arg(long)]
+    kokoro_python: Option<PathBuf>,
+    /// Kokoro model directory (default: $VIMMER_KOKORO_MODELS, then
+    /// ~/.local/share/vimmer/models/kokoro).
+    #[arg(long)]
+    kokoro_models: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Tts {
+    Say,
+    Kokoro,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -90,6 +109,12 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     cfg.word_subtitles.whisper_cli = cli.whisper_cli;
     cfg.word_subtitles.model = cli.whisper_model;
     cfg.word_subtitles.language = cli.whisper_language;
+    cfg.tts.engine = cli.tts.map(|t| match t {
+        Tts::Say => TtsEngine::Say,
+        Tts::Kokoro => TtsEngine::Kokoro,
+    });
+    cfg.tts.kokoro_python = cli.kokoro_python;
+    cfg.tts.kokoro_models = cli.kokoro_models;
 
     let report = render_timeline(
         timeline,

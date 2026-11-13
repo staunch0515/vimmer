@@ -1,0 +1,6 @@
+# Kokoro narration for Vimmer (see README "Kokoro narration"). Python 3.10–3.12.
+kokoro-onnx==0.6.1
+onnxruntime==1.23.2
+misaki[zh,ja]==0.9.4
+unidic-lite==1.0.8
+soundfile==0.14.0

@@ -9,7 +9,7 @@ use vimmer_dsl::{validate, ValidationError, VideoTimeline};
 use vimmer_media::{normalize_image, AudioProbe, MediaError, Speech};
 
 use crate::control::{Progress, RenderContext};
-use crate::narrate::narrate_scenes;
+use crate::narrate::{narrate_scenes, TtsConfig};
 use crate::plan::{chunk_timeline, plan_chunks, Chunk, DEFAULT_CHUNK_MS};
 use crate::wordsubs::{add_word_subtitles, WordSubtitleConfig};
 
@@ -62,6 +62,8 @@ pub struct SchedulerConfig {
     pub child_path: Option<String>,
     /// Word-by-word subtitle timing for synthesized narration (on by default).
     pub word_subtitles: WordSubtitleConfig,
+    /// Narration engine (`say` unless chosen here or by `$VIMMER_TTS`).
+    pub tts: TtsConfig,
 }
 
 impl SchedulerConfig {
@@ -78,6 +80,7 @@ impl SchedulerConfig {
             ffmpeg: PathBuf::from("ffmpeg"),
             child_path: None,
             word_subtitles: WordSubtitleConfig::default(),
+            tts: TtsConfig::default(),
         }
     }
 }
