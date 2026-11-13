@@ -33,6 +33,12 @@ pub enum SchedulerError {
     MusicMissing(String),
     #[error("mixing audio failed: {0}")]
     Mix(String),
+    #[error("scene `{scene}` layer `{layer}`: file not found: {path}")]
+    LayerAssetMissing {
+        scene: String,
+        layer: String,
+        path: String,
+    },
 }
 
 fn join(errors: &[ValidationError]) -> String {
@@ -142,6 +148,23 @@ pub async fn render_timeline_with(
         let path = cfg.public_dir.join(&music.source);
         if !path.is_file() {
             return Err(SchedulerError::MusicMissing(path.display().to_string()));
+        }
+    }
+
+    // Layer images and icons are drawn as they are (not normalized), so only their presence is
+    // checked here; a missing file would otherwise fail inside the renderer.
+    for scene in &timeline.scenes {
+        for layer in &scene.layers {
+            if let Some(src) = layer.content.asset() {
+                let path = cfg.public_dir.join(src);
+                if !path.is_file() {
+                    return Err(SchedulerError::LayerAssetMissing {
+                        scene: scene.id.clone(),
+                        layer: layer.id.clone(),
+                        path: path.display().to_string(),
+                    });
+                }
+            }
         }
     }
 

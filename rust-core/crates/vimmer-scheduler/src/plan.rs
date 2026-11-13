@@ -188,6 +188,7 @@ mod tests {
             narration: None,
             transition_in: None,
             keyframes: vec![],
+            layers: vec![],
         }
     }
 

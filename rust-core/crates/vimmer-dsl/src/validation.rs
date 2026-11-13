@@ -2,7 +2,13 @@ use std::collections::HashSet;
 
 use thiserror::Error;
 
-use crate::model::{Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS};
+use crate::layer::{
+    is_hex_color, Layer, LayerContent, ShapeKind, MAX_LAYERS, MAX_LAYER_KEYFRAMES,
+    MAX_LAYER_TEXT_CHARS,
+};
+use crate::model::{
+    Keyframe, Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
+};
 
 const ALLOWED_RESOLUTIONS: [(u32, u32); 2] = [(1920, 1080), (1080, 1920)];
 
@@ -18,7 +24,7 @@ pub enum ValidationError {
     DuplicateSceneId(String),
     #[error("scene `{0}` has zero duration")]
     ZeroDuration(String),
-    #[error("scene `{0}` has neither text nor image")]
+    #[error("scene `{0}` has no text, image or layers")]
     EmptyScene(String),
     #[error("scene `{0}` has an empty audio source")]
     EmptyAudioSource(String),
@@ -106,6 +112,16 @@ pub enum ValidationError {
     },
     #[error("scene `{scene}` keyframe {index} has a non-finite x, y or rotation")]
     NonFiniteKeyframe { scene: String, index: usize },
+    #[error("scene `{scene}` has {count} layers; the limit is {MAX_LAYERS}")]
+    TooManyLayers { scene: String, count: usize },
+    #[error("scene `{scene}` has two layers with id `{layer}`")]
+    DuplicateLayerId { scene: String, layer: String },
+    #[error("scene `{scene}` layer `{layer}`: {message}")]
+    BadLayer {
+        scene: String,
+        layer: String,
+        message: String,
+    },
 }
 
 fn validate_transition(scene: &Scene, index: usize, errors: &mut Vec<ValidationError>) {
@@ -173,6 +189,262 @@ fn validate_keyframes(scene: &Scene, errors: &mut Vec<ValidationError>) {
     }
 }
 
+/// Why an asset path is not a plain relative path inside the public dir, if it is not. The same
+/// rules as the edit assistant's `check_asset_path`, without the file system part.
+pub fn asset_path_problem(p: &str) -> Option<&'static str> {
+    if p.trim().is_empty() {
+        return Some("the path is empty");
+    }
+    if p.trim() != p {
+        return Some("the path has leading or trailing spaces");
+    }
+    if p.chars().any(char::is_control) || p.contains('\\') || p.contains('%') {
+        return Some("the path has control characters, `\\` or `%`");
+    }
+    if p.starts_with('/') || p.starts_with('~') {
+        return Some("the path must be relative to the public dir (no leading `/` or `~`)");
+    }
+    if p.split('/').next().is_some_and(|head| head.contains(':')) {
+        return Some("URLs and schemes are not allowed; use a file inside public/");
+    }
+    if p.split('/')
+        .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
+        return Some("`.`, `..` and empty segments are not allowed");
+    }
+    None
+}
+
+fn in_range(v: f32, lo: f32, hi: f32) -> bool {
+    v.is_finite() && (lo..=hi).contains(&v)
+}
+
+/// Every problem of one layer, as messages.
+fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
+    let mut out = Vec::new();
+    let id_ok = !layer.id.is_empty()
+        && layer.id.len() <= 64
+        && layer
+            .id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !id_ok {
+        out.push("the id must be 1-64 letters, digits, `-` or `_`".to_string());
+    }
+    if !in_range(layer.x, -1.0, 2.0) || !in_range(layer.y, -1.0, 2.0) {
+        out.push(format!(
+            "x and y must be between -1 and 2 (fractions of the frame), got {} and {}",
+            layer.x, layer.y
+        ));
+    }
+    let is_line = matches!(&layer.content, LayerContent::Shape(s) if s.shape == ShapeKind::Line);
+    let size_ok = |v: f32| {
+        if is_line {
+            in_range(v, 0.0, 4.0)
+        } else {
+            v.is_finite() && v > 0.0 && v <= 4.0
+        }
+    };
+    if !size_ok(layer.width) {
+        out.push(format!(
+            "width must be above 0 and at most 4 (fractions of the frame), got {}",
+            layer.width
+        ));
+    }
+    match layer.height {
+        Some(h) if !size_ok(h) => out.push(format!(
+            "height must be above 0 and at most 4 (fractions of the frame), got {h}"
+        )),
+        None if !matches!(layer.content, LayerContent::Text(_)) => {
+            out.push(format!("a {} layer needs a height", layer.content.kind()))
+        }
+        _ => {}
+    }
+    if is_line && layer.width == 0.0 && layer.height == Some(0.0) {
+        out.push("a line needs a width or a height above 0".to_string());
+    }
+    if !in_range(layer.opacity, 0.0, 1.0) {
+        out.push(format!(
+            "opacity must be between 0 and 1, got {}",
+            layer.opacity
+        ));
+    }
+    if !in_range(layer.rotation, -360.0, 360.0) {
+        out.push(format!(
+            "rotation must be within ±360 degrees, got {}",
+            layer.rotation
+        ));
+    }
+    let end = layer.end_ms_in(scene_ms);
+    if layer.start_ms >= end || end > scene_ms {
+        out.push(format!(
+            "its time must satisfy start_ms < end_ms <= the scene length ({scene_ms} ms), got {}..{end} ms",
+            layer.start_ms
+        ));
+    }
+    let span = end.saturating_sub(layer.start_ms);
+    let enter = layer.enter.map_or(0, |a| a.duration_ms);
+    let exit = layer.exit.map_or(0, |a| a.duration_ms);
+    if layer.enter.is_some_and(|a| a.duration_ms == 0)
+        || layer.exit.is_some_and(|a| a.duration_ms == 0)
+    {
+        out.push("enter and exit animations need a duration above 0".to_string());
+    } else if enter + exit > span {
+        out.push(format!(
+            "enter ({enter} ms) and exit ({exit} ms) animations are longer than the layer is shown ({span} ms)"
+        ));
+    }
+    out.extend(layer_keyframe_problems(&layer.keyframes, scene_ms));
+    let color = |what: &str, c: &str, out: &mut Vec<String>| {
+        if !is_hex_color(c) {
+            out.push(format!(
+                "{what} `{c}` must be a color like #rgb, #rrggbb or #rrggbbaa"
+            ));
+        }
+    };
+    match &layer.content {
+        LayerContent::Image(img) => {
+            if let Some(p) = asset_path_problem(&img.src) {
+                out.push(format!("src: {p}"));
+            }
+            if !in_range(img.corner_radius, 0.0, 0.5) {
+                out.push("corner_radius must be between 0 and 0.5".to_string());
+            }
+        }
+        LayerContent::Icon(icon) => {
+            if let Some(p) = asset_path_problem(&icon.src) {
+                out.push(format!("src: {p}"));
+            } else if !icon.src.to_ascii_lowercase().ends_with(".svg") {
+                out.push("an icon's src must be an .svg file".to_string());
+            }
+            color("color", &icon.color, &mut out);
+        }
+        LayerContent::Text(t) => {
+            let n = t.text.chars().count();
+            if t.text.trim().is_empty() {
+                out.push("the text is empty".to_string());
+            } else if n > MAX_LAYER_TEXT_CHARS {
+                out.push(format!(
+                    "the text is {n} characters; the limit is {MAX_LAYER_TEXT_CHARS}"
+                ));
+            }
+            if !(t.font_size.is_finite() && t.font_size > 0.0 && t.font_size <= 0.5) {
+                out.push(format!(
+                    "font_size must be above 0 and at most 0.5 (fraction of the frame height), got {}",
+                    t.font_size
+                ));
+            }
+            if !(100..=900).contains(&t.weight) || t.weight % 100 != 0 {
+                out.push(format!(
+                    "weight must be 100, 200, ... 900, got {}",
+                    t.weight
+                ));
+            }
+            if !in_range(t.line_height, 0.8, 3.0) {
+                out.push("line_height must be between 0.8 and 3".to_string());
+            }
+            color("color", &t.color, &mut out);
+            if let Some(bg) = &t.background {
+                color("background color", &bg.color, &mut out);
+                if !in_range(bg.padding, 0.0, 3.0) || !in_range(bg.radius, 0.0, 3.0) {
+                    out.push(
+                        "background padding and radius must be between 0 and 3 (font sizes)"
+                            .to_string(),
+                    );
+                }
+            }
+            if t.highlights.iter().any(|h| h.trim().is_empty()) {
+                out.push("a highlight is empty".to_string());
+            }
+        }
+        LayerContent::Shape(sh) => {
+            if let Some(c) = &sh.fill {
+                color("fill", c, &mut out);
+            }
+            if let Some(c) = &sh.stroke {
+                color("stroke", c, &mut out);
+            }
+            if sh.fill.is_none() && sh.stroke.is_none() {
+                out.push("a shape needs a fill or a stroke color".to_string());
+            }
+            if sh.shape == ShapeKind::Line && sh.stroke.is_none() {
+                out.push("a line needs a stroke color".to_string());
+            }
+            if !in_range(sh.stroke_width, 0.0, 0.1) {
+                out.push("stroke_width must be between 0 and 0.1".to_string());
+            }
+            if !in_range(sh.corner_radius, 0.0, 0.5) {
+                out.push("corner_radius must be between 0 and 0.5".to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The scene keyframe rules, for a layer's keyframes (times are from the scene start).
+fn layer_keyframe_problems(keyframes: &[Keyframe], scene_ms: u64) -> Vec<String> {
+    let mut out = Vec::new();
+    if keyframes.len() > MAX_LAYER_KEYFRAMES {
+        out.push(format!(
+            "it has {} keyframes; the limit is {MAX_LAYER_KEYFRAMES}",
+            keyframes.len()
+        ));
+    }
+    for (i, kf) in keyframes.iter().enumerate() {
+        if kf.at_ms > scene_ms {
+            out.push(format!(
+                "keyframe {i} is at {} ms, after the scene ends ({scene_ms} ms)",
+                kf.at_ms
+            ));
+        }
+        if i > 0 && kf.at_ms <= keyframes[i - 1].at_ms {
+            out.push(format!(
+                "keyframe {i} must be later than the one before it (sorted, no duplicates)"
+            ));
+        }
+        if !(kf.scale.is_finite() && kf.scale > 0.0 && kf.scale <= 10.0) {
+            out.push(format!("keyframe {i} scale must be above 0 and at most 10"));
+        }
+        if !in_range(kf.opacity, 0.0, 1.0) {
+            out.push(format!("keyframe {i} opacity must be between 0 and 1"));
+        }
+        if !in_range(kf.x, -200.0, 200.0)
+            || !in_range(kf.y, -200.0, 200.0)
+            || !in_range(kf.rotation, -360.0, 360.0)
+        {
+            out.push(format!(
+                "keyframe {i} x and y must be within ±200 (percent of the frame) and rotation within ±360"
+            ));
+        }
+    }
+    out
+}
+
+fn validate_layers(scene: &Scene, errors: &mut Vec<ValidationError>) {
+    if scene.layers.len() > MAX_LAYERS {
+        errors.push(ValidationError::TooManyLayers {
+            scene: scene.id.clone(),
+            count: scene.layers.len(),
+        });
+    }
+    let mut ids = HashSet::new();
+    for layer in &scene.layers {
+        if !ids.insert(layer.id.as_str()) {
+            errors.push(ValidationError::DuplicateLayerId {
+                scene: scene.id.clone(),
+                layer: layer.id.clone(),
+            });
+        }
+        for message in layer_problems(layer, scene.duration_ms) {
+            errors.push(ValidationError::BadLayer {
+                scene: scene.id.clone(),
+                layer: layer.id.clone(),
+                message,
+            });
+        }
+    }
+}
+
 /// Word timings must sit inside their cue, in order, without overlapping. Zero-length words are
 /// allowed: chunking clamps words outside a chunk to the chunk edge, which keeps them in order.
 fn validate_words(cue: &SubtitleCue, index: usize, errors: &mut Vec<ValidationError>) {
@@ -223,7 +495,7 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
         }
         let has_text = scene.text.as_deref().is_some_and(|t| !t.trim().is_empty());
         let has_image = scene.image.as_deref().is_some_and(|i| !i.trim().is_empty());
-        if !has_text && !has_image {
+        if !has_text && !has_image && scene.layers.is_empty() {
             errors.push(ValidationError::EmptyScene(scene.id.clone()));
         }
         if let Some(audio) = &scene.audio {
@@ -233,6 +505,7 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
         }
         validate_transition(scene, i, &mut errors);
         validate_keyframes(scene, &mut errors);
+        validate_layers(scene, &mut errors);
     }
 
     let total_ms = timeline.total_duration_ms();
@@ -314,6 +587,7 @@ mod tests {
             narration: None,
             transition_in: None,
             keyframes: vec![],
+            layers: vec![],
         }
     }
 
@@ -713,5 +987,148 @@ mod tests {
         let mut b = scene("b", 4_000);
         b.transition_in = fade(1_000);
         assert!(validate(&timeline(vec![a, b])).is_ok());
+    }
+
+    fn layer(json: &str) -> crate::layer::Layer {
+        serde_json::from_str(json).unwrap()
+    }
+
+    fn layer_messages(errs: &[ValidationError], id: &str) -> Vec<String> {
+        errs.iter()
+            .filter_map(|e| match e {
+                ValidationError::BadLayer { layer, message, .. } if layer == id => {
+                    Some(message.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn valid_layers_pass_and_make_a_scene_non_empty() {
+        let mut a = scene("a", 4_000);
+        a.text = None;
+        a.layers = vec![
+            layer(
+                r##"{"id":"t","kind":"text","x":0.1,"y":0.1,"width":0.8,"text":"Hello","background":{"color":"#000000aa"}}"##,
+            ),
+            layer(
+                r##"{"id":"r","kind":"shape","x":0,"y":0.8,"width":1,"height":0.2,"fill":"#123","z":-1,"start_ms":500,"end_ms":4000,"enter":{"kind":"slide_up","duration_ms":300},"exit":{"kind":"fade"}}"##,
+            ),
+            layer(
+                r##"{"id":"l","kind":"shape","shape":"line","x":0.1,"y":0.5,"width":0.8,"height":0,"stroke":"#fff"}"##,
+            ),
+            layer(
+                r##"{"id":"i","kind":"icon","x":0.5,"y":0.5,"width":0.1,"height":0.1,"anchor":"center","src":"assets/icons/star.svg","keyframes":[{"at_ms":0,"scale":0.5},{"at_ms":1000,"rotation":90}]}"##,
+            ),
+            layer(
+                r#"{"id":"p","kind":"image","x":0.6,"y":0.1,"width":0.3,"height":0.3,"src":"assets/sample.png","corner_radius":0.02}"#,
+            ),
+        ];
+        assert_eq!(validate(&timeline(vec![a])), Ok(()));
+    }
+
+    #[test]
+    fn layer_rules() {
+        let mut a = scene("a", 2_000);
+        a.layers = vec![
+            layer(
+                r##"{"id":"dup","kind":"shape","x":0,"y":0,"width":1,"height":1,"fill":"#000"}"##,
+            ),
+            layer(r##"{"id":"dup","kind":"shape","x":0,"y":0,"width":1,"height":1,"fill":"red"}"##),
+            layer(
+                r##"{"id":"time","kind":"shape","x":0,"y":0,"width":1,"height":1,"fill":"#000","start_ms":1500,"end_ms":3000}"##,
+            ),
+            layer(
+                r##"{"id":"anim","kind":"shape","x":0,"y":0,"width":1,"height":1,"fill":"#000","start_ms":1000,"enter":{"kind":"pop","duration_ms":800},"exit":{"kind":"fade","duration_ms":800}}"##,
+            ),
+            layer(
+                r#"{"id":"img","kind":"image","x":5,"y":0,"width":0,"height":1,"src":"../secret.png"}"#,
+            ),
+            layer(
+                r#"{"id":"icon","kind":"icon","x":0,"y":0,"width":0.1,"height":0.1,"src":"assets/logo.png"}"#,
+            ),
+            layer(
+                r#"{"id":"url","kind":"icon","x":0,"y":0,"width":0.1,"height":0.1,"src":"https://example.com/a.svg"}"#,
+            ),
+            layer(
+                r#"{"id":"abs","kind":"image","x":0,"y":0,"width":0.1,"height":0.1,"src":"/etc/passwd"}"#,
+            ),
+            layer(r#"{"id":"nohead","kind":"image","x":0,"y":0,"width":0.1,"src":"a.png"}"#),
+            layer(
+                r#"{"id":"txt","kind":"text","x":0,"y":0,"width":0.5,"text":" ","font_size":0.9,"weight":650}"#,
+            ),
+            layer(
+                r#"{"id":"kf","kind":"text","x":0,"y":0,"width":0.5,"text":"a","keyframes":[{"at_ms":500},{"at_ms":500},{"at_ms":9000,"scale":0}]}"#,
+            ),
+            layer(r#"{"id":"bad id!","kind":"text","x":0,"y":0,"width":0.5,"text":"a"}"#),
+            layer(r#"{"id":"empty","kind":"shape","x":0,"y":0,"width":0.5,"height":0.5}"#),
+        ];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(errs.contains(&ValidationError::DuplicateLayerId {
+            scene: "a".into(),
+            layer: "dup".into()
+        }));
+        let has = |id: &str, needle: &str| {
+            let m = layer_messages(&errs, id);
+            assert!(
+                m.iter().any(|m| m.contains(needle)),
+                "{id}: no `{needle}` in {m:?}"
+            );
+        };
+        has("dup", "red");
+        has("time", "start_ms < end_ms");
+        has("anim", "longer than the layer is shown");
+        has("img", "x and y");
+        has("img", "width");
+        has("img", "`..`");
+        has("icon", ".svg");
+        has("url", "URLs");
+        has("abs", "relative");
+        has("nohead", "needs a height");
+        has("txt", "empty");
+        has("txt", "font_size");
+        has("txt", "weight");
+        has("kf", "later than");
+        has("kf", "after the scene ends");
+        has("kf", "scale");
+        has("bad id!", "id must be");
+        has("empty", "fill or a stroke");
+    }
+
+    #[test]
+    fn layer_cap() {
+        let mut a = scene("a", 2_000);
+        a.layers = (0..33)
+            .map(|i| layer(&format!(r##"{{"id":"l{i}","kind":"shape","x":0,"y":0,"width":1,"height":1,"fill":"#000"}}"##)))
+            .collect();
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert_eq!(
+            errs,
+            vec![ValidationError::TooManyLayers {
+                scene: "a".into(),
+                count: 33
+            }]
+        );
+    }
+
+    #[test]
+    fn asset_paths() {
+        assert_eq!(asset_path_problem("assets/icons/star.svg"), None);
+        for bad in [
+            "",
+            " a.svg",
+            "/a.svg",
+            "~/a.svg",
+            "a/../b.svg",
+            "./a.svg",
+            "a//b.svg",
+            "C:/a.svg",
+            "data:image/svg+xml,x",
+            "a\\b.svg",
+            "a%2e.svg",
+        ] {
+            assert!(asset_path_problem(bad).is_some(), "{bad}");
+        }
     }
 }
