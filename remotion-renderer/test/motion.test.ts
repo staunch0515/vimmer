@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { IDENTITY_POSE, applyEasing, sampleKeyframes } from "../src/motion/keyframes.ts";
 import { transitionPose } from "../src/motion/transitions.ts";
 import { animationPose, layerFrames, layerStateAt, splitLayers } from "../src/motion/layers.ts";
+import { lowerThirdPose } from "../src/motion/lowerThird.ts";
 import { cursorVisible, typedCount, typedSegments, typingUnits } from "../src/motion/typewriter.ts";
 import type { Easing, Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
 
@@ -262,4 +263,24 @@ test("typed segments never split a unit and put the cursor after the typed text"
   const none = typedSegments("abc", 0, () => false);
   assert.equal(none[0].cursorAfter, true);
   assert.equal(none[0].shown, "");
+});
+
+test("lower third: built-in wipe starts hidden, rests fully shown, ends hidden; own enter/exit skip it", () => {
+  const span = 120; // 4 s at 30 fps
+  const first = lowerThirdPose(0, span, 30, true, true);
+  assert.equal(first.reveal, 0);
+  assert.equal(first.bar, 0);
+  assert.equal(first.textOpacity, 0);
+  const mid = lowerThirdPose(60, span, 30, true, true);
+  assert.deepEqual(mid, { bar: 1, reveal: 1, textShift: 0, textOpacity: 1 });
+  const last = lowerThirdPose(span - 1, span, 30, true, true);
+  assert.equal(last.reveal, 0);
+  assert.equal(last.textOpacity, 0);
+  // With the layer's own enter and exit, frame 0 and the last frame are at rest.
+  assert.deepEqual(lowerThirdPose(0, span, 30, false, false), mid);
+  assert.deepEqual(lowerThirdPose(span - 1, span, 30, false, false), mid);
+  // A short layer squeezes the built-in animation into 40 % / 30 % of its frames.
+  const short = 10;
+  assert.equal(lowerThirdPose(4, short, 30, true, true).reveal, 1);
+  assert.equal(lowerThirdPose(short - 1, short, 30, true, true).reveal, 0);
 });

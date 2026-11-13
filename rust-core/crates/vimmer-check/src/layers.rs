@@ -11,10 +11,10 @@
 
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use vimmer_dsl::{
-    typing_units, Anchor, ImageFit, Layer, LayerContent, Resolution, Scene, TextLayer, TextReveal,
-    VideoTimeline,
+    typing_units, Anchor, ImageFit, Layer, LayerContent, LowerThirdLayer, Resolution, Scene,
+    TextLayer, TextReveal, VideoTimeline,
 };
 
 use crate::assets::{UPSCALE_INFO, UPSCALE_WARN};
@@ -105,7 +105,6 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
     let mut out = Vec::new();
     let res = timeline.resolution;
     let starts = scene_starts_ms(timeline);
-    let (safe_l, safe_t, safe_r, safe_b) = title_safe(res);
     for (si, scene) in timeline.scenes.iter().enumerate() {
         for (li, layer) in scene.layers.iter().enumerate() {
             let at = starts[si] + layer.start_ms;
@@ -145,32 +144,45 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
                         .at(at),
                     );
                 }
-                let (l, top, w, h) = place(layer, res, box_h);
-                if l < safe_l - 0.5
-                    || top < safe_t - 0.5
-                    || l + w > safe_r + 0.5
-                    || top + h > safe_b + 0.5
-                {
-                    out.push(
-                        Finding::new(
-                            Severity::Warning,
-                            "safe_area.text",
-                            format!(
-                                "{name} spans x {l:.0}..{:.0}, y {top:.0}..{:.0} px; the title-safe area is x {safe_l:.0}..{safe_r:.0}, y {safe_t:.0}..{safe_b:.0}",
-                                l + w,
-                                top + h
-                            ),
-                            Suggestion::field(
-                                "move or shrink the layer so its text stays 5% inside every edge",
-                                layer_path(si, li, "x"),
-                            ),
-                        )
-                        .scene(&scene.id)
-                        .at(at),
-                    );
+                if let Some(f) = outside_safe_area(&name, layer, res, box_h, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
                 }
                 reading_speed(&mut out, scene, si, li, layer, t, at);
                 typing_time(&mut out, scene, si, li, layer, t, at);
+            }
+
+            if let LayerContent::LowerThird(lt) = &layer.content {
+                let (needed, optimistic) = lower_third_height(lt, layer, res);
+                match fixed_h {
+                    Some(fixed) if needed > fixed + 0.5 => {
+                        let severity = if optimistic > fixed + 0.5 {
+                            Severity::Error
+                        } else {
+                            Severity::Warning
+                        };
+                        out.push(
+                            Finding::new(
+                                severity,
+                                "text.overflow",
+                                format!(
+                                    "{name} needs about {needed:.0} px for its title and subtitle but its box is {fixed:.0} px tall"
+                                ),
+                                Suggestion::set(
+                                    "leave out `height` so the box fits its text",
+                                    layer_path(si, li, "height"),
+                                    Value::Null,
+                                ),
+                            )
+                            .scene(&scene.id)
+                            .at(at),
+                        );
+                    }
+                    Some(_) => {}
+                    None => box_h = needed,
+                }
+                if let Some(f) = outside_safe_area(&name, layer, res, box_h, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
+                }
             }
 
             let rect = place(layer, res, box_h);
@@ -199,6 +211,77 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
         }
     }
     out
+}
+
+/// A box (before rotation, at rest) that leaves the title-safe area.
+fn outside_safe_area(
+    name: &str,
+    layer: &Layer,
+    res: Resolution,
+    box_h: f64,
+    si: usize,
+    li: usize,
+) -> Option<Finding> {
+    let (safe_l, safe_t, safe_r, safe_b) = title_safe(res);
+    let (l, top, w, h) = place(layer, res, box_h);
+    if l >= safe_l - 0.5 && top >= safe_t - 0.5 && l + w <= safe_r + 0.5 && top + h <= safe_b + 0.5
+    {
+        return None;
+    }
+    Some(Finding::new(
+        Severity::Warning,
+        "safe_area.text",
+        format!(
+            "{name} spans x {l:.0}..{:.0}, y {top:.0}..{:.0} px; the title-safe area is x {safe_l:.0}..{safe_r:.0}, y {safe_t:.0}..{safe_b:.0}",
+            l + w,
+            top + h
+        ),
+        Suggestion::field(
+            "move or shrink the layer so its text stays 5% inside every edge",
+            layer_path(si, li, "x"),
+        ),
+    ))
+}
+
+/// A text area of `line_width` px at `font_px` with line height `lh` (a multiple of the font).
+fn area(font_px: f64, lh: f64, line_width: f64) -> SceneTextArea {
+    SceneTextArea {
+        font_px,
+        letter_spacing_em: SCENE_LETTER_SPACING_EM,
+        word_gap_em: SCENE_WORD_GAP_EM,
+        line_height_px: font_px * lh,
+        line_width: line_width.max(1.0),
+        max_lines: u32::MAX,
+        bottom_y: 0.0,
+    }
+}
+
+/// Lower-third layout, in em of the title font (`components/LayerKinds.tsx` `LowerThirdView`).
+const LT_BAR_EM: f64 = 0.16;
+const LT_PAD_V_EM: f64 = 0.38;
+const LT_PAD_H_EM: f64 = 0.7;
+const LT_TITLE_LH: f64 = 1.15;
+const LT_SUB_SCALE: f64 = 0.62;
+const LT_SUB_LH: f64 = 1.3;
+const LT_SUB_GAP_EM: f64 = 0.25;
+
+/// Height in px a lower third needs for its text: (nominal, optimistic).
+fn lower_third_height(lt: &LowerThirdLayer, layer: &Layer, res: Resolution) -> (f64, f64) {
+    let f = f64::from(lt.font_size) * f64::from(res.height);
+    let line_width =
+        f64::from(layer.width) * f64::from(res.width) - (LT_BAR_EM + 2.0 * LT_PAD_H_EM) * f;
+    let title = area(f, LT_TITLE_LH, line_width);
+    let sub = area(f * LT_SUB_SCALE, LT_SUB_LH, line_width);
+    let at = |factor: f64| {
+        let mut h = 2.0 * LT_PAD_V_EM * f
+            + f64::from(scene_text_lines(&lt.title, &title, factor)) * title.line_height_px;
+        if let Some(s) = lt.subtitle.as_deref().filter(|s| !s.trim().is_empty()) {
+            h += LT_SUB_GAP_EM * sub.font_px
+                + f64::from(scene_text_lines(s, &sub, factor)) * sub.line_height_px;
+        }
+        h
+    };
+    (at(1.0), at(OPTIMISTIC))
 }
 
 fn reading_speed(

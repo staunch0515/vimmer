@@ -1,6 +1,6 @@
 import type { Dispatch } from "react";
 import { useEffect, useState } from "react";
-import type { Easing, Layer, LayerAnimation, LayerAnimationKind, Scene } from "../../../src/types/timeline";
+import type { Easing, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
 import { splitLayers } from "../../../src/motion/layers";
 import { ANIMATION_KINDS, LAYER_KINDS } from "../layers";
 import { EASINGS } from "../model";
@@ -299,8 +299,43 @@ const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, 
           <ColorField label="Color" value={layer.color ?? "#fafafa"} onChange={(c) => patch({ color: c })} />
         </>
       );
+    case "lower_third":
+      return <LowerThirdFields layer={layer} patch={patch} />;
   }
 };
+
+const LowerThirdFields = ({ layer, patch }: { layer: LowerThirdLayer; patch: (p: Record<string, unknown>) => void }) => (
+  <>
+    <Field label="Title">
+      <input value={layer.title} onChange={(e) => patch({ title: e.target.value })} />
+    </Field>
+    <Field label="Subtitle" hint="empty = none">
+      <input value={layer.subtitle ?? ""} onChange={(e) => patch({ subtitle: e.target.value || undefined })} />
+    </Field>
+    <div className="two-col">
+      <NumField
+        label="Font size"
+        hint="title, of frame height"
+        value={layer.font_size ?? 0.045}
+        step={0.005}
+        validate={(v) => (v > 0 && v <= 0.2 ? null : "above 0, at most 0.2")}
+        onCommit={(v) => patch({ font_size: v })}
+      />
+      <ColorField label="Accent" value={layer.accent_color ?? "#6366f1"} onChange={(c) => patch({ accent_color: c })} />
+    </div>
+    <div className="two-col">
+      <ColorField label="Title color" value={layer.color ?? "#fafafa"} onChange={(c) => patch({ color: c })} />
+      <ColorField label="Subtitle color" value={layer.subtitle_color ?? "#d4d4d8"} onChange={(c) => patch({ subtitle_color: c })} />
+    </div>
+    <ColorField
+      label="Background"
+      optional
+      value={layer.background_color === undefined ? "#09090bd9" : layer.background_color ?? ""}
+      onChange={(c) => patch({ background_color: c === "" ? null : c })}
+    />
+    <p className="dim">Wipes in and out by itself unless Enter / Exit is set.</p>
+  </>
+);
 
 /** Number input whose empty value means "default" (undefined). */
 const OptionalNum = ({

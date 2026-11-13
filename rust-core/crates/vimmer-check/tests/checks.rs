@@ -515,3 +515,28 @@ fn typewriter_that_never_finishes_is_a_warning() {
     let fixed = apply(&t, f);
     assert!(find(&run(&fixed, None), "text.typing_unfinished", None, None).is_empty());
 }
+
+#[test]
+fn lower_third_overflow_and_safe_area() {
+    let t = with_layers(
+        4000,
+        r##"[{"id":"good","kind":"lower_third","x":0.06,"y":0.66,"width":0.5,"title":"Ada Lovelace","subtitle":"Mathematician"},
+            {"id":"cramped","kind":"lower_third","x":0.06,"y":0.1,"width":0.3,"height":0.05,
+             "title":"A very long title that has to wrap onto several lines in this narrow box","subtitle":"and a subtitle"},
+            {"id":"edge","kind":"lower_third","x":0.0,"y":0.9,"width":0.5,"title":"At the edge","background_color":null}]"##,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let about = |code: &str, id: &str| {
+        find(&fs, code, None, None)
+            .into_iter()
+            .filter(|f| f.message.contains(&format!("`{id}`")))
+            .count()
+    };
+    assert_eq!(about("text.overflow", "cramped"), 1, "{fs:#?}");
+    assert_eq!(about("safe_area.text", "edge"), 1, "{fs:#?}");
+    assert!(fs.iter().all(|f| !f.message.contains("`good`")), "{fs:#?}");
+    let f = one(&fs, "text.overflow", Some("s"), None);
+    let fixed = apply(&t, f);
+    assert!(find(&run(&fixed, None), "text.overflow", None, None).is_empty());
+}

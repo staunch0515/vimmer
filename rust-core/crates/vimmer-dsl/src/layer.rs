@@ -300,6 +300,65 @@ pub struct IconLayer {
     pub color: String,
 }
 
+/// Longest lower-third title, in characters.
+pub const MAX_LOWER_THIRD_TITLE_CHARS: usize = 120;
+/// Longest lower-third subtitle, in characters.
+pub const MAX_LOWER_THIRD_SUBTITLE_CHARS: usize = 160;
+/// Built-in entrance and exit of a lower third, used when the layer has no `enter` / `exit`.
+/// Each is shortened to 40 % / 30 % of the layer's time when the layer is short.
+pub const LOWER_THIRD_IN_MS: u64 = 700;
+pub const LOWER_THIRD_OUT_MS: u64 = 450;
+
+fn default_lower_third_size() -> f32 {
+    0.045
+}
+
+fn default_subtitle_color() -> String {
+    "#d4d4d8".into()
+}
+
+fn default_accent_color() -> String {
+    "#6366f1".into()
+}
+
+fn default_lower_third_background() -> Option<String> {
+    Some("#09090bd9".into())
+}
+
+/// A name/title strip: an accent bar beside a title and an optional subtitle on a box. Without
+/// `height` the box is as tall as its text. Unless the layer has its own `enter` / `exit`, the
+/// accent bar grows, the box wipes in from the left and the text slides in; on the way out the
+/// box wipes back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LowerThirdLayer {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    /// Title size as a fraction of the frame height; the subtitle is 0.62 of it.
+    #[serde(default = "default_lower_third_size")]
+    pub font_size: f32,
+    /// Title color.
+    #[serde(default = "default_text_color")]
+    pub color: String,
+    #[serde(default = "default_subtitle_color")]
+    pub subtitle_color: String,
+    #[serde(default = "default_accent_color")]
+    pub accent_color: String,
+    /// Box color; `null` draws no box.
+    #[serde(default = "default_lower_third_background")]
+    pub background_color: Option<String>,
+}
+
+impl LowerThirdLayer {
+    /// Built-in (entrance, exit) lengths in ms for a layer shown `span_ms`.
+    pub fn builtin_ms(span_ms: u64) -> (u64, u64) {
+        (
+            LOWER_THIRD_IN_MS.min(span_ms * 2 / 5),
+            LOWER_THIRD_OUT_MS.min(span_ms * 3 / 10),
+        )
+    }
+}
+
 /// What a layer draws, tagged by `kind` in the JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -308,6 +367,7 @@ pub enum LayerContent {
     Text(TextLayer),
     Shape(ShapeLayer),
     Icon(IconLayer),
+    LowerThird(LowerThirdLayer),
 }
 
 impl LayerContent {
@@ -318,7 +378,13 @@ impl LayerContent {
             LayerContent::Text(_) => "text",
             LayerContent::Shape(_) => "shape",
             LayerContent::Icon(_) => "icon",
+            LayerContent::LowerThird(_) => "lower_third",
         }
+    }
+
+    /// Kinds whose box may leave out `height` (it is then as tall as the content).
+    pub fn auto_height(&self) -> bool {
+        matches!(self, LayerContent::Text(_) | LayerContent::LowerThird(_))
     }
 
     /// The asset file the layer draws, if any.
@@ -326,7 +392,7 @@ impl LayerContent {
         match self {
             LayerContent::Image(l) => Some(&l.src),
             LayerContent::Icon(l) => Some(&l.src),
-            LayerContent::Text(_) | LayerContent::Shape(_) => None,
+            _ => None,
         }
     }
 }

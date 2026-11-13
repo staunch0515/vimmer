@@ -3,14 +3,16 @@ import { Img, useVideoConfig } from "remotion";
 import { AssetUrlContext, resolveAsset } from "../assets";
 import { strokePx } from "../motion/layers";
 import { DEFAULT_TYPING_CPS, cursorVisible, typedCount, typedSegments, typingUnits } from "../motion/typewriter";
-import type { IconLayer, ImageLayer, ShapeLayer, TextLayer } from "../types/timeline";
+import { lowerThirdPose } from "../motion/lowerThird";
+import type { IconLayer, ImageLayer, LowerThirdLayer, ShapeLayer, TextLayer } from "../types/timeline";
 import { AnimatedWords, highlightKeys, highlightStyle, normalize, splitWords } from "./AnimatedText";
 
 // What each layer kind draws inside its box. The box itself (position, size, transform, opacity,
 // timing) is set by LayerStack. `frameHeight` is the composition height: font sizes, strokes and
-// corner radii are fractions of it. `frame` counts from the layer's start.
+// corner radii are fractions of it. `frame` counts from the layer's start, `span` is the layer's
+// length in frames. Everything is computed from these, so chunked renders match full ones.
 
-type Ctx = { frameHeight: number; frame: number };
+type Ctx = { frameHeight: number; frame: number; span: number; fps: number };
 
 export const ImageLayerView: React.FC<{ layer: ImageLayer } & Ctx> = ({ layer, frameHeight }) => {
   const url = resolveAsset(layer.src, useContext(AssetUrlContext));
@@ -186,5 +188,78 @@ export const IconLayerView: React.FC<{ layer: IconLayer } & Ctx> = ({ layer }) =
         style={{ display: "block", width: "100%", height: "100%", objectFit: "contain", filter: `url(#${filterId})` }}
       />
     </>
+  );
+};
+
+// Accent bar, then a box with the title over the subtitle. The box hugs its text up to the layer's
+// width; a fixed height centers it vertically. Sizes are in em of the title font.
+export const LOWER_THIRD_BAR_EM = 0.16;
+export const LOWER_THIRD_PAD_V_EM = 0.38;
+export const LOWER_THIRD_PAD_H_EM = 0.7;
+export const LOWER_THIRD_SUBTITLE_SCALE = 0.62;
+
+export const LowerThirdView: React.FC<{ layer: LowerThirdLayer; boxHeight: number | null } & Ctx> = ({
+  layer,
+  boxHeight,
+  frameHeight,
+  frame,
+  span,
+  fps,
+}) => {
+  const fontSize = (layer.font_size ?? 0.045) * frameHeight;
+  const pose = lowerThirdPose(frame, span, fps, !layer.enter, !layer.exit);
+  const bg = layer.background_color === undefined ? "#09090bd9" : layer.background_color;
+  const textStyle = { transform: `translateX(${pose.textShift}em)`, opacity: pose.textOpacity };
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "stretch",
+        width: "100%",
+        height: boxHeight == null ? undefined : "100%",
+        fontFamily: LAYER_FONT_FAMILY,
+        fontSize,
+        letterSpacing: `${LAYER_LETTER_SPACING_EM}em`,
+      }}
+    >
+      <div
+        style={{
+          flex: "0 0 auto",
+          width: `${LOWER_THIRD_BAR_EM}em`,
+          background: layer.accent_color ?? "#6366f1",
+          transform: `scaleY(${pose.bar})`,
+          transformOrigin: "bottom",
+        }}
+      />
+      <div
+        style={{
+          flex: "0 1 auto",
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          padding: `${LOWER_THIRD_PAD_V_EM}em ${LOWER_THIRD_PAD_H_EM}em`,
+          background: bg ?? undefined,
+          clipPath: pose.reveal >= 1 ? undefined : `inset(0 ${(1 - pose.reveal) * 100}% 0 0)`,
+          overflowWrap: "break-word",
+        }}
+      >
+        <div style={{ ...textStyle, color: layer.color ?? "#fafafa", fontWeight: 700, lineHeight: 1.15 }}>{layer.title}</div>
+        {layer.subtitle ? (
+          <div
+            style={{
+              ...textStyle,
+              color: layer.subtitle_color ?? "#d4d4d8",
+              fontWeight: 500,
+              fontSize: `${LOWER_THIRD_SUBTITLE_SCALE}em`,
+              lineHeight: 1.3,
+              marginTop: "0.25em",
+            }}
+          >
+            {layer.subtitle}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 };

@@ -137,7 +137,19 @@ export type IconLayer = LayerCommon & {
   color?: string; // default #fafafa
 };
 
-export type Layer = ImageLayer | TextLayer | ShapeLayer | IconLayer;
+// Name/title strip. Without enter/exit it animates itself (motion/lowerThird.ts).
+export type LowerThirdLayer = LayerCommon & {
+  kind: "lower_third";
+  title: string; // at most 120 characters
+  subtitle?: string | null; // at most 160 characters
+  font_size?: number; // title, fraction of the frame height, default 0.045; subtitle 0.62 of it
+  color?: string; // title, default #fafafa
+  subtitle_color?: string; // default #d4d4d8
+  accent_color?: string; // default #6366f1
+  background_color?: string | null; // default #09090bd9; null = no box
+};
+
+export type Layer = ImageLayer | TextLayer | ShapeLayer | IconLayer | LowerThirdLayer;
 export type LayerKind = Layer["kind"];
 
 export type Resolution = {

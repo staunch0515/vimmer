@@ -4,7 +4,8 @@ use thiserror::Error;
 
 use crate::layer::{
     is_hex_color, Layer, LayerContent, ShapeKind, MAX_LAYERS, MAX_LAYER_KEYFRAMES,
-    MAX_LAYER_TEXT_CHARS, MAX_TYPING_CPS,
+    MAX_LAYER_TEXT_CHARS, MAX_LOWER_THIRD_SUBTITLE_CHARS, MAX_LOWER_THIRD_TITLE_CHARS,
+    MAX_TYPING_CPS,
 };
 use crate::model::{
     Keyframe, Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
@@ -255,7 +256,7 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
         Some(h) if !size_ok(h) => out.push(format!(
             "height must be above 0 and at most 4 (fractions of the frame), got {h}"
         )),
-        None if !matches!(layer.content, LayerContent::Text(_)) => {
+        None if !layer.content.auto_height() => {
             out.push(format!("a {} layer needs a height", layer.content.kind()))
         }
         _ => {}
@@ -362,6 +363,36 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
                         "typing_cps must be between 1 and {MAX_TYPING_CPS} characters per second, got {cps}"
                     ));
                 }
+            }
+        }
+        LayerContent::LowerThird(lt) => {
+            let n = lt.title.chars().count();
+            if lt.title.trim().is_empty() {
+                out.push("the title is empty".to_string());
+            } else if n > MAX_LOWER_THIRD_TITLE_CHARS {
+                out.push(format!(
+                    "the title is {n} characters; the limit is {MAX_LOWER_THIRD_TITLE_CHARS}"
+                ));
+            }
+            if let Some(sub) = &lt.subtitle {
+                let n = sub.chars().count();
+                if n > MAX_LOWER_THIRD_SUBTITLE_CHARS {
+                    out.push(format!(
+                        "the subtitle is {n} characters; the limit is {MAX_LOWER_THIRD_SUBTITLE_CHARS}"
+                    ));
+                }
+            }
+            if !(lt.font_size.is_finite() && lt.font_size > 0.0 && lt.font_size <= 0.2) {
+                out.push(format!(
+                    "font_size must be above 0 and at most 0.2 (fraction of the frame height), got {}",
+                    lt.font_size
+                ));
+            }
+            color("color", &lt.color, &mut out);
+            color("subtitle_color", &lt.subtitle_color, &mut out);
+            color("accent_color", &lt.accent_color, &mut out);
+            if let Some(c) = &lt.background_color {
+                color("background_color", c, &mut out);
             }
         }
         LayerContent::Shape(sh) => {
@@ -1105,6 +1136,32 @@ mod tests {
         has("bad id!", "id must be");
         has("empty", "fill or a stroke");
         has("type", "typing_cps");
+    }
+
+    #[test]
+    fn lower_third_rules() {
+        let mut a = scene("a", 3_000);
+        a.layers = vec![
+            layer(
+                r#"{"id":"ok","kind":"lower_third","x":0.06,"y":0.66,"width":0.5,"title":"Ada","subtitle":"Mathematician"}"#,
+            ),
+            layer(
+                r##"{"id":"bad","kind":"lower_third","x":0.06,"y":0.66,"width":0.5,"title":" ","accent_color":"blue","font_size":0.5}"##,
+            ),
+        ];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(layer_messages(&errs, "ok").is_empty(), "{errs:?}");
+        let m = layer_messages(&errs, "bad");
+        for needle in ["title is empty", "accent_color", "font_size"] {
+            assert!(m.iter().any(|m| m.contains(needle)), "{needle}: {m:?}");
+        }
+        let long = "x".repeat(121);
+        let mut b = scene("b", 3_000);
+        b.layers = vec![layer(&format!(
+            r#"{{"id":"long","kind":"lower_third","x":0,"y":0,"width":0.5,"title":"{long}"}}"#
+        ))];
+        let errs = validate(&timeline(vec![b])).unwrap_err();
+        assert!(layer_messages(&errs, "long")[0].contains("limit is 120"));
     }
 
     #[test]

@@ -179,7 +179,7 @@ fn no_break_before(c: char) -> bool {
 }
 
 /// Width in px of `s` at `font_px`, with `letter_spacing_em` after each character.
-fn width(s: &str, font_px: f64, letter_spacing_em: f64) -> f64 {
+pub(crate) fn width(s: &str, font_px: f64, letter_spacing_em: f64) -> f64 {
     s.chars()
         .map(|c| (char_em(c) + letter_spacing_em) * font_px)
         .sum()

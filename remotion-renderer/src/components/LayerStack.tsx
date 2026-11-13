@@ -2,7 +2,7 @@ import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { applyEasing, sampleKeyframes } from "../motion/keyframes";
 import { layerFrames, layerStateAt, splitLayers } from "../motion/layers";
 import type { Layer } from "../types/timeline";
-import { IconLayerView, ImageLayerView, ShapeLayerView, TextLayerView } from "./LayerKinds";
+import { IconLayerView, ImageLayerView, LowerThirdView, ShapeLayerView, TextLayerView } from "./LayerKinds";
 
 // One layer in its box. Rendered inside the scene's Sequence, so `useCurrentFrame` is the
 // scene-relative frame (frozen on the last frame while a transition holds the scene).
@@ -12,8 +12,9 @@ const LayerBox: React.FC<{ layer: Layer; sceneFrames: number }> = ({ layer, scen
   const kf = layer.keyframes && layer.keyframes.length > 0 ? sampleKeyframes(layer.keyframes, (frame * 1000) / fps) : undefined;
   const state = layerStateAt(layer, frame, fps, sceneFrames, width, height, kf, applyEasing);
   if (!state.visible) return null;
-  const local = frame - layerFrames(layer, fps, sceneFrames).start;
-  const ctx = { frameHeight: height, frame: local };
+  const span = layerFrames(layer, fps, sceneFrames);
+  const local = frame - span.start;
+  const ctx = { frameHeight: height, frame: local, span: span.end - span.start, fps };
   const boxHeight = state.height;
   let content: React.ReactNode;
   switch (layer.kind) {
@@ -28,6 +29,9 @@ const LayerBox: React.FC<{ layer: Layer; sceneFrames: number }> = ({ layer, scen
       break;
     case "icon":
       content = <IconLayerView layer={layer} {...ctx} />;
+      break;
+    case "lower_third":
+      content = <LowerThirdView layer={layer} boxHeight={boxHeight} {...ctx} />;
       break;
     default:
       // A kind this renderer does not know (a newer timeline): draw nothing rather than fail.
