@@ -6,12 +6,14 @@ import {
   cjkLang,
   currentWordIndex,
   patchCue,
+  SUBTITLE_FADE_FRAMES,
   sceneCutFrames,
+  subtitleAt,
   wordStates,
   wordsMatchText,
   type WordState,
 } from "../src/subtitles/words.ts";
-import type { WordTiming } from "../src/types/timeline.ts";
+import type { SubtitleCue, WordTiming } from "../src/types/timeline.ts";
 
 const w = (text: string, start_ms: number, end_ms: number): WordTiming => ({ text, start_ms, end_ms });
 // 30 fps: 100 ms = 3 frames.
@@ -160,6 +162,93 @@ test("chunked and full renders agree on every frame (random cues and seams)", ()
     const cue: Cue = { start_ms: cueStart, end_ms: cueEnd, words };
     const { full, chunked } = fullAndChunked(cue, scenes, splits, fps);
     assert.deepEqual(chunked, full, JSON.stringify({ fps, scenes, splits, cue }));
+  }
+});
+
+// --- Fades at chunk seams ----------------------------------------------------------------------
+// A chunk render gets the full-timeline cues that overlap it and its start frame (`chunk_props` in
+// plan.rs); the Subtitles component adds the start frame to the frame and to the chunk's own cuts.
+const chunkedFrames = (cues: SubtitleCue[], scenes: SceneSpec[], splits: number[], fps: number) => {
+  const sceneFrames = scenes.map((s) => toFrame(s.duration_ms, fps));
+  const sceneStart = (i: number) => sceneFrames.slice(0, i).reduce((a, b) => a + b, 0);
+  const fullCuts = sceneCutFrames(scenes, fps);
+  const full = [];
+  const chunked = [];
+  const bounds = [0, ...splits, scenes.length];
+  for (let c = 0; c + 1 < bounds.length; c++) {
+    const chunkStart = sceneStart(bounds[c]);
+    const chunkEnd = sceneStart(bounds[c + 1]);
+    const overlapping = cues.filter(
+      (q) => Math.max(toFrame(q.start_ms, fps), chunkStart) < Math.min(toFrame(q.end_ms, fps), chunkEnd),
+    );
+    const cuts = sceneCutFrames(scenes.slice(bounds[c], bounds[c + 1]), fps).map((x) => x + chunkStart);
+    for (let f = 0; f < chunkEnd - chunkStart; f++) {
+      full.push(subtitleAt(cues, f + chunkStart, fps, fullCuts));
+      chunked.push(subtitleAt(overlapping, f + chunkStart, fps, cuts));
+    }
+  }
+  return { full, chunked };
+};
+
+test("a cue straddling a chunk seam does not fade at the seam", () => {
+  // Two 3 s scenes at 30 fps, seam at frame 90; the cue runs from frame 60 to frame 150.
+  const cue: SubtitleCue = {
+    start_ms: 2000,
+    end_ms: 5000,
+    text: "across the seam",
+    words: [w("across ", 2000, 2800), w("the ", 2800, 3100), w("seam", 3300, 4500)],
+  };
+  const scenes = [{ duration_ms: 3000 }, { duration_ms: 3000 }];
+  const { full, chunked } = chunkedFrames([cue], scenes, [1], 30);
+  assert.deepEqual(chunked, full);
+  for (let f = 82; f < 98; f++) {
+    assert.equal(chunked[f]?.opacity, 1, `frame ${f} is fully opaque`);
+  }
+  // The real edges still fade.
+  assert.equal(chunked[60]?.opacity, 0);
+  assert.ok(Math.abs(chunked[149]!.opacity - 1 / SUBTITLE_FADE_FRAMES) < 1e-9);
+  // The old self-contained chunks (cue clipped to each chunk) blinked: faded out to 1/6 at the
+  // last frame of the first chunk and in from 0 at the first frame of the second.
+  const head = { ...cue, start_ms: 2000, end_ms: 3000, words: [] };
+  const tail = { ...cue, start_ms: 0, end_ms: 2000, words: [] };
+  assert.ok(Math.abs(subtitleAt([head], 89, 30)!.opacity - 1 / SUBTITLE_FADE_FRAMES) < 1e-9);
+  assert.equal(subtitleAt([tail], 0, 30)?.opacity, 0);
+});
+
+test("chunked and full renders draw the same subtitle on every frame (random cues and seams)", () => {
+  let seed = 777;
+  const rand = (n: number) => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed % n;
+  };
+  for (let round = 0; round < 300; round++) {
+    const fps = [24, 25, 30, 60][rand(4)];
+    const scenes: SceneSpec[] = [];
+    const count = 2 + rand(4);
+    for (let i = 0; i < count; i++) {
+      const scene: SceneSpec = { duration_ms: 400 + rand(2500) };
+      if (i > 0 && rand(4) === 0) scene.transition_in = { kind: "fade", duration_ms: 200 };
+      scenes.push(scene);
+    }
+    const total = scenes.reduce((a, s) => a + s.duration_ms, 0);
+    const cues: SubtitleCue[] = [];
+    let t = rand(500);
+    while (t + 100 < total) {
+      const end = Math.min(t + 100 + rand(3000), total);
+      const words: WordTiming[] = [];
+      let wt = t;
+      while (wt < end && words.length < 8) {
+        const ws = Math.min(wt + (rand(3) === 0 ? rand(600) : 0), end);
+        const we = Math.min(ws + rand(400), end);
+        words.push(w(`w${words.length} `, ws, we));
+        wt = we;
+      }
+      cues.push({ start_ms: t, end_ms: end, text: words.map((x) => x.text).join(""), words });
+      t = end + rand(3) * 200;
+    }
+    const splits = scenes.map((s, i) => i).filter((i) => i > 0 && !scenes[i].transition_in && rand(2) === 0);
+    const { full, chunked } = chunkedFrames(cues, scenes, splits, fps);
+    assert.deepEqual(chunked, full, JSON.stringify({ fps, scenes, splits, cues }));
   }
 });
 

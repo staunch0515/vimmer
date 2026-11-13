@@ -113,8 +113,9 @@ cd rust-core && cargo run -p vimmer-cli -- ../fixtures/sample-timeline.json \
 ```
 
 Subtitles: the timeline's `subtitles` array holds cues in absolute milliseconds, or
-pass `--subtitles file.srt` to import SubRip. Each chunk clips and rebases cues, so
-a cue that crosses a chunk boundary shows in both chunks. The overlay sits in the
+pass `--subtitles file.srt` to import SubRip. Each chunk also gets the overlapping cues in
+full-timeline time, so a cue that crosses a chunk boundary fades only at its own ends, as in
+an unchunked render (no blink at the seam). The overlay sits in the
 lower band; scene text keeps a 260 px bottom inset to stay clear of it.
 
 Image and audio paths are relative to `remotion-renderer/public/`. Normalized

@@ -10,7 +10,7 @@ use vimmer_media::{normalize_image, AudioProbe, MediaError, Speech};
 
 use crate::control::{Progress, RenderContext};
 use crate::narrate::{narrate_scenes, TtsConfig};
-use crate::plan::{chunk_timeline, plan_chunks, Chunk, DEFAULT_CHUNK_MS};
+use crate::plan::{chunk_props, plan_chunks, Chunk, DEFAULT_CHUNK_MS};
 use crate::wordsubs::{add_word_subtitles, WordSubtitleConfig};
 
 #[derive(Debug, thiserror::Error)]
@@ -348,7 +348,7 @@ async fn render_chunks(
     let mut outputs = Vec::with_capacity(chunks.len());
 
     for chunk in chunks {
-        let sub = chunk_timeline(timeline, chunk);
+        let sub = chunk_props(timeline, chunk);
         let props = chunk_dir.join(format!("chunk-{:03}.json", chunk.index));
         let mp4 = chunk_dir.join(format!("chunk-{:03}.mp4", chunk.index));
         tokio::fs::write(

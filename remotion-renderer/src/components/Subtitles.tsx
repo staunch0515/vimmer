@@ -1,9 +1,6 @@
-import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
-import { msToFrames } from "../layout";
-import { cjkLang, sceneCutFrames, wordStates, wordsMatchText, type WordState } from "../subtitles/words";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
+import { cjkLang, sceneCutFrames, subtitleAt, type WordState } from "../subtitles/words";
 import type { SubtitleCue, VideoTimeline, WordTiming } from "../types/timeline";
-
-const FADE_FRAMES = 6;
 
 // Word-by-word colors: the spoken word stands out, words still to come are dimmed.
 const WORD_STYLE: Record<WordState, React.CSSProperties> = {
@@ -14,61 +11,42 @@ const WORD_STYLE: Record<WordState, React.CSSProperties> = {
 
 // Plain inline spans, so spaces between English words and line breaking between CJK
 // characters work exactly as they do for unsplit text.
-const Words: React.FC<{ words: WordTiming[]; frame: number; fps: number; sceneStarts: number[] }> = ({
-  words,
-  frame,
-  fps,
-  sceneStarts,
-}) => {
-  const states = wordStates(words, frame, fps, sceneStarts);
-  return (
-    <>
-      {words.map((word, i) => (
-        <span key={i} style={WORD_STYLE[states[i]]}>
-          {word.text}
-        </span>
-      ))}
-    </>
-  );
-};
+const Words: React.FC<{ words: WordTiming[]; states: WordState[] }> = ({ words, states }) => (
+  <>
+    {words.map((word, i) => (
+      <span key={i} style={WORD_STYLE[states[i]]}>
+        {word.text}
+      </span>
+    ))}
+  </>
+);
 
 type Props = {
   cues: SubtitleCue[];
-  // Frames where a word's highlight stops (sceneCutFrames), so a chunked render shows the same
-  // word states as a full one. Defaults to the scenes of the composition's timeline props.
+  // Frames where a word's highlight stops (sceneCutFrames), in composition frames. Defaults to
+  // the scenes of the composition's timeline props.
   sceneStarts?: number[];
+  // Added to the composition frame (and to sceneStarts) before matching `cues`. A chunked render
+  // passes the chunk's start frame with full-timeline cues, so every frame is drawn exactly like
+  // the same frame of a full render: no fade-out/fade-in blink at a chunk seam.
+  frameOffset?: number;
 };
 
 // Shows the cue whose frame range contains the current frame. Frame ranges come from the
 // same rounding as the Rust side, so a cue starts on the exact frame the DSL specifies.
 // A cue with `words` is drawn word by word with the spoken word highlighted; without words, or
 // when the words no longer spell the cue text (edited after timing), it is drawn as one line.
-export const Subtitles: React.FC<Props> = ({ cues, sceneStarts }) => {
-  const frame = useCurrentFrame();
+export const Subtitles: React.FC<Props> = ({ cues, sceneStarts, frameOffset = 0 }) => {
   const { fps, width, height, props } = useVideoConfig();
+  const frame = useCurrentFrame() + frameOffset;
   const scenes = (props as Partial<VideoTimeline>).scenes;
-  const cuts = sceneStarts ?? (Array.isArray(scenes) ? sceneCutFrames(scenes, fps) : []);
+  const cuts = (sceneStarts ?? (Array.isArray(scenes) ? sceneCutFrames(scenes, fps) : [])).map((c) => c + frameOffset);
 
-  const active = cues.find(
-    (c) => frame >= msToFrames(c.start_ms, fps) && frame < msToFrames(c.end_ms, fps),
-  );
-  if (!active) {
+  const shown = subtitleAt(cues, frame, fps, cuts);
+  if (!shown) {
     return null;
   }
-
-  const start = msToFrames(active.start_ms, fps);
-  const end = msToFrames(active.end_ms, fps);
-  const fadeIn = interpolate(frame, [start, start + FADE_FRAMES], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const fadeOut = interpolate(frame, [end - FADE_FRAMES, end], [1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  const words = active.words ?? [];
-  const hasWords = words.length > 0 && wordsMatchText(active.text, words);
+  const { cue: active, opacity, states } = shown;
 
   // Scale with the shorter side so the size reads the same in landscape and portrait.
   const fontSize = Math.round(Math.min(width, height) * 0.05);
@@ -78,9 +56,9 @@ export const Subtitles: React.FC<Props> = ({ cues, sceneStarts }) => {
       style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: "4%", pointerEvents: "none" }}
     >
       <div
-        lang={hasWords ? cjkLang(active.text) : undefined}
+        lang={states ? cjkLang(active.text) : undefined}
         style={{
-          opacity: Math.min(fadeIn, fadeOut),
+          opacity,
           maxWidth: "86%",
           padding: `${Math.round(fontSize * 0.3)}px ${Math.round(fontSize * 0.6)}px`,
           borderRadius: fontSize * 0.4,
@@ -96,7 +74,7 @@ export const Subtitles: React.FC<Props> = ({ cues, sceneStarts }) => {
           overflowWrap: "break-word",
         }}
       >
-        {hasWords ? <Words words={words} frame={frame} fps={fps} sceneStarts={cuts} /> : active.text}
+        {states ? <Words words={active.words ?? []} states={states} /> : active.text}
       </div>
     </AbsoluteFill>
   );
