@@ -332,6 +332,7 @@ fn rendered_file_checks() {
         volume: 0.3,
         fade_in_ms: 0,
         fade_out_ms: 0,
+        duck: vimmer_dsl::Duck::default(),
     });
     let opts = CheckOptions {
         rendered: Some(mp4.clone()),
