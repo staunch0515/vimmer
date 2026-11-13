@@ -2,7 +2,7 @@ import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { applyEasing, sampleKeyframes } from "../motion/keyframes";
 import { layerFrames, layerStateAt, splitLayers } from "../motion/layers";
 import type { Layer } from "../types/timeline";
-import { CounterView, IconLayerView, ImageLayerView, LowerThirdView, ShapeLayerView, TextLayerView } from "./LayerKinds";
+import { BarChartView, CounterView, IconLayerView, ImageLayerView, LowerThirdView, ShapeLayerView, TextLayerView } from "./LayerKinds";
 
 // One layer in its box. Rendered inside the scene's Sequence, so `useCurrentFrame` is the
 // scene-relative frame (frozen on the last frame while a transition holds the scene).
@@ -35,6 +35,9 @@ const LayerBox: React.FC<{ layer: Layer; sceneFrames: number }> = ({ layer, scen
       break;
     case "counter":
       content = <CounterView layer={layer} boxHeight={boxHeight} {...ctx} />;
+      break;
+    case "bar_chart":
+      content = <BarChartView layer={layer} width={state.width} height={boxHeight ?? 0} {...ctx} />;
       break;
     default:
       // A kind this renderer does not know (a newer timeline): draw nothing rather than fail.

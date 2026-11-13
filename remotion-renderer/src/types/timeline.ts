@@ -167,7 +167,27 @@ export type CounterLayer = LayerCommon & {
   align?: "left" | "center" | "right"; // default center
 };
 
-export type Layer = ImageLayer | TextLayer | ShapeLayer | IconLayer | LowerThirdLayer | CounterLayer;
+export type ChartBar = { label: string; value: number; color?: string | null };
+
+// Bars growing in one after another (motion/data.ts for timing and layout fractions).
+export type BarChartLayer = LayerCommon & {
+  kind: "bar_chart";
+  bars: ChartBar[]; // 1..12, values >= 0
+  orientation?: "vertical" | "horizontal"; // default vertical
+  max?: number | null; // default the largest value
+  color?: string; // bars, default #6366f1
+  label_color?: string; // default #e4e4e7
+  font_size?: number; // labels and values, fraction of the frame height, default 0.032
+  show_values?: boolean; // default true
+  decimals?: number; // value labels, 0..6
+  prefix?: string;
+  suffix?: string;
+  grow_ms?: number; // default 800
+  stagger_ms?: number; // default 120
+  ease?: Easing; // default ease_out
+};
+
+export type Layer = ImageLayer | TextLayer | ShapeLayer | IconLayer | LowerThirdLayer | CounterLayer | BarChartLayer;
 export type LayerKind = Layer["kind"];
 
 export type Resolution = {

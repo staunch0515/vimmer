@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { IDENTITY_POSE, applyEasing, sampleKeyframes } from "../src/motion/keyframes.ts";
 import { transitionPose } from "../src/motion/transitions.ts";
 import { animationPose, layerFrames, layerStateAt, splitLayers } from "../src/motion/layers.ts";
-import { countFrames, formatNumber, frameProgress } from "../src/motion/data.ts";
+import { barProgress, chartMax, countFrames, formatNumber, frameProgress, ringFraction } from "../src/motion/data.ts";
 import { lowerThirdPose } from "../src/motion/lowerThird.ts";
 import { cursorVisible, typedCount, typedSegments, typingUnits } from "../src/motion/typewriter.ts";
 import type { Easing, Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
@@ -307,4 +307,17 @@ test("counts reach their end value on the last counting frame", () => {
   assert.equal(frameProgress(74, 75), 1);
   assert.equal(frameProgress(200, 75), 1);
   assert.equal(frameProgress(0, 1), 1);
+});
+
+test("bars grow one after another and the chart scale is max or the largest value", () => {
+  // 800 ms growth (24 frames), 120 ms stagger (4 frames) at 30 fps.
+  assert.equal(barProgress(0, 0, 30, 800, 120), 0);
+  assert.equal(barProgress(23, 0, 30, 800, 120), 1);
+  assert.equal(barProgress(3, 1, 30, 800, 120), 0); // bar 1 has not started
+  assert.equal(barProgress(4, 1, 30, 800, 120), 0);
+  assert.equal(barProgress(27, 1, 30, 800, 120), 1);
+  assert.ok(barProgress(10, 2, 30, 800, 120) < barProgress(10, 1, 30, 800, 120));
+  assert.equal(chartMax([10, 40, 25], undefined), 40);
+  assert.equal(chartMax([10, 40, 25], 100), 100);
+  assert.equal(chartMax([0, 0], null), 1);
 });

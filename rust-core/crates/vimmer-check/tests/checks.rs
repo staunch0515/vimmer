@@ -561,3 +561,27 @@ fn counter_whose_widest_value_overflows_is_a_warning() {
     let fixed = apply(&t, f);
     assert!(find(&run(&fixed, None), "counter.overflow", None, None).is_empty());
 }
+
+#[test]
+fn chart_labels_that_do_not_fit_are_warnings() {
+    let t = with_layers(
+        3000,
+        r##"[{"id":"good","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,
+              "bars":[{"label":"2022","value":10},{"label":"2023","value":24},{"label":"2024","value":31}]},
+            {"id":"wordy","kind":"bar_chart","x":0.1,"y":0.1,"width":0.4,"height":0.6,
+              "bars":[{"label":"Northern Territories","value":1},{"label":"b","value":2},{"label":"c","value":3},{"label":"d","value":4},{"label":"e","value":5},{"label":"f","value":6}]},
+            {"id":"flat","kind":"bar_chart","x":0.1,"y":0.75,"width":0.6,"height":0.1,"orientation":"horizontal",
+              "bars":[{"label":"a","value":1},{"label":"b","value":2},{"label":"c","value":3},{"label":"d","value":4}]}]"##,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let about = |code: &str, id: &str| {
+        find(&fs, code, None, None)
+            .into_iter()
+            .filter(|f| f.message.contains(&format!("`{id}`")))
+            .count()
+    };
+    assert_eq!(about("chart.label_overflow", "wordy"), 1, "{fs:#?}");
+    assert_eq!(about("chart.cramped", "flat"), 1, "{fs:#?}");
+    assert!(fs.iter().all(|f| !f.message.contains("`good`")), "{fs:#?}");
+}

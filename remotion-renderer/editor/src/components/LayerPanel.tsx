@@ -1,6 +1,6 @@
 import type { Dispatch } from "react";
 import { useEffect, useState } from "react";
-import type { CounterLayer, Easing, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
+import type { BarChartLayer, ChartBar, CounterLayer, Easing, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
 import { splitLayers } from "../../../src/motion/layers";
 import { ANIMATION_KINDS, LAYER_KINDS } from "../layers";
 import { EASINGS } from "../model";
@@ -303,6 +303,8 @@ const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, 
       return <LowerThirdFields layer={layer} patch={patch} />;
     case "counter":
       return <CounterFields layer={layer} patch={patch} />;
+    case "bar_chart":
+      return <BarChartFields layer={layer} patch={patch} />;
   }
 };
 
@@ -386,6 +388,89 @@ const CounterFields = ({ layer, patch }: { layer: CounterLayer; patch: (p: Recor
     </div>
   </>
 );
+
+const BarChartFields = ({ layer, patch }: { layer: BarChartLayer; patch: (p: Record<string, unknown>) => void }) => {
+  const setBar = (i: number, p: Partial<ChartBar>) =>
+    patch({ bars: layer.bars.map((b, j) => (j === i ? Object.fromEntries(Object.entries({ ...b, ...p }).filter(([, v]) => v !== undefined)) : b)) });
+  return (
+    <>
+      <div className="two-col">
+        <Field label="Orientation">
+          <select value={layer.orientation ?? "vertical"} onChange={(e) => patch({ orientation: e.target.value === "vertical" ? undefined : e.target.value })}>
+            <option value="vertical">vertical</option>
+            <option value="horizontal">horizontal</option>
+          </select>
+        </Field>
+        <OptionalNum label="Max" placeholder="largest value" value={layer.max ?? undefined} step={1} onCommit={(v) => patch({ max: v })} />
+      </div>
+      <Field label="Bars" hint="label · value · color (empty = chart color)">
+        <div className="bar-rows">
+          {layer.bars.map((b, i) => (
+            <div key={i} className="bar-row" data-bar-row={i}>
+              <input value={b.label} aria-label={`Bar ${i + 1} label`} onChange={(e) => setBar(i, { label: e.target.value })} />
+              <input
+                type="number"
+                value={b.value}
+                aria-label={`Bar ${i + 1} value`}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (e.target.value.trim() !== "" && Number.isFinite(v)) setBar(i, { value: v });
+                }}
+              />
+              <input value={b.color ?? ""} placeholder="#rrggbb" aria-label={`Bar ${i + 1} color`} onChange={(e) => setBar(i, { color: e.target.value.trim() || undefined })} />
+              <button className="btn ghost small" aria-label={`Remove bar ${i + 1}`} disabled={layer.bars.length <= 1} onClick={() => patch({ bars: layer.bars.filter((_, j) => j !== i) })}>
+                ×
+              </button>
+            </div>
+          ))}
+          <button
+            className="btn small"
+            disabled={layer.bars.length >= 12}
+            onClick={() => patch({ bars: [...layer.bars, { label: String.fromCharCode(65 + (layer.bars.length % 26)), value: layer.bars[layer.bars.length - 1]?.value ?? 50 }] })}
+          >
+            + bar
+          </button>
+        </div>
+      </Field>
+      <div className="two-col">
+        <ColorField label="Bar color" value={layer.color ?? "#6366f1"} onChange={(c) => patch({ color: c })} />
+        <ColorField label="Label color" value={layer.label_color ?? "#e4e4e7"} onChange={(c) => patch({ label_color: c })} />
+      </div>
+      <div className="two-col">
+        <NumField
+          label="Font size"
+          hint="of frame height"
+          value={layer.font_size ?? 0.032}
+          step={0.002}
+          validate={(v) => (v > 0 && v <= 0.2 ? null : "above 0, at most 0.2")}
+          onCommit={(v) => patch({ font_size: v })}
+        />
+        <Field label="Values">
+          <label className="check">
+            <input type="checkbox" checked={layer.show_values ?? true} onChange={(e) => patch({ show_values: e.target.checked ? undefined : false })} />
+            show values
+          </label>
+        </Field>
+      </div>
+      <div className="two-col">
+        <NumField label="Grow" suffix="ms" value={layer.grow_ms ?? 800} step={100} validate={(v) => (v >= 1 && v <= 10000 ? null : "1 to 10000")} onCommit={(v) => patch({ grow_ms: v })} />
+        <NumField label="Stagger" suffix="ms" value={layer.stagger_ms ?? 120} step={20} validate={(v) => (v >= 0 && v <= 2000 ? null : "0 to 2000")} onCommit={(v) => patch({ stagger_ms: v })} />
+      </div>
+      <div className="two-col">
+        <EaseField label="Easing" value={layer.ease ?? "ease_out"} onChange={(e) => patch({ ease: e })} />
+        <NumField label="Decimals" value={layer.decimals ?? 0} step={1} validate={(v) => (Number.isInteger(v) && v >= 0 && v <= 6 ? null : "0 to 6")} onCommit={(v) => patch({ decimals: v || undefined })} />
+      </div>
+      <div className="two-col">
+        <Field label="Prefix">
+          <input value={layer.prefix ?? ""} onChange={(e) => patch({ prefix: e.target.value || undefined })} />
+        </Field>
+        <Field label="Suffix">
+          <input value={layer.suffix ?? ""} onChange={(e) => patch({ suffix: e.target.value || undefined })} />
+        </Field>
+      </div>
+    </>
+  );
+};
 
 /** Number input whose empty value means "default" (undefined). */
 const OptionalNum = ({

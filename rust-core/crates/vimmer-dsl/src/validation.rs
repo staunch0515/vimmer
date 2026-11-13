@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use crate::layer::{
-    is_hex_color, Layer, LayerContent, ShapeKind, MAX_ABS_NUMBER, MAX_AFFIX_CHARS, MAX_DECIMALS,
-    MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS, MAX_LOWER_THIRD_SUBTITLE_CHARS,
-    MAX_LOWER_THIRD_TITLE_CHARS, MAX_TYPING_CPS,
+    is_hex_color, Layer, LayerContent, ShapeKind, MAX_ABS_NUMBER, MAX_AFFIX_CHARS, MAX_BARS,
+    MAX_BAR_LABEL_CHARS, MAX_DECIMALS, MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS,
+    MAX_LOWER_THIRD_SUBTITLE_CHARS, MAX_LOWER_THIRD_TITLE_CHARS, MAX_TYPING_CPS,
 };
 use crate::model::{
     Keyframe, Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
@@ -425,6 +425,64 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
                 ));
             }
             color("color", &c.color, &mut out);
+        }
+        LayerContent::BarChart(ch) => {
+            if ch.bars.is_empty() || ch.bars.len() > MAX_BARS {
+                out.push(format!(
+                    "a chart needs 1 to {MAX_BARS} bars, got {}",
+                    ch.bars.len()
+                ));
+            }
+            for (i, bar) in ch.bars.iter().enumerate() {
+                let n = bar.label.chars().count();
+                if n > MAX_BAR_LABEL_CHARS {
+                    out.push(format!(
+                        "bar {i} label is {n} characters; the limit is {MAX_BAR_LABEL_CHARS}"
+                    ));
+                }
+                if !(bar.value.is_finite() && (0.0..=MAX_ABS_NUMBER).contains(&bar.value)) {
+                    out.push(format!(
+                        "bar {i} value must be 0 or more (at most {MAX_ABS_NUMBER:e}), got {}",
+                        bar.value
+                    ));
+                }
+                if let Some(c) = &bar.color {
+                    color(&format!("bar {i} color"), c, &mut out);
+                }
+            }
+            let largest = ch.bars.iter().map(|b| b.value).fold(0.0, f64::max);
+            match ch.max {
+                Some(m) if !(m.is_finite() && m > 0.0 && m <= MAX_ABS_NUMBER) => {
+                    out.push(format!("max must be above 0, got {m}"))
+                }
+                Some(m) if largest > m => out.push(format!(
+                    "max ({m}) is below the largest value ({largest}); leave it out to use the largest value"
+                )),
+                None if largest <= 0.0 && !ch.bars.is_empty() => {
+                    out.push("every bar is 0: give one a value above 0 or set max".to_string())
+                }
+                _ => {}
+            }
+            out.extend(number_format_problems(
+                ch.decimals,
+                &ch.prefix,
+                &ch.suffix,
+                None,
+            ));
+            if !(ch.font_size.is_finite() && ch.font_size > 0.0 && ch.font_size <= 0.2) {
+                out.push(format!(
+                    "font_size must be above 0 and at most 0.2 (fraction of the frame height), got {}",
+                    ch.font_size
+                ));
+            }
+            if ch.grow_ms == 0 || ch.grow_ms > 10_000 {
+                out.push(format!("grow_ms must be 1..10000, got {}", ch.grow_ms));
+            }
+            if ch.stagger_ms > 2_000 {
+                out.push(format!("stagger_ms must be 0..2000, got {}", ch.stagger_ms));
+            }
+            color("color", &ch.color, &mut out);
+            color("label_color", &ch.label_color, &mut out);
         }
         LayerContent::Shape(sh) => {
             if let Some(c) = &sh.fill {
@@ -1263,6 +1321,50 @@ mod tests {
         ] {
             assert!(m.iter().any(|m| m.contains(needle)), "{needle}: {m:?}");
         }
+    }
+
+    #[test]
+    fn bar_chart_rules() {
+        let bars = |n: usize| {
+            (0..n)
+                .map(|i| format!(r#"{{"label":"b{i}","value":{i}}}"#))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let mut a = scene("a", 3_000);
+        a.layers = vec![
+            layer(&format!(
+                r#"{{"id":"ok","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,"orientation":"horizontal","bars":[{}]}}"#,
+                bars(12)
+            )),
+            layer(&format!(
+                r#"{{"id":"many","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,"bars":[{}]}}"#,
+                bars(13)
+            )),
+            layer(
+                r#"{"id":"bad","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,"max":5,"grow_ms":0,
+                    "bars":[{"label":"a","value":-1},{"label":"b","value":9,"color":"green"}]}"#,
+            ),
+            layer(
+                r#"{"id":"zero","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,"bars":[{"label":"a","value":0}]}"#,
+            ),
+            layer(
+                r#"{"id":"nohead","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"bars":[{"label":"a","value":1}]}"#,
+            ),
+        ];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(layer_messages(&errs, "ok").is_empty(), "{errs:?}");
+        let has = |id: &str, needle: &str| {
+            let m = layer_messages(&errs, id);
+            assert!(m.iter().any(|m| m.contains(needle)), "{id} {needle}: {m:?}");
+        };
+        has("many", "1 to 12 bars");
+        has("bad", "bar 0 value");
+        has("bad", "bar 1 color");
+        has("bad", "below the largest");
+        has("bad", "grow_ms");
+        has("zero", "every bar is 0");
+        has("nohead", "needs a height");
     }
 
     #[test]

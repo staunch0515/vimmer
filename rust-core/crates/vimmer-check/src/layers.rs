@@ -13,8 +13,9 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 use vimmer_dsl::{
-    count_frames, frame_progress, typing_units, Anchor, CounterLayer, ImageFit, Layer,
-    LayerContent, LowerThirdLayer, Resolution, Scene, TextLayer, TextReveal, VideoTimeline,
+    count_frames, frame_progress, typing_units, Anchor, BarChartLayer, ChartOrientation,
+    CounterLayer, ImageFit, Layer, LayerContent, LowerThirdLayer, Resolution, Scene, TextLayer,
+    TextReveal, VideoTimeline,
 };
 
 use crate::assets::{UPSCALE_INFO, UPSCALE_WARN};
@@ -216,6 +217,15 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
                 }
             }
 
+            if let LayerContent::BarChart(ch) = &layer.content {
+                for f in chart_findings(&name, ch, layer, res, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
+                }
+                if let Some(f) = outside_safe_area(&name, layer, res, box_h, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
+                }
+            }
+
             let rect = place(layer, res, box_h);
             if !poses(layer, rect, res)
                 .into_iter()
@@ -334,6 +344,94 @@ fn widest_count(
         }
     }
     best
+}
+
+/// Bar chart layout (`motion/data.ts`): bar slot fill, label/value columns and rows.
+const HBAR_LABEL_FRAC: f64 = 0.28;
+const HBAR_VALUE_FRAC: f64 = 0.16;
+const VBAR_LABEL_EM: f64 = 1.6;
+const VBAR_VALUE_EM: f64 = 1.5;
+
+/// Labels and value labels wider than their room, and a plot squeezed by them.
+fn chart_findings(
+    name: &str,
+    ch: &BarChartLayer,
+    layer: &Layer,
+    res: Resolution,
+    si: usize,
+    li: usize,
+) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let f = f64::from(ch.font_size) * f64::from(res.height);
+    let w = f64::from(layer.width) * f64::from(res.width);
+    let h = f64::from(layer.height.unwrap_or(0.0)) * f64::from(res.height);
+    let n = ch.bars.len().max(1) as f64;
+    let horizontal = ch.orientation == ChartOrientation::Horizontal;
+    let (label_room, value_room) = if horizontal {
+        (w * HBAR_LABEL_FRAC - 0.4 * f, w * HBAR_VALUE_FRAC - 0.3 * f)
+    } else {
+        (w / n, w / n)
+    };
+    let measure = |s: &str| width(s, f, SCENE_LETTER_SPACING_EM);
+    let widest = |texts: Vec<String>| {
+        texts
+            .into_iter()
+            .map(|t| (measure(&t), t))
+            .fold((0.0, String::new()), |a, b| if b.0 > a.0 { b } else { a })
+    };
+    let (lw, label) = widest(ch.bars.iter().map(|b| b.label.clone()).collect());
+    if lw > label_room + 0.5 {
+        out.push(Finding::new(
+            Severity::Warning,
+            "chart.label_overflow",
+            format!(
+                "{name}: the label `{label}` is about {lw:.0} px wide but has {label_room:.0} px; it runs into its neighbours"
+            ),
+            Suggestion::field(
+                "shorten the labels, make the chart wider or the font smaller",
+                layer_path(si, li, "bars"),
+            ),
+        ));
+    }
+    if ch.show_values {
+        let (vw, value) = widest(ch.bars.iter().map(|b| ch.format(b.value)).collect());
+        if vw > value_room + 0.5 {
+            out.push(Finding::new(
+                Severity::Warning,
+                "chart.label_overflow",
+                format!(
+                    "{name}: the value label `{value}` is about {vw:.0} px wide but has {value_room:.0} px"
+                ),
+                Suggestion::field(
+                    "use fewer decimals, a shorter suffix, a wider chart or a smaller font",
+                    layer_path(si, li, "font_size"),
+                ),
+            ));
+        }
+    }
+    // Vertical: room for the bars between the value and label rows. Horizontal: each row must
+    // hold a line of label text.
+    let (room, needed, what) = if horizontal {
+        (h / n, 1.25 * f, "per bar row")
+    } else {
+        let rows = VBAR_LABEL_EM + if ch.show_values { VBAR_VALUE_EM } else { 0.0 };
+        (h - rows * f, 2.0 * f, "for the bars")
+    };
+    if room < needed {
+        out.push(Finding::new(
+            Severity::Warning,
+            "chart.cramped",
+            format!(
+                "{name}: its {h:.0} px tall box leaves about {:.0} px {what}; it needs {needed:.0} px",
+                room.max(0.0)
+            ),
+            Suggestion::field(
+                "make the chart taller, the font smaller or use fewer bars",
+                layer_path(si, li, "height"),
+            ),
+        ));
+    }
+    out
 }
 
 fn reading_speed(

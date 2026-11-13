@@ -4,9 +4,21 @@ import { AssetUrlContext, resolveAsset } from "../assets";
 import { strokePx } from "../motion/layers";
 import { DEFAULT_TYPING_CPS, cursorVisible, typedCount, typedSegments, typingUnits } from "../motion/typewriter";
 import { applyEasing } from "../motion/keyframes";
-import { countFrames, formatNumber, frameProgress, lerpValue } from "../motion/data";
+import {
+  BAR_FILL,
+  HBAR_LABEL_FRAC,
+  HBAR_VALUE_FRAC,
+  VBAR_LABEL_EM,
+  VBAR_VALUE_EM,
+  barProgress,
+  chartMax,
+  countFrames,
+  formatNumber,
+  frameProgress,
+  lerpValue,
+} from "../motion/data";
 import { lowerThirdPose } from "../motion/lowerThird";
-import type { CounterLayer, IconLayer, ImageLayer, LowerThirdLayer, ShapeLayer, TextLayer } from "../types/timeline";
+import type { BarChartLayer, CounterLayer, IconLayer, ImageLayer, LowerThirdLayer, ShapeLayer, TextLayer } from "../types/timeline";
 import { AnimatedWords, highlightKeys, highlightStyle, normalize, splitWords } from "./AnimatedText";
 
 // What each layer kind draws inside its box. The box itself (position, size, transform, opacity,
@@ -297,6 +309,122 @@ export const CounterView: React.FC<{ layer: CounterLayer; boxHeight: number | nu
       }}
     >
       {text}
+    </div>
+  );
+};
+
+// Bars drawn with divs in the layer's box (no chart library). Each bar's length is its value over
+// the chart max times its eased grow progress (may overshoot with springy easings); its value label
+// counts up with the unovershot progress and fades in at the start of its growth.
+export const BarChartView: React.FC<{ layer: BarChartLayer; width: number; height: number } & Ctx> = ({
+  layer,
+  width,
+  height,
+  frameHeight,
+  frame,
+  fps,
+}) => {
+  const f = (layer.font_size ?? 0.032) * frameHeight;
+  const bars = layer.bars.slice(0, 12);
+  const n = Math.max(1, bars.length);
+  const max = chartMax(bars.map((b) => b.value), layer.max);
+  const showValues = layer.show_values ?? true;
+  const ease = layer.ease ?? "ease_out";
+  const labelColor = layer.label_color ?? "#e4e4e7";
+  const text = (extra: React.CSSProperties): React.CSSProperties => ({
+    position: "absolute",
+    fontFamily: LAYER_FONT_FAMILY,
+    fontSize: f,
+    lineHeight: 1.2,
+    letterSpacing: `${LAYER_LETTER_SPACING_EM}em`,
+    color: labelColor,
+    whiteSpace: "nowrap",
+    fontVariantNumeric: "tabular-nums",
+    ...extra,
+  });
+  const grown = bars.map((b, i) => {
+    const p = barProgress(frame, i, fps, layer.grow_ms ?? 800, layer.stagger_ms ?? 120);
+    const e = applyEasing(ease, p);
+    return {
+      bar: b,
+      frac: Math.max(0, (b.value / max) * e),
+      label: formatNumber(b.value * Math.min(1, e), layer.decimals ?? 0, ",", ".", layer.prefix ?? "", layer.suffix ?? ""),
+      fade: Math.min(1, p * 4),
+    };
+  });
+  const color = (b: (typeof bars)[number]) => b.color ?? layer.color ?? "#6366f1";
+  const axis = { position: "absolute" as const, background: labelColor, opacity: 0.35 };
+
+  if (layer.orientation === "horizontal") {
+    const labelW = width * HBAR_LABEL_FRAC;
+    const valueW = showValues ? width * HBAR_VALUE_FRAC : 0;
+    const plotW = Math.max(0, width - labelW - valueW);
+    const row = height / n;
+    const thick = row * BAR_FILL;
+    return (
+      <div style={{ position: "relative", width, height }}>
+        <div style={{ ...axis, left: labelW - 1, top: 0, width: 2, height }} />
+        {grown.map(({ bar, frac, label, fade }, i) => {
+          const cy = row * i + row / 2;
+          const len = plotW * frac;
+          return (
+            <div key={i}>
+              <div style={text({ right: width - labelW + 0.4 * f, top: cy - 0.6 * f, textAlign: "right" })}>{bar.label}</div>
+              <div
+                style={{
+                  position: "absolute",
+                  left: labelW,
+                  top: cy - thick / 2,
+                  width: len,
+                  height: thick,
+                  background: color(bar),
+                  borderRadius: `0 ${Math.min(0.2 * f, thick / 2)}px ${Math.min(0.2 * f, thick / 2)}px 0`,
+                }}
+              />
+              {showValues ? (
+                <div style={text({ left: labelW + len + 0.3 * f, top: cy - 0.6 * f, opacity: fade, fontWeight: 600 })}>{label}</div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const valueH = showValues ? VBAR_VALUE_EM * f : 0;
+  const labelH = VBAR_LABEL_EM * f;
+  const plotH = Math.max(0, height - valueH - labelH);
+  const baseY = valueH + plotH;
+  const slot = width / n;
+  const thick = slot * BAR_FILL;
+  return (
+    <div style={{ position: "relative", width, height }}>
+      <div style={{ ...axis, left: 0, top: baseY - 1, width, height: 2 }} />
+      {grown.map(({ bar, frac, label, fade }, i) => {
+        const cx = slot * i + slot / 2;
+        const len = plotH * frac;
+        return (
+          <div key={i}>
+            <div
+              style={{
+                position: "absolute",
+                left: cx - thick / 2,
+                top: baseY - len,
+                width: thick,
+                height: len,
+                background: color(bar),
+                borderRadius: `${Math.min(0.2 * f, thick / 2)}px ${Math.min(0.2 * f, thick / 2)}px 0 0`,
+              }}
+            />
+            {showValues ? (
+              <div style={text({ left: cx - slot / 2, width: slot, top: baseY - len - 1.3 * f, textAlign: "center", opacity: fade, fontWeight: 600 })}>
+                {label}
+              </div>
+            ) : null}
+            <div style={text({ left: cx - slot / 2, width: slot, top: baseY + 0.3 * f, textAlign: "center" })}>{bar.label}</div>
+          </div>
+        );
+      })}
     </div>
   );
 };

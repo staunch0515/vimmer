@@ -4,7 +4,7 @@
 import type { Layer, LayerAnimationKind, LayerKind, Resolution, Scene } from "../../src/types/timeline";
 import { splitLayers } from "../../src/motion/layers";
 
-export const LAYER_KINDS: LayerKind[] = ["text", "shape", "image", "icon", "lower_third", "counter"];
+export const LAYER_KINDS: LayerKind[] = ["text", "shape", "image", "icon", "lower_third", "counter", "bar_chart"];
 export const ANIMATION_KINDS: LayerAnimationKind[] = ["fade", "slide_up", "slide_down", "slide_left", "slide_right", "pop"];
 export const MAX_LAYERS = 32;
 export const MAX_LAYER_TEXT_CHARS = 400;
@@ -34,6 +34,20 @@ export const newLayer = (kind: LayerKind, scene: Scene, res: Resolution = { widt
         : { id, kind, title: "Name Surname", subtitle: "Role, Company", x: 0.06, y: 0.66, width: 0.5 };
     case "counter":
       return { id, kind, from: 0, to: 1000, x: 0.3, y: 0.3, width: 0.4 };
+    case "bar_chart":
+      return {
+        id,
+        kind,
+        x: 0.1,
+        y: portrait ? 0.2 : 0.12,
+        width: 0.8,
+        height: portrait ? 0.4 : 0.6,
+        bars: [
+          { label: "A", value: 40 },
+          { label: "B", value: 65 },
+          { label: "C", value: 90 },
+        ],
+      };
   }
 };
 
@@ -163,6 +177,22 @@ export const checkLayers = (s: Scene): string[] => {
         if (l.duration_ms != null && !(l.duration_ms > 0 && l.duration_ms <= span)) out.push(`${name}: count duration must be above 0 and at most the layer's time (${span} ms).`);
         if (l.font_size !== undefined && !(l.font_size > 0 && l.font_size <= 0.5)) out.push(`${name}: font size must be above 0 and at most 0.5.`);
         colors(name, out, [l.color]);
+        break;
+      }
+      case "bar_chart": {
+        if (l.bars.length < 1 || l.bars.length > 12) out.push(`${name}: a chart needs 1 to 12 bars.`);
+        l.bars.forEach((b, i) => {
+          if ([...b.label].length > 40) out.push(`${name}: bar ${i + 1} label is over 40 characters.`);
+          if (!(Number.isFinite(b.value) && b.value >= 0 && b.value <= 1e15)) out.push(`${name}: bar ${i + 1} value must be 0 or more.`);
+        });
+        colors(name, out, [l.color, l.label_color, ...l.bars.map((b) => b.color)]);
+        const largest = Math.max(0, ...l.bars.map((b) => b.value));
+        if (l.max != null && !(l.max > 0 && l.max >= largest)) out.push(`${name}: max must be above 0 and at least the largest value.`);
+        if (l.max == null && largest <= 0 && l.bars.length) out.push(`${name}: every bar is 0; give one a value or set max.`);
+        numberFormat(name, out, l.decimals, l.prefix, l.suffix);
+        if (l.font_size !== undefined && !(l.font_size > 0 && l.font_size <= 0.2)) out.push(`${name}: font size must be above 0 and at most 0.2.`);
+        if (l.grow_ms !== undefined && !(l.grow_ms >= 1 && l.grow_ms <= 10000)) out.push(`${name}: grow time must be 1 to 10000 ms.`);
+        if (l.stagger_ms !== undefined && !(l.stagger_ms >= 0 && l.stagger_ms <= 2000)) out.push(`${name}: stagger must be 0 to 2000 ms.`);
         break;
       }
     }

@@ -496,6 +496,101 @@ pub fn frame_progress(frame: u64, n: u64) -> f64 {
     }
 }
 
+/// Most bars of one chart.
+pub const MAX_BARS: usize = 12;
+/// Longest bar label, in characters.
+pub const MAX_BAR_LABEL_CHARS: usize = 40;
+
+fn default_label_color() -> String {
+    "#e4e4e7".into()
+}
+
+fn default_chart_font_size() -> f32 {
+    0.032
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_grow_ms() -> u64 {
+    800
+}
+
+fn default_stagger_ms() -> u64 {
+    120
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+/// One bar of a [`BarChartLayer`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChartBar {
+    pub label: String,
+    /// 0 or more.
+    pub value: f64,
+    /// Absent: the chart's `color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartOrientation {
+    /// Bars grow up from a baseline; labels under them.
+    #[default]
+    Vertical,
+    /// Bars grow right; labels in a column on the left.
+    Horizontal,
+}
+
+/// Bars that grow in one after another. Bar `i` starts `stagger_ms * i` after the layer and grows
+/// for `grow_ms` with `ease`; its value label counts up with it. Layout (fractions shared with
+/// `remotion-renderer/src/motion/data.ts`): vertical charts keep 1.5 font sizes on top for the
+/// values and 1.6 below for the labels; horizontal charts give labels 28 % of the width and values
+/// 16 %. Each bar fills 62 % of its slot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BarChartLayer {
+    pub bars: Vec<ChartBar>,
+    #[serde(default)]
+    pub orientation: ChartOrientation,
+    /// The value of a full-length bar. Absent: the largest value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// Bar color.
+    #[serde(default = "default_accent_color")]
+    pub color: String,
+    /// Labels and values.
+    #[serde(default = "default_label_color")]
+    pub label_color: String,
+    /// Labels and values, fraction of the frame height.
+    #[serde(default = "default_chart_font_size")]
+    pub font_size: f32,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub show_values: bool,
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub prefix: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub suffix: String,
+    #[serde(default = "default_grow_ms")]
+    pub grow_ms: u64,
+    #[serde(default = "default_stagger_ms")]
+    pub stagger_ms: u64,
+    #[serde(default = "ease_out")]
+    pub ease: Easing,
+}
+
+impl BarChartLayer {
+    /// The value label of `value` (`,` thousands, `.` decimals).
+    pub fn format(&self, value: f64) -> String {
+        format_number(value, self.decimals, ",", ".", &self.prefix, &self.suffix)
+    }
+}
+
 /// What a layer draws, tagged by `kind` in the JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -506,6 +601,7 @@ pub enum LayerContent {
     Icon(IconLayer),
     LowerThird(LowerThirdLayer),
     Counter(CounterLayer),
+    BarChart(BarChartLayer),
 }
 
 impl LayerContent {
@@ -518,6 +614,7 @@ impl LayerContent {
             LayerContent::Icon(_) => "icon",
             LayerContent::LowerThird(_) => "lower_third",
             LayerContent::Counter(_) => "counter",
+            LayerContent::BarChart(_) => "bar_chart",
         }
     }
 
