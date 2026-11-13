@@ -6,7 +6,7 @@ import { KenBurnsImage } from "../components/KenBurnsImage";
 import { AssetUrlContext, resolveAsset } from "../assets";
 import { layoutScenes, msToFrames, totalFrames, type SceneLayout } from "../layout";
 import { transitionPose } from "../motion/transitions";
-import type { Music, Scene, Transition, VideoTimeline } from "../types/timeline";
+import type { Music, Scene, SubtitleCue, Transition, VideoTimeline } from "../types/timeline";
 
 // Gain at a frame: the music volume, faded in and out at the timeline's ends.
 const musicVolume = (music: Music, timeline: VideoTimeline) => {
@@ -51,8 +51,13 @@ const TransitionIn: React.FC<{ transition: Transition; children: React.ReactNode
   );
 };
 
+// Extra props the scheduler adds to a chunk render (`chunk_props` in vimmer-scheduler/src/plan.rs):
+// the chunk's start frame in the full timeline and the full-timeline cues that overlap it. Never
+// part of a user timeline; without it, `subtitles` is drawn as is.
+type ChunkSubtitles = { start_frame: number; subtitles: SubtitleCue[] };
+
 // Renders every scene of the Rust-generated timeline at its frame offset.
-export const Timeline: React.FC<VideoTimeline> = (timeline) => {
+export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null }> = (timeline) => {
   const assetUrl = useContext(AssetUrlContext);
   const layouts = layoutScenes(timeline);
   return (
@@ -90,7 +95,11 @@ export const Timeline: React.FC<VideoTimeline> = (timeline) => {
           </Fragment>
         );
       })}
-      <Subtitles cues={timeline.subtitles} />
+      {timeline.chunk ? (
+        <Subtitles cues={timeline.chunk.subtitles} frameOffset={timeline.chunk.start_frame} />
+      ) : (
+        <Subtitles cues={timeline.subtitles} />
+      )}
       {timeline.music?.source ? (
         // Looped and faded in the preview. The render mixes music in after joining, so chunks omit it.
         <Audio src={resolveAsset(timeline.music.source, assetUrl)} loop volume={musicVolume(timeline.music, timeline)} />

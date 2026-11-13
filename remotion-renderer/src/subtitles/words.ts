@@ -95,6 +95,52 @@ export const wordStates = (
   });
 };
 
+// Subtitle fade length at both edges of a cue.
+export const SUBTITLE_FADE_FRAMES = 6;
+
+// Same math as Remotion's `interpolate` with both sides clamped, kept here so this file stays
+// free of Remotion imports.
+const ramp = (frame: number, from: number, to: number, out0: number, out1: number): number => {
+  if (frame <= from) return out0;
+  if (frame >= to) return out1;
+  return out0 + ((frame - from) / (to - from)) * (out1 - out0);
+};
+
+export type SubtitleFrame = {
+  cue: SubtitleCue;
+  opacity: number;
+  // Word states, or null when the cue is drawn as one plain line (no words, or stale words).
+  states: WordState[] | null;
+};
+
+// What the subtitle layer shows at `frame`: the cue whose frame range contains it, faded in and
+// out over SUBTITLE_FADE_FRAMES at its own edges, with its word states. `frame` and `sceneStarts`
+// are in the same frame space as the cue times. A chunked render passes full-timeline cues and
+// adds the chunk's start frame to both (see `chunk_props` in vimmer-scheduler/src/plan.rs), so a
+// cue that straddles a seam fades only at its real edges, exactly as in a full render.
+export const subtitleAt = (
+  cues: readonly SubtitleCue[],
+  frame: number,
+  fps: number,
+  sceneStarts: readonly number[] = [],
+): SubtitleFrame | null => {
+  const cue = cues.find((c) => frame >= toFrame(c.start_ms, fps) && frame < toFrame(c.end_ms, fps));
+  if (!cue) {
+    return null;
+  }
+  const start = toFrame(cue.start_ms, fps);
+  const end = toFrame(cue.end_ms, fps);
+  const fadeIn = ramp(frame, start, start + SUBTITLE_FADE_FRAMES, 0, 1);
+  const fadeOut = ramp(frame, end - SUBTITLE_FADE_FRAMES, end, 1, 0);
+  const words = cue.words ?? [];
+  const hasWords = words.length > 0 && wordsMatchText(cue.text, words);
+  return {
+    cue,
+    opacity: Math.min(fadeIn, fadeOut),
+    states: hasWords ? wordStates(words, frame, fps, sceneStarts) : null,
+  };
+};
+
 // Whether a cue's words still spell its text, ignoring whitespace. A cue edited after its words
 // were timed (new text, old words) fails this and is drawn as one plain line instead of showing
 // stale words. Same rule as `words_match_text` in vimmer-scheduler/src/wordsubs.rs.

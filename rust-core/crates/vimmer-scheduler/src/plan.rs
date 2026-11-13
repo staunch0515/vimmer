@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use serde::Serialize;
 use vimmer_dsl::{SubtitleCue, VideoTimeline, WordTiming};
 
 /// Default target length of one render chunk. Chunks render in parallel, then get concatenated.
@@ -56,6 +57,10 @@ pub fn plan_chunks(timeline: &VideoTimeline, max_chunk_ms: u64) -> Vec<Chunk> {
 /// off when the chunk start is not a whole millisecond). The renderer stops highlighting a word
 /// at the next scene cut, and the chunk start is always one, so words clamped to it read as
 /// already spoken (see remotion-renderer/src/subtitles/words.ts).
+///
+/// The scheduler renders [`chunk_props`], which adds the unclipped cues; the renderer draws
+/// those instead, so a clipped cue never fades at a seam. The clipped track stays as the
+/// fallback for a renderer that ignores the extra key.
 pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline {
     let fps = timeline.fps;
     let chunk_start = chunk.start_frame;
@@ -100,6 +105,50 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
         subtitles,
         // Music is mixed once, over the joined video, so chunks never carry it.
         music: None,
+    }
+}
+
+/// Render props for one chunk: the self-contained [`chunk_timeline`] plus a [`ChunkSubtitles`]
+/// block under the `chunk` key. Only the scheduler writes this key; a user timeline never has it,
+/// and without it the renderer draws `subtitles` as before.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ChunkProps {
+    #[serde(flatten)]
+    pub timeline: VideoTimeline,
+    pub chunk: ChunkSubtitles,
+}
+
+/// The subtitle track of a chunk in full-timeline time, so the renderer draws every chunk frame
+/// exactly like the same frame of a full render. A cue that straddles a seam keeps its real start
+/// and end, so it fades in and out once, at its real edges, instead of fading out at the end of
+/// one chunk and in again at the start of the next (a blink of about twice the fade length).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChunkSubtitles {
+    /// Full-timeline frame of the chunk's frame 0; the renderer adds it to the current frame.
+    pub start_frame: u32,
+    /// Unchanged cues (full-timeline milliseconds, words included) that overlap the chunk.
+    pub subtitles: Vec<SubtitleCue>,
+}
+
+/// Builds the render props for one chunk (see [`ChunkProps`]).
+pub fn chunk_props(timeline: &VideoTimeline, chunk: &Chunk) -> ChunkProps {
+    let fps = timeline.fps;
+    let to_frame = |ms: u64| ((ms * u64::from(fps) + 500) / 1000) as u32;
+    let chunk_end = chunk.start_frame + chunk.frame_count;
+    let subtitles = timeline
+        .subtitles
+        .iter()
+        .filter(|cue| {
+            to_frame(cue.start_ms).max(chunk.start_frame) < to_frame(cue.end_ms).min(chunk_end)
+        })
+        .cloned()
+        .collect();
+    ChunkProps {
+        timeline: chunk_timeline(timeline, chunk),
+        chunk: ChunkSubtitles {
+            start_frame: chunk.start_frame,
+            subtitles,
+        },
     }
 }
 
@@ -250,6 +299,58 @@ mod tests {
             }
         );
         assert_eq!(b.total_duration_ms(), 10_000);
+    }
+
+    #[test]
+    fn chunk_props_carry_seam_cues_in_global_time() {
+        let mut t = timeline(&[10_000, 10_000]);
+        let cue = |start_ms: u64, end_ms: u64, text: &str| SubtitleCue {
+            start_ms,
+            end_ms,
+            text: text.into(),
+            words: vec![
+                WordTiming {
+                    text: "a ".into(),
+                    start_ms,
+                    end_ms: start_ms + 100,
+                },
+                WordTiming {
+                    text: text.into(),
+                    start_ms: end_ms - 100,
+                    end_ms,
+                },
+            ],
+        };
+        let first = cue(1_000, 2_000, "first");
+        let straddles = cue(9_000, 11_000, "straddles");
+        let second = cue(15_000, 16_000, "second");
+        // Ends exactly on the seam: belongs to the first chunk only.
+        let edge = cue(9_500, 10_000, "edge");
+        t.subtitles = vec![
+            first.clone(),
+            straddles.clone(),
+            edge.clone(),
+            second.clone(),
+        ];
+        let chunks = plan_chunks(&t, 10_000);
+        let a = chunk_props(&t, &chunks[0]);
+        let b = chunk_props(&t, &chunks[1]);
+
+        // The straddling cue keeps its real edges in both chunks, so neither chunk fades it at
+        // the seam; the renderer offsets its frame by start_frame.
+        assert_eq!(a.chunk.start_frame, 0);
+        assert_eq!(a.chunk.subtitles, vec![first, straddles.clone(), edge]);
+        assert_eq!(b.chunk.start_frame, 300);
+        assert_eq!(b.chunk.subtitles, vec![straddles, second]);
+        // The self-contained timeline is unchanged.
+        assert_eq!(b.timeline, chunk_timeline(&t, &chunks[1]));
+
+        let json = serde_json::to_value(&b).unwrap();
+        assert_eq!(json["fps"], 30);
+        assert_eq!(json["subtitles"][0]["start_ms"], 0);
+        assert_eq!(json["chunk"]["start_frame"], 300);
+        assert_eq!(json["chunk"]["subtitles"][0]["start_ms"], 9_000);
+        assert_eq!(json["chunk"]["subtitles"][0]["words"][1]["end_ms"], 11_000);
     }
 
     #[test]
