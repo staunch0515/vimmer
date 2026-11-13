@@ -16,7 +16,7 @@
       "motion": "zoom_out",
       "audio": null,
       "narration": {
-        "voice": "Kyoko"
+        "voice": null
       },
       "transition_in": null,
       "keyframes": []
@@ -32,7 +32,7 @@
       "motion": "pan_left",
       "audio": null,
       "narration": {
-        "voice": "Kyoko"
+        "voice": null
       },
       "transition_in": {
         "kind": "fade",
@@ -51,7 +51,7 @@
       "motion": "static",
       "audio": null,
       "narration": {
-        "voice": "Kyoko"
+        "voice": null
       },
       "transition_in": {
         "kind": "slide_right",
@@ -89,7 +89,7 @@
       "motion": "zoom_in",
       "audio": null,
       "narration": {
-        "voice": "Kyoko"
+        "voice": null
       },
       "transition_in": {
         "kind": "fade",

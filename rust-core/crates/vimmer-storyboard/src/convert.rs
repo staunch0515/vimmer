@@ -199,6 +199,13 @@ pub fn convert(sb: &Storyboard) -> Result<Conversion, StoryboardError> {
     })
 }
 
+/// Hiragana or katakana (the long mark ー included), which is how speech engines tell
+/// Japanese text from Chinese.
+fn has_kana(text: &str) -> bool {
+    text.chars()
+        .any(|c| matches!(c, '\u{3041}'..='\u{3096}' | '\u{30A1}'..='\u{30FA}' | 'ー'))
+}
+
 fn convert_scene(
     sb: &Storyboard,
     spec: &SceneSpec,
@@ -329,10 +336,11 @@ fn convert_scene(
     }
 
     if sb.narration {
-        let voice = sb
-            .voice
-            .clone()
-            .or_else(|| (sb.language == crate::Language::Ja).then(|| "Kyoko".to_owned()));
+        // No voice by default: each speech engine picks one from the text (kana → Japanese).
+        // Only Japanese text without kana, which would be read as Chinese, gets `Kyoko`.
+        let voice = sb.voice.clone().or_else(|| {
+            (sb.language == crate::Language::Ja && !has_kana(text)).then(|| "Kyoko".to_owned())
+        });
         scene["narration"] = json!({ "voice": voice });
     }
 

@@ -141,7 +141,7 @@ cargo run -p vimmer-storyboard -- crates/vimmer-storyboard/examples/en-coffee.st
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `title` | yes | Non-empty. |
-| `language` | yes | `zh`, `en` or `ja`. Chooses the duration estimate and, for `ja`, the voice `Kyoko`. |
+| `language` | yes | `zh`, `en` or `ja`. Chooses the duration estimate. No voice is written, so `say` and Kokoro each pick their default for the language of the text; only `ja` text without kana (which would read as Chinese) gets the voice `Kyoko`. |
 | `orientation` | no (`landscape`) | `landscape` = 1920×1080, `portrait` = 1080×1920. |
 | `narration` | no (`true`) | When true, each scene's `text` is read aloud at render time. |
 | `voice` | no | Overrides the speech voice (macOS `say`). Default: chosen by language. |

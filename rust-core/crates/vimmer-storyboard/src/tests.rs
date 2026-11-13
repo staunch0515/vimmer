@@ -173,9 +173,32 @@ fn narration_and_voice() {
     let mut quiet = base(r#"{"text":"a"}"#);
     quiet.narration = false;
     assert!(convert(&quiet).unwrap().timeline.scenes[0].narration.is_none());
+    // Japanese with kana: no voice, so say and Kokoro both pick their Japanese default.
     let (_, ja, _) = EXAMPLES[2];
-    let n = convert(&sb(ja)).unwrap().timeline.scenes[0].narration.clone().unwrap();
-    assert_eq!(n.voice.as_deref(), Some("Kyoko"));
+    let scenes = convert(&sb(ja)).unwrap().timeline.scenes;
+    assert!(scenes
+        .iter()
+        .all(|s| s.narration.as_ref().unwrap().voice.is_none()));
+}
+
+#[test]
+fn kanji_only_japanese_keeps_a_japanese_say_voice() {
+    let mut s = base(r#"{"text":"東京都庁舎。"}"#);
+    s.language = crate::Language::Ja;
+    let voice = |s: &crate::Storyboard| {
+        convert(s).unwrap().timeline.scenes[0]
+            .narration
+            .clone()
+            .unwrap()
+            .voice
+    };
+    assert_eq!(voice(&s).as_deref(), Some("Kyoko"));
+    // An explicit voice always wins.
+    s.voice = Some("jf_alpha".into());
+    assert_eq!(voice(&s).as_deref(), Some("jf_alpha"));
+    // Chinese never gets a default voice.
+    let zh = base(r#"{"text":"东京都厅舍。"}"#);
+    assert_eq!(voice(&zh), None);
 }
 
 #[test]
