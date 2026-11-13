@@ -92,12 +92,13 @@ npm run render:test      # writes out/test-scene.mp4
 ## Rust crates
 
 - `vimmer-dsl`: schema, validation, frame math.
-- `vimmer-media`: image normalization (blurred-background letterboxing) and audio
-  duration probing via `ffmpeg`.
+- `vimmer-media`: image normalization (blurred-background letterboxing), audio
+  duration probing via `ffmpeg`, narration (`say`, or Kokoro through
+  `scripts/kokoro_tts.py`) and speech recognition.
 - `vimmer-scheduler`: chunk planner (whole scenes, ≤ 30 s per chunk) and a tokio
   pipeline: preprocess images → check audio → render chunks through Remotion with
   bounded concurrency → concatenate with ffmpeg `-c copy`.
-- `vimmer-cli`: `vimmer <timeline.json> -o out.mp4`.
+- `vimmer-cli`: `vimmer <timeline.json> -o out.mp4` (`--tts kokoro` for Kokoro narration).
 - `vimmer-storyboard`: offline converter from a storyboard JSON (the format an LLM writes, see
   below) to a validated timeline JSON. It calls no model or service. Bin: `vimmer-storyboard`.
 
@@ -244,6 +245,82 @@ for Chinese, Kyoko for Japanese; or pick a voice) and converted to WAV. The scen
 plus 300 ms. Files are cached in `remotion-renderer/public/generated/tts/`, keyed by voice and
 text. A scene that already has its own audio file keeps it. The preview stays silent until
 you render. Local narration needs macOS.
+
+### Kokoro narration (optional, local)
+
+[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) is a small neural TTS that sounds much
+more natural than `say`. Vimmer runs its ONNX build ([kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx))
+locally through a Python helper; nothing is sent anywhere and nothing costs money. `say` stays
+the default.
+
+**Install** (once; about 730 MB of models, Python 3.10–3.12; works on Intel Macs, where the
+PyTorch build of Kokoro has no wheels):
+
+```bash
+sh rust-core/crates/vimmer-media/scripts/install_kokoro.sh
+```
+
+It creates the venv `~/.local/share/vimmer/kokoro-venv` from
+`rust-core/crates/vimmer-media/scripts/requirements.txt` (kokoro-onnx, onnxruntime, misaki[zh,ja],
+unidic-lite, soundfile) and downloads into `~/.local/share/vimmer/models/kokoro/`:
+`kokoro-v1.0.onnx` + `voices-v1.0.bin` (release `model-files-v1.0`), `kokoro-v1.1-zh.onnx` +
+`voices-v1.1-zh.bin` (release `model-files-v1.1`) and `config-v1.1-zh.json` (from
+`hexgrad/Kokoro-82M-v1.1-zh`).
+
+**Switches** (a flag wins over the variable):
+
+| What | Flag | Variable | Default |
+|---|---|---|---|
+| Engine | `--tts say\|kokoro` | `VIMMER_TTS` | `say` |
+| Interpreter | `--kokoro-python` | `VIMMER_KOKORO_PYTHON` | `~/.local/share/vimmer/kokoro-venv/bin/python` |
+| Models | `--kokoro-models` | `VIMMER_KOKORO_MODELS` | `~/.local/share/vimmer/models/kokoro` |
+
+```bash
+cd rust-core && cargo run -p vimmer-cli -- ../fixtures/word-subtitles-demo.json \
+  -o /tmp/kokoro.mp4 --remotion-dir ../remotion-renderer --tts kokoro
+```
+
+The desktop app has no switch; it reads the same variables (`VIMMER_TTS=kokoro`), as long as
+they reach the app's environment (e.g. `launchctl setenv VIMMER_TTS kokoro`, then restart it).
+
+**Languages and voices.** The language comes from the text, by the same rule as recognition:
+any kana → Japanese, other CJK ideographs → Chinese, anything else → English.
+
+| Language | Model | G2P | Default voice | Others |
+|---|---|---|---|---|
+| zh | v1.1-zh | misaki `ZHG2P(version="1.1")` | `zf_001` | `zf_002`…, `zm_009`… (100 voices) |
+| ja | v1.0 | misaki `JAG2P` | `jf_alpha` | `jf_gongitsune`, `jf_nezumi`, `jf_tebukuro`, `jm_kumo` |
+| en | v1.0 | espeak-ng (bundled) | `af_heart` | `af_bella`, `am_michael`, `bf_emma`, `bm_george`, … |
+
+Chinese uses the v1.1-zh model on purpose: v1.0's Chinese G2P runs syllables together
+(「已有」 comes out as 「你有」). A scene's `voice` is used when it is a Kokoro voice for that
+language (`zf_…`/`zm_…` for Chinese, `j…` for Japanese, `a…`/`b…` for English). A `say` voice
+such as `Tingting`, or a Kokoro voice of another language, is ignored with a warning and the
+default is used, so timelines written for `say` render with Kokoro unchanged. In `say` mode a
+Kokoro voice name is likewise replaced by the `say` default with a warning.
+
+**English inside Chinese** (「我们用 Python 制作视频」) is read in English: the English words go
+through misaki's espeak fallback, which uses the espeak-ng library kokoro-onnx already ships, so
+no spaCy model or other download is needed. It is an espeak pronunciation, plainer than the
+English model's own G2P. Latin words inside Japanese text are left to misaki's Japanese G2P.
+
+**Cache.** Kokoro files are named `<scene>-kokoro-<hash>.wav` in `public/generated/tts/`; the
+hash covers the engine, the model files (name and size), voice, language, speed and text.
+`say` files keep their old `<scene>-<hash>.wav` names and keys, so switching engines never
+mixes the two and old caches still hit.
+
+**Speed.** One helper run per render synthesizes every clip that is not cached, so the models
+load once. On a 4-core Intel Mac: about 25 s of start-up (imports, jieba, models), then roughly
+real time (a 5 s clip takes about 5 s). The run is killed after 180 s plus 1 s per character,
+and when the render is cancelled.
+
+**Fallback.** When Kokoro cannot run (interpreter or model file missing, the helper fails or
+times out), the render prints one warning and narrates the whole video with `say`, so voices
+never mix within a video. A cancel stops the helper and cancels the render.
+
+**Limits.** Speed is fixed at 1.0 (no DSL field). Korean and other languages are read as
+English. Word-by-word subtitles work unchanged with Kokoro audio (recognition and alignment
+do not care which engine spoke).
 
 ## Word-by-word subtitles (local speech recognition)
 
