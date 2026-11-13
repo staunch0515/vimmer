@@ -1,0 +1,102 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "scenes": [
+    {
+      "id": "one",
+      "duration_ms": 3000,
+      "text": "Scene one",
+      "highlights": [],
+      "image": "assets/sample.png",
+      "motion": "static",
+      "audio": null
+    },
+    {
+      "id": "two",
+      "duration_ms": 3000,
+      "text": "Scene two",
+      "highlights": [],
+      "image": "assets/sample.png",
+      "motion": "static",
+      "audio": null
+    },
+    {
+      "id": "three",
+      "duration_ms": 3000,
+      "text": "Scene three",
+      "highlights": [],
+      "image": "assets/sample.png",
+      "motion": "static",
+      "audio": null
+    }
+  ],
+  "subtitles": [
+    {
+      "start_ms": 1000,
+      "end_ms": 5000,
+      "text": "One two, then a pause.",
+      "words": [
+        {
+          "text": "One ",
+          "start_ms": 1000,
+          "end_ms": 1400
+        },
+        {
+          "text": "two, ",
+          "start_ms": 1400,
+          "end_ms": 2500
+        },
+        {
+          "text": "then ",
+          "start_ms": 3600,
+          "end_ms": 4000
+        },
+        {
+          "text": "a ",
+          "start_ms": 4000,
+          "end_ms": 4200
+        },
+        {
+          "text": "pause.",
+          "start_ms": 4200,
+          "end_ms": 4800
+        }
+      ]
+    },
+    {
+      "start_ms": 5200,
+      "end_ms": 8600,
+      "text": "Ends right before the cut.",
+      "words": [
+        {
+          "text": "Ends ",
+          "start_ms": 5200,
+          "end_ms": 5500
+        },
+        {
+          "text": "right ",
+          "start_ms": 5500,
+          "end_ms": 5700
+        },
+        {
+          "text": "before ",
+          "start_ms": 5700,
+          "end_ms": 5900
+        },
+        {
+          "text": "the ",
+          "start_ms": 6600,
+          "end_ms": 6900
+        },
+        {
+          "text": "cut.",
+          "start_ms": 6900,
+          "end_ms": 7600
+        }
+      ]
+    }
+  ]
+}

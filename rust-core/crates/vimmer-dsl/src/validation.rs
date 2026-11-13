@@ -415,6 +415,21 @@ mod tests {
     }
 
     #[test]
+    fn words_that_do_not_spell_the_text_are_still_valid() {
+        // An edited cue keeps its old words until they are timed again; the renderer draws it as
+        // a plain line. Validation must not reject such a timeline.
+        let mut t = timeline(vec![scene("a", 2000)]);
+        let mut cue = SubtitleCue::new(0, 1000, "new text");
+        cue.words = vec![WordTiming {
+            text: "old ".into(),
+            start_ms: 0,
+            end_ms: 500,
+        }];
+        t.subtitles = vec![cue];
+        assert_eq!(validate(&t), Ok(()));
+    }
+
+    #[test]
     fn words_must_sit_inside_their_cue_in_order() {
         let mut t = timeline(vec![scene("a", 5_000)]);
         let mut cue = SubtitleCue::new(1_000, 3_000, "a b c d e");

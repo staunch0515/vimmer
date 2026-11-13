@@ -1,7 +1,7 @@
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { msToFrames } from "../layout";
-import { cjkLang, wordStates, type WordState } from "../subtitles/words";
-import type { SubtitleCue, WordTiming } from "../types/timeline";
+import { cjkLang, sceneCutFrames, wordStates, wordsMatchText, type WordState } from "../subtitles/words";
+import type { SubtitleCue, VideoTimeline, WordTiming } from "../types/timeline";
 
 const FADE_FRAMES = 6;
 
@@ -14,8 +14,13 @@ const WORD_STYLE: Record<WordState, React.CSSProperties> = {
 
 // Plain inline spans, so spaces between English words and line breaking between CJK
 // characters work exactly as they do for unsplit text.
-const Words: React.FC<{ words: WordTiming[]; frame: number; fps: number }> = ({ words, frame, fps }) => {
-  const states = wordStates(words, frame, fps);
+const Words: React.FC<{ words: WordTiming[]; frame: number; fps: number; sceneStarts: number[] }> = ({
+  words,
+  frame,
+  fps,
+  sceneStarts,
+}) => {
+  const states = wordStates(words, frame, fps, sceneStarts);
   return (
     <>
       {words.map((word, i) => (
@@ -29,15 +34,20 @@ const Words: React.FC<{ words: WordTiming[]; frame: number; fps: number }> = ({ 
 
 type Props = {
   cues: SubtitleCue[];
+  // Frames where a word's highlight stops (sceneCutFrames), so a chunked render shows the same
+  // word states as a full one. Defaults to the scenes of the composition's timeline props.
+  sceneStarts?: number[];
 };
 
 // Shows the cue whose frame range contains the current frame. Frame ranges come from the
 // same rounding as the Rust side, so a cue starts on the exact frame the DSL specifies.
-// A cue with `words` is drawn word by word with the spoken word highlighted; without words it
-// is drawn as one line, as before.
-export const Subtitles: React.FC<Props> = ({ cues }) => {
+// A cue with `words` is drawn word by word with the spoken word highlighted; without words, or
+// when the words no longer spell the cue text (edited after timing), it is drawn as one line.
+export const Subtitles: React.FC<Props> = ({ cues, sceneStarts }) => {
   const frame = useCurrentFrame();
-  const { fps, width, height } = useVideoConfig();
+  const { fps, width, height, props } = useVideoConfig();
+  const scenes = (props as Partial<VideoTimeline>).scenes;
+  const cuts = sceneStarts ?? (Array.isArray(scenes) ? sceneCutFrames(scenes, fps) : []);
 
   const active = cues.find(
     (c) => frame >= msToFrames(c.start_ms, fps) && frame < msToFrames(c.end_ms, fps),
@@ -57,7 +67,8 @@ export const Subtitles: React.FC<Props> = ({ cues }) => {
     extrapolateRight: "clamp",
   });
 
-  const hasWords = (active.words?.length ?? 0) > 0;
+  const words = active.words ?? [];
+  const hasWords = words.length > 0 && wordsMatchText(active.text, words);
 
   // Scale with the shorter side so the size reads the same in landscape and portrait.
   const fontSize = Math.round(Math.min(width, height) * 0.05);
@@ -85,7 +96,7 @@ export const Subtitles: React.FC<Props> = ({ cues }) => {
           overflowWrap: "break-word",
         }}
       >
-        {hasWords ? <Words words={active.words ?? []} frame={frame} fps={fps} /> : active.text}
+        {hasWords ? <Words words={words} frame={frame} fps={fps} sceneStarts={cuts} /> : active.text}
       </div>
     </AbsoluteFill>
   );

@@ -392,8 +392,20 @@ without words render exactly as before:
 ```
 
 The renderer shows the spoken word in yellow, words already said in white and words to come
-dimmed. Chunked renders clip words with their cue: words outside a chunk become zero-length at
-its edge, so a line split across two chunks reads the same in both.
+dimmed. After a word ends it stays yellow for 6 more frames (so short pauses do not flicker),
+but never past the start of the next scene that does not open with a transition. Chunked
+renders clip words with their cue: words outside a chunk become zero-length at its edge, so a
+line split across two chunks reads the same in both, and since chunks only split at such scene
+starts, every word has the same state on every frame as in a full render.
+
+- **Edited cues.** `words` must spell the cue's `text` (whitespace aside). When they do not,
+  e.g. the text was edited after timing, the renderer shows the cue as one plain line and the
+  render times it again from the narration (with a warning); such a JSON is still valid. The
+  Studio drops a cue's `words` as soon as its text, start or end is edited.
+- **Which narration times a cue.** A cue that overlaps several narrated scenes (an imported
+  SRT line that starts just before a scene ends, say) is timed from the scene whose script
+  contains most of its text. A cue whose words would mostly be zero-length (most of its text is
+  not in that narration) stays plain instead of showing a line that never lights up.
 
 ## Studio (editor)
 

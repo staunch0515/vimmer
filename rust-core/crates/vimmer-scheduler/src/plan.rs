@@ -49,6 +49,13 @@ pub fn plan_chunks(timeline: &VideoTimeline, max_chunk_ms: u64) -> Vec<Chunk> {
 /// boundary appear in both chunks, each for its own part. Their words are rebased the same way
 /// and clamped into the clipped cue, so every word stays (the line reads the same in both
 /// chunks); words outside the chunk become zero-length at its edge, already said or not yet.
+///
+/// Words are rebased by frame, not by millisecond: each word time lands on the chunk frame that
+/// is exactly its full-timeline frame minus the chunk start, so the renderer computes the same
+/// word states in a chunk as in a full render (millisecond rebasing can round a word one frame
+/// off when the chunk start is not a whole millisecond). The renderer stops highlighting a word
+/// at the next scene cut, and the chunk start is always one, so words clamped to it read as
+/// already spoken (see remotion-renderer/src/subtitles/words.ts).
 pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline {
     let fps = timeline.fps;
     let chunk_start = chunk.start_frame;
@@ -67,8 +74,7 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
             }
             let start_ms = to_ms(start - chunk_start);
             let end_ms = to_ms(end - chunk_start);
-            let base_ms = to_ms(chunk_start);
-            let rebase = |ms: u64| ms.saturating_sub(base_ms).clamp(start_ms, end_ms);
+            let rebase = |ms: u64| to_ms(to_frame(ms).clamp(start, end) - chunk_start);
             let words = cue
                 .words
                 .iter()
@@ -285,6 +291,61 @@ mod tests {
         assert_eq!(b.subtitles[0].words.len(), 4, "the whole line is kept");
         assert_eq!(validate(&a), Ok(()));
         assert_eq!(validate(&b), Ok(()));
+    }
+
+    #[test]
+    fn chunk_timeline_rebases_words_by_frame() {
+        let word = |text: &str, start_ms: u64, end_ms: u64| WordTiming {
+            text: text.into(),
+            start_ms,
+            end_ms,
+        };
+        // The seam example of remotion-renderer/test/word-subtitles.test.ts: "two " ends 15
+        // frames before the seam at frame 90 and clamps to zero length at the second chunk's
+        // start, where the renderer shows it as spoken (the chunk start is a scene cut).
+        let mut t = timeline(&[3_000, 3_000]);
+        let mut cue = SubtitleCue::new(1_000, 5_000, "one two three four");
+        cue.words = vec![
+            word("one ", 1_000, 1_400),
+            word("two ", 1_400, 2_500),
+            word("three ", 3_600, 4_200),
+            word("four", 4_200, 4_800),
+        ];
+        t.subtitles = vec![cue];
+        let chunks = plan_chunks(&t, 3_000);
+        let b = chunk_timeline(&t, &chunks[1]);
+        let spans: Vec<(u64, u64)> = b.subtitles[0]
+            .words
+            .iter()
+            .map(|w| (w.start_ms, w.end_ms))
+            .collect();
+        assert_eq!(spans, vec![(0, 0), (0, 0), (600, 1_200), (1_200, 1_800)]);
+
+        // A chunk start that is not a whole millisecond: 91 frames = 3033.3 ms. Every word must
+        // land on its full-timeline frame minus 91, which millisecond rebasing misses for 3083 ms
+        // (frame 92 -> chunk frame 1, but 3083 - 3033 = 50 ms rounds to frame 2).
+        let mut t = timeline(&[3_033, 3_000]);
+        let frame = |ms: u64| (ms * 30 + 500) / 1000;
+        let mut cue = SubtitleCue::new(2_000, 5_000, "a b c d");
+        cue.words = vec![
+            word("a ", 2_000, 3_049),
+            word("b ", 3_050, 3_083),
+            word("c ", 3_084, 3_517),
+            word("d", 3_517, 4_999),
+        ];
+        t.subtitles = vec![cue.clone()];
+        let chunks = plan_chunks(&t, 3_033);
+        assert_eq!(chunks[1].start_frame, 91);
+        let b = chunk_timeline(&t, &chunks[1]);
+        for (full, chunked) in cue.words.iter().zip(&b.subtitles[0].words) {
+            for (f, c) in [
+                (full.start_ms, chunked.start_ms),
+                (full.end_ms, chunked.end_ms),
+            ] {
+                assert_eq!(frame(c), frame(f).max(91) - 91, "{} at {f} ms", full.text);
+            }
+        }
+        assert_eq!(vimmer_dsl::validate(&b), Ok(()));
     }
 
     #[test]
