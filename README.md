@@ -56,7 +56,13 @@ that animates the image layer. Defaults: `scale` 1, `x` and `y` 0 (percent of th
 - A non-empty list replaces `motion`.
 - Before the first keyframe, its values hold; after the last, its values hold.
 - Between two keyframes, values interpolate with the earlier keyframe's `ease`:
-  `linear`, `ease_in` (t²), `ease_out` (1−(1−t)²) or `ease_in_out` (quadratic).
+  `linear`, `ease_in` (t²), `ease_out` (1−(1−t)²) or `ease_in_out` (quadratic), or a springy
+  one: `back_out` (overshoots to about 1.1, then settles), `elastic_out` (springs to about 1.37
+  and rings out) or `bounce_out` (bounces up to 1, never past it). Every curve starts at 0 and
+  ends at 1; a springy value between keyframes can go past the next keyframe's value (opacity
+  is clamped). The same easings work for layer keyframes, layer `enter`/`exit` (`ease`) and the
+  counter, bar chart and progress ring. Rust `Easing::apply` and TS `applyEasing` are the same
+  curves, unit-tested in both.
 - `opacity` applies to the whole image layer, so fading it to 0 shows the background.
 
 `fixtures/motion-demo.json` shows both: three scenes, one slide transition, and
@@ -66,7 +72,8 @@ keyframes. Its scene 2 is a transition, and scenes 1 and 2 share a chunk with
 ### Layers (`layers`)
 
 Optional per scene: an ordered list of graphics drawn over (or under) the scene's text, each
-with its own box, timing and animation. Kinds: `image`, `text`, `shape` and `icon`. A scene
+with its own box, timing and animation. Kinds: `image`, `text`, `shape`, `icon`,
+`lower_third`, `counter`, `bar_chart` and `progress_ring`. A scene
 without `layers` renders exactly as before (the key is not even written back out).
 
 ```json
@@ -82,17 +89,17 @@ Common fields (every kind):
 | field | default | meaning |
 |---|---|---|
 | `id` | required | unique within the scene; letters, digits, `-`, `_` |
-| `kind` | required | `image`, `text`, `shape`, `icon` |
+| `kind` | required | `image`, `text`, `shape`, `icon`, `lower_third`, `counter`, `bar_chart`, `progress_ring` |
 | `x`, `y` | required | position as fractions of the frame width / height (origin top-left); -1..2 |
 | `width` | required | fraction of the frame width, above 0, at most 4 |
-| `height` | required except text | fraction of the frame height; a text layer without it is as tall as its text, with it the text is centered vertically in the box |
+| `height` | required except text, lower_third, counter | fraction of the frame height; a text layer without it is as tall as its text, with it the text is centered vertically in the box |
 | `anchor` | `top_left` | which point of the box `x`/`y` place: `top_left` or `center` |
 | `z` | `0` | stacking (below) |
 | `start_ms`, `end_ms` | whole scene | from the scene start; `start_ms < end_ms <= duration_ms` |
 | `opacity` | `1` | 0..1 |
 | `rotation` | `0` | degrees clockwise about the box center, within ±360 |
 | `keyframes` | none | the scene keyframe format, `at_ms` from the scene start: `x`/`y` offset the box in percent of the frame, `scale` grows it about its center, `opacity` multiplies, `rotation` adds |
-| `enter`, `exit` | none | `{ "kind", "duration_ms" = 400 }`, kind `fade`, `slide_up`, `slide_down`, `slide_left`, `slide_right` (fade while moving 6% of the frame's short side) or `pop` (grows from half size with an overshoot; exit shrinks). `enter` starts on the layer's first frame, `exit` ends on its last; together they must fit in the layer's time |
+| `enter`, `exit` | none | `{ "kind", "duration_ms" = 400, "ease"? }`, kind `fade`, `slide_up`, `slide_down`, `slide_left`, `slide_right` (fade while moving 6% of the frame's short side) or `pop` (grows from half size with an overshoot; exit shrinks). `enter` starts on the layer's first frame, `exit` ends on its last; together they must fit in the layer's time. `ease` (any keyframe easing) replaces the kind's own curve, e.g. `elastic_out` for a springy pop |
 
 Kind fields (lengths that are not positions are fractions of the **frame height**):
 
@@ -102,8 +109,9 @@ Kind fields (lengths that are not positions are fractions of the **frame height*
 - `text`: `text` (≤ 400 characters), `font_size` (0.06), `color` (`#fafafa`), `weight`
   (100..900, 600), `align` (`left`/`center`/`right`, center), `line_height` (1.2),
   `background` `{ color, padding = 0.4, radius = 0.3 }` (padding and radius in font sizes),
-  `highlights` (accent color, as in the scene text), `reveal` `none` or `words` (word by word,
-  like the scene text). Same font as the scene text.
+  `highlights` (accent color, as in the scene text), `reveal` `none`, `words` (word by word,
+  like the scene text) or `typewriter`, `typing_cps` (20), `cursor` (false). Same font as the
+  scene text.
 - `shape`: `shape` `rect` (default) / `ellipse` / `line` (from the box's top-left to
   bottom-right corner; `height` 0 is horizontal), `fill`, `stroke` (a shape needs one, a line a
   stroke), `stroke_width` (0..0.1; 0 with a stroke draws 0.004), `corner_radius` (rect).
@@ -111,6 +119,60 @@ Kind fields (lengths that are not positions are fractions of the **frame height*
   silhouette in `color` (an SVG flood filter keeps only its alpha), so its own colors do not
   matter. Keep a `viewBox` so it scales to the box. Bundled, CC0:
   `assets/icons/{star,check-circle,arrow-right}.svg`.
+
+- `lower_third`: `title` (≤ 120 characters), `subtitle` (optional, ≤ 160), `font_size` (title,
+  0.045; the subtitle is 0.62 of it), `color` (`#fafafa`), `subtitle_color` (`#d4d4d8`),
+  `accent_color` (`#6366f1`, the bar on the left), `background_color` (`#09090bd9`; `null` for
+  no box). The box hugs its text up to `width`; without `height` it is as tall as its text.
+  It animates itself: the accent bar grows, the box wipes in from the left and the text slides
+  in (700 ms), and the box wipes back out (450 ms), squeezed into 40 % / 30 % of a short layer.
+  The layer's own `enter` / `exit` replaces the built-in one on that side. A good default box is
+  the lower-left safe area: 16:9 `x` 0.06, `y` 0.66, `width` 0.5; 9:16 `x` 0.06, `y` 0.62,
+  `width` 0.8, `font_size` 0.03 (what the Studio adds).
+- `counter`: `from` (0), `to`, `duration_ms` (default: the layer's time before its exit),
+  `ease` (`ease_out`), `decimals` (0..6, 0), `prefix`, `suffix` (≤ 16 characters each),
+  `separator` (`","` between groups of three digits; `""` for none), `decimal_mark` (`"."`),
+  `font_size` (0.12), `color`, `weight` (700), `align`. One line in tabular digits; without
+  `height` the box is one line tall. It shows `to` from the last counting frame on. Numbers are
+  formatted by hand (`toFixed` / `format!` plus our own grouping), never with `toLocaleString`
+  or `Intl`, so the output never depends on the machine's locale. Negative values put `-`
+  before the prefix (`-$5`) and never show `-0`.
+- `bar_chart`: `bars` (1..12 of `{ label (≤ 40 characters), value (≥ 0), color? }`),
+  `orientation` `vertical` (default; labels under the bars, values above them) or `horizontal`
+  (labels in a column on the left, values after the bars), `max` (default the largest value;
+  must be at least every value), `color` (`#6366f1`), `label_color` (`#e4e4e7`), `font_size`
+  (0.032, labels and values), `show_values` (true), `decimals`, `prefix`, `suffix` (value
+  labels; `,` thousands), `grow_ms` (800), `stagger_ms` (120), `ease` (`ease_out`). Needs
+  `height`. Bar *i* starts `stagger_ms × i` after the layer and grows for `grow_ms`; its value
+  label counts up with it (it does not overshoot with a springy ease; the bar does). Layout:
+  each bar fills 62 % of its slot; vertical charts keep 1.5 font sizes on top for the values and
+  1.6 below for the labels; horizontal charts give labels 28 % of the width and values 16 %.
+  Drawn with plain divs (no chart library).
+- `progress_ring`: `value` (0..1, where the fill ends), `from` (0..1, 0), `duration_ms`
+  (default: the layer's time before its exit), `ease` (`ease_out`), `color` (`#6366f1`),
+  `track_color` (`#ffffff26`), `thickness` (fraction of the ring's diameter, 0.02..0.5, 0.12),
+  `show_label` (true), `label` (custom center text ≤ 24 characters; absent: the animated
+  percentage), `decimals` (of the percentage), `label_color` (`#fafafa`). Needs `height`; the
+  ring is the largest circle in the box, centered, filling clockwise from 12 o'clock (SVG
+  dasharray, clamped to one full ring). Keep the box square in pixels (16:9: `height` =
+  `width` × 1.78).
+
+**Typewriter.** `reveal: "typewriter"` types the text from the layer's first frame at
+`typing_cps` units per second: on layer frame *f*, ⌊*f* × cps / fps⌋ units are shown. A unit is a
+code point plus everything attached to it (combining marks, variation selectors, emoji skin
+tones, ZWJ sequences, flag pairs), so a CJK character, an emoji like 👋🏽 or 👨‍👩‍👧, or an accented
+letter appears whole; this approximates grapheme clusters without Unicode tables, with the same
+rule in Rust (`typing_units`) and TS (`typingUnits`). The whole text is laid out from the first
+frame and the untyped rest is only hidden, so lines never re-wrap while typing. `cursor: true`
+adds a bar after the typed text: solid while typing, blinking every 530 ms afterwards; it takes
+no width. Pick the speed by length: 20 cps suits Latin text, 6-10 suits CJK. The scene's own
+`text` keeps its word reveal (a typewriter there would need a new `Scene` field, which breaks
+every `Scene` struct literal); use a text layer instead.
+
+**Data animation timing.** Counters, charts and rings count from the layer's first frame, so to
+start one later set the layer's `start_ms`. Every value is computed from the layer-relative frame
+(`remotion-renderer/src/motion/data.ts`, pure and unit-tested), so chunked renders match full
+ones.
 
 Colors are `#rgb`, `#rrggbb` or `#rrggbbaa`. Validation also rejects duplicate ids, more than
 32 layers per scene, more than 24 keyframes per layer, and asset paths that are absolute,
@@ -129,7 +191,11 @@ give each scene a layer with the same box and matching keyframes, as the progres
 `fixtures/layers-demo.json` does (it runs across the chunk seam of `--chunk-ms 3000`).
 
 `fixtures/layers-demo.json` (16:9, 12 s, 3 scenes) uses every kind, negative and positive `z`,
-enter and exit animations, keyframes and a transition. In the Studio, the Scene tab lists the
+enter and exit animations, keyframes and a transition. `fixtures/anim-layers-demo.json` (16:9,
+15 s, 4 scenes) shows the typewriter (Latin and CJK with emoji) with a lower third, two counters
+and a progress ring, a vertical and a horizontal bar chart, and the three springy easings on
+keyframes plus an elastic `pop`; `fixtures/anim-layers-demo-9x16.json` is the same at 9:16.
+In the Studio, the Scene tab lists the
 selected scene's layers (top first, with the scene text's place marked) and adds, edits,
 reorders and deletes them; the selected layer is outlined on the canvas and can be dragged.
 
@@ -865,17 +931,22 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | code | severity | rule |
 |---|---|---|
 | `dsl.invalid` | error | the DSL validation fails (cue and word-timing problems are reported by the codes below instead) |
-| `text.overflow` | error / warning | a text layer with a `height` needs more lines than its box holds (same width model, its own font size), or scene text needs more lines than fit between the top padding and the 260 px bottom inset: 6 lines at 1920x1080, 14 at 1080x1920 (92 px font, 1.2 line height, 73.9% of the width per line). Error when it still overflows with every width 12% narrower |
+| `text.overflow` | error / warning | a text layer or lower third with a `height` needs more lines than its box holds (same width model, its own font size), or scene text needs more lines than fit between the top padding and the 260 px bottom inset: 6 lines at 1920x1080, 14 at 1080x1920 (92 px font, 1.2 line height, 73.9% of the width per line). Error when it still overflows with every width 12% narrower |
 | `text.reading_speed` | warning | scene text without narration, or a text layer over its shown time, faster than the reading limit (below) |
 | `subtitle.too_long` | error / warning | a cue needs more than 2 lines in the band (font 5% of the short side, text width 86% of the frame minus padding); error at 4+ lines even with 12% narrower widths. The fix splits the cue in two |
 | `subtitle.reading_speed` | warning | a cue without word timing above en 20, zh 9, ja 4 characters per second (Netflix limits; en counts spaces, zh/ja skip punctuation). Cues with word timing or over a narrated scene follow the speech and are not checked |
-| `safe_area.text`, `safe_area.subtitle` | warning / error | text, a text layer's box or a cue reaches outside the title-safe area (inner 90%, 5% margins, for 16:9 and 9:16) |
+| `safe_area.text`, `safe_area.subtitle` | warning / error | text, a text layer's, lower third's or bar chart's box or a cue reaches outside the title-safe area (inner 90%, 5% margins, for 16:9 and 9:16) |
 | `safe_area.subtitle_band` | info | at 1080x1920 the renderer puts the subtitle band 43 px from the bottom, inside the 96 px margin (a renderer change, not a timeline field) |
 | `motion.uncovered_edge` | warning | at some frame the keyframes (offset, rotation, scale below 1) leave part of the frame uncovered; the fix raises the keyframe scales |
 | `assets.missing_image`, `assets.unreadable_image` | error | image missing, or not a PNG/JPEG the renderer can normalize (scene images and image layers) |
 | `assets.missing_icon`, `assets.unreadable_icon` | error | an icon layer's file is missing or has no `<svg>` root |
 | `assets.icon_no_viewbox` | warning | the icon's `<svg>` has no `viewBox`, so it does not scale to the layer box (an SVG has no resolution otherwise) |
 | `layer.off_frame` | warning | a layer's box (at every keyframe pose) lies entirely outside the frame |
+| `text.typing_unfinished` | warning | a typewriter text layer takes longer to type than it is shown before its exit; the fix sets a `typing_cps` that finishes in time |
+| `counter.overflow` | warning | the widest text a counter shows on any counting frame (an elastic overshoot counts) is wider than its box; the fix sets a smaller `font_size` |
+| `chart.label_overflow` | warning | a bar label or value label is wider than its room (vertical: the bar's slot; horizontal: the label / value column) |
+| `chart.cramped` | warning | a vertical chart leaves under 2 font sizes for its bars, or a horizontal chart's rows are shorter than 1.25 font sizes |
+| `ring.label_overflow` | warning | a progress ring's center text (custom label, or 100 % with its decimals) is wider than 92 % of the ring's hole |
 | `assets.aspect_ratio` | warning / info | the picture fills under 40% / 60% of the frame; the rest is blurred padding (the renderer fits, never crops) |
 | `assets.low_resolution` | warning / info | the image is enlarged more than 2.0x / 1.5x on screen (fit factor times the largest zoom; for an image layer, the factor that fits it to its box) |
 | `audio.missing`, `audio.unreadable` | error | `scene.audio` or `music` file missing or not decodable |
@@ -947,12 +1018,17 @@ Loudness and clipping of `http(s)` assets are not checked.
 - **Building a `SubtitleCue`**: use `SubtitleCue::new(start_ms, end_ms, text)` or
   `SubtitleCue { ..Default::default() }`. A struct literal with every field listed breaks
   whenever a field is added (as `words` was).
-- **Adding a layer kind** (counter, chart, video, ...): add a variant to `LayerContent`
-  (`vimmer-dsl/src/layer.rs`) with its fields and checks in `layer_problems` (`validation.rs`),
-  the TS type in `types/timeline.ts`, a view in `components/LayerKinds.tsx` and a case in
-  `LayerStack.tsx`, its fields in `LAYER_KIND_FIELDS` (`vimmer-storyboard/src/edit.rs`) and
-  `prompts/edit.md`, and a default in the editor (`editor/src/layers.ts` `newLayer`). Box,
-  timing, stacking and animation come for free.
+- **Adding a layer kind** (video, ...): add a variant to `LayerContent`
+  (`vimmer-dsl/src/layer.rs`, plus `kind()` and, if it may leave out `height`, `auto_height()`)
+  with its fields and checks in `layer_problems` (`validation.rs`), the TS type in
+  `types/timeline.ts`, a view in `components/LayerKinds.tsx` and a case in `LayerStack.tsx`
+  (pure timing goes in `motion/*.ts` so it can be unit-tested), its fields in
+  `LAYER_KIND_FIELDS` and `LAYER_FIELDS_ALL` (`vimmer-storyboard/src/edit.rs`; a test checks
+  that the second is the union of the first, and new nested objects need a `Kind`) and
+  `prompts/edit.md`, a default in the editor (`editor/src/layers.ts` `newLayer`, `LAYER_KINDS`,
+  `checkLayers`, `AUTO_HEIGHT`) and fields in `components/LayerPanel.tsx` `KindFields`, and its
+  `vimmer check` rules (`vimmer-check/src/layers.rs`). Box, timing, stacking and animation come
+  for free.
 - **Building a `Scene` or `VideoTimeline`**: neither implements `Default`. Build them from JSON
   with `serde_json::from_value` (as `vimmer-storyboard` does) so that new DSL fields take their
   serde defaults. A literal would fail to compile when a field is added.

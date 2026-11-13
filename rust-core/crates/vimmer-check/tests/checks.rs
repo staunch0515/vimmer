@@ -602,3 +602,20 @@ fn ring_label_wider_than_the_hole_is_a_warning() {
         Some("/scenes/0/layers/1/label")
     );
 }
+
+#[test]
+fn anim_layers_demo_fixtures_have_no_errors_or_warnings() {
+    for name in ["anim-layers-demo.json", "anim-layers-demo-9x16.json"] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../fixtures")
+            .join(name);
+        let t: VideoTimeline =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        vimmer_dsl::validate(&t).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let public =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer/public");
+        let fs = run(&t, Some(&public));
+        let bad: Vec<_> = fs.iter().filter(|f| f.severity > Severity::Info).collect();
+        assert!(bad.is_empty(), "{name}: {bad:#?}");
+    }
+}

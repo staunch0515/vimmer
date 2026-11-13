@@ -1,0 +1,387 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1080,
+    "height": 1920
+  },
+  "scenes": [
+    {
+      "id": "typewriter",
+      "duration_ms": 4000,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#0f172a",
+          "z": -10
+        },
+        {
+          "id": "headline",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.12,
+          "width": 0.84,
+          "text": "Animated text, typed one character at a time.",
+          "font_size": 0.04,
+          "weight": 700,
+          "align": "left",
+          "reveal": "typewriter",
+          "typing_cps": 24,
+          "cursor": true,
+          "highlights": [
+            "typed"
+          ]
+        },
+        {
+          "id": "cjk",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.32,
+          "width": 0.84,
+          "text": "中文也逐字出现：你好，世界！👋🏽🇯🇵",
+          "font_size": 0.035,
+          "align": "left",
+          "reveal": "typewriter",
+          "typing_cps": 8,
+          "start_ms": 600,
+          "cursor": true,
+          "color": "#a5b4fc"
+        },
+        {
+          "id": "name",
+          "kind": "lower_third",
+          "x": 0.06,
+          "y": 0.62,
+          "width": 0.8,
+          "start_ms": 400,
+          "end_ms": 3900,
+          "title": "Ada Lovelace",
+          "subtitle": "First computer programmer · 1843",
+          "font_size": 0.03
+        }
+      ]
+    },
+    {
+      "id": "numbers",
+      "duration_ms": 4000,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#111827",
+          "z": -10
+        },
+        {
+          "id": "revenue-label",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.1,
+          "width": 0.84,
+          "text": "Revenue this year",
+          "font_size": 0.028,
+          "color": "#a1a1aa",
+          "align": "center"
+        },
+        {
+          "id": "revenue",
+          "kind": "counter",
+          "x": 0.08,
+          "y": 0.15,
+          "width": 0.84,
+          "from": 0,
+          "to": 1234567.89,
+          "decimals": 2,
+          "prefix": "$",
+          "duration_ms": 2500,
+          "font_size": 0.06
+        },
+        {
+          "id": "users",
+          "kind": "counter",
+          "x": 0.08,
+          "y": 0.26,
+          "width": 0.84,
+          "from": 0,
+          "to": 48000,
+          "suffix": " users",
+          "separator": " ",
+          "ease": "back_out",
+          "duration_ms": 2000,
+          "font_size": 0.04,
+          "color": "#a5b4fc",
+          "start_ms": 500
+        },
+        {
+          "id": "done",
+          "kind": "progress_ring",
+          "x": 0.25,
+          "y": 0.38,
+          "width": 0.5,
+          "height": 0.28125,
+          "value": 0.72,
+          "duration_ms": 2500,
+          "ease": "ease_out",
+          "color": "#22c55e"
+        },
+        {
+          "id": "done-label",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.68,
+          "width": 0.84,
+          "text": "of tasks done",
+          "font_size": 0.028,
+          "color": "#a1a1aa"
+        }
+      ]
+    },
+    {
+      "id": "charts",
+      "duration_ms": 4000,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#0f172a",
+          "z": -10
+        },
+        {
+          "id": "by-year",
+          "kind": "bar_chart",
+          "x": 0.08,
+          "y": 0.08,
+          "width": 0.84,
+          "height": 0.36,
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          },
+          "bars": [
+            {
+              "label": "2021",
+              "value": 12
+            },
+            {
+              "label": "2022",
+              "value": 19
+            },
+            {
+              "label": "2023",
+              "value": 27
+            },
+            {
+              "label": "2024",
+              "value": 41
+            },
+            {
+              "label": "2025",
+              "value": 56,
+              "color": "#22c55e"
+            }
+          ],
+          "suffix": "k",
+          "grow_ms": 900,
+          "stagger_ms": 150,
+          "font_size": 0.022
+        },
+        {
+          "id": "by-region",
+          "kind": "bar_chart",
+          "x": 0.08,
+          "y": 0.5,
+          "width": 0.84,
+          "height": 0.25,
+          "orientation": "horizontal",
+          "max": 100,
+          "bars": [
+            {
+              "label": "Europe",
+              "value": 82
+            },
+            {
+              "label": "Asia",
+              "value": 64
+            },
+            {
+              "label": "Americas",
+              "value": 47
+            },
+            {
+              "label": "Africa",
+              "value": 23
+            }
+          ],
+          "suffix": "%",
+          "color": "#f59e0b",
+          "ease": "back_out",
+          "stagger_ms": 200,
+          "start_ms": 300,
+          "font_size": 0.022
+        }
+      ]
+    },
+    {
+      "id": "springs",
+      "duration_ms": 3000,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#111827",
+          "z": -10
+        },
+        {
+          "id": "label-back",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.12,
+          "width": 0.25,
+          "text": "back_out",
+          "font_size": 0.022,
+          "color": "#a1a1aa"
+        },
+        {
+          "id": "label-elastic",
+          "kind": "text",
+          "x": 0.375,
+          "y": 0.12,
+          "width": 0.25,
+          "text": "elastic_out",
+          "font_size": 0.022,
+          "color": "#a1a1aa"
+        },
+        {
+          "id": "label-bounce",
+          "kind": "text",
+          "x": 0.67,
+          "y": 0.12,
+          "width": 0.25,
+          "text": "bounce_out",
+          "font_size": 0.022,
+          "color": "#a1a1aa"
+        },
+        {
+          "id": "back",
+          "kind": "shape",
+          "shape": "ellipse",
+          "x": 0.205,
+          "y": 0.3,
+          "width": 0.14,
+          "height": 0.07875,
+          "anchor": "center",
+          "fill": "#6366f1",
+          "keyframes": [
+            {
+              "at_ms": 200,
+              "y": 0,
+              "ease": "back_out"
+            },
+            {
+              "at_ms": 1400,
+              "y": 45
+            }
+          ]
+        },
+        {
+          "id": "elastic",
+          "kind": "shape",
+          "shape": "ellipse",
+          "x": 0.5,
+          "y": 0.3,
+          "width": 0.14,
+          "height": 0.07875,
+          "anchor": "center",
+          "fill": "#22c55e",
+          "keyframes": [
+            {
+              "at_ms": 200,
+              "y": 0,
+              "ease": "elastic_out"
+            },
+            {
+              "at_ms": 1400,
+              "y": 45
+            }
+          ]
+        },
+        {
+          "id": "bounce",
+          "kind": "shape",
+          "shape": "ellipse",
+          "x": 0.795,
+          "y": 0.3,
+          "width": 0.14,
+          "height": 0.07875,
+          "anchor": "center",
+          "fill": "#f59e0b",
+          "keyframes": [
+            {
+              "at_ms": 200,
+              "y": 0,
+              "ease": "bounce_out"
+            },
+            {
+              "at_ms": 1400,
+              "y": 45
+            }
+          ]
+        },
+        {
+          "id": "pop",
+          "kind": "icon",
+          "src": "assets/icons/star.svg",
+          "color": "#facc15",
+          "x": 0.5,
+          "y": 0.8,
+          "width": 0.12,
+          "height": 0.0675,
+          "anchor": "center",
+          "start_ms": 1500,
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 900,
+            "ease": "elastic_out"
+          }
+        }
+      ]
+    }
+  ],
+  "subtitles": [],
+  "music": null
+}

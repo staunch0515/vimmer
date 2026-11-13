@@ -5,11 +5,11 @@
 cases. `--budget` (USD, default 10) stops starting new cases once a run has spent that much.
 Every run appends its spend to `results/spend.log`.
 
-- `cases.json`: 62 instructions in zh, en and ja, over `examples/*.timeline.json`, the
+- `cases.json`: 73 instructions in zh, en and ja, over `examples/*.timeline.json`, the
   `fixtures/*.json` and `timelines/zh-injected.timeline.json`. The last has a prompt injection
   in a scene's text. Groups: easy, multi (multi-scene and subtitles), ambiguous, impossible,
   hostile, layers (add / move / restyle / remove scene layers, on `fixtures/layers-demo.json` and
-  the example timelines).
+  the example timelines), anim (the data and text animation layer kinds and springy easings).
 - `run_eval.py`: runs each case through `vimmer edit --dry-run --json` (4 at a time). A case
   passes when:
   - the status is one of the expected ones;
@@ -33,3 +33,8 @@ Runs in `results/`, in order:
   This is the current prompt for the 53 original cases.
 - `layers-r1-sonnet-low`: the 9 `layer-*` cases after scene layers were added to the model and
   the prompt (`--only layer-...`): 9/9, $0.14.
+- `anim-r2-sonnet-low`: the 11 `anim-*` cases (lower third, counter, bar chart, progress ring,
+  typewriter, springy easings; mostly on `fixtures/anim-layers-demo.json`): 10/11, $0.10. Every
+  patch was right; `anim-en-bouncy-star` fails the language rule in both runs (the explanation
+  comes back in Chinese, likely because that timeline holds a Chinese text layer). A first run
+  (`anim-r1`, $0.16, same 10/11) is in `spend.log` only.

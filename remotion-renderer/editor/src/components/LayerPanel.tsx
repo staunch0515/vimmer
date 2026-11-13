@@ -40,7 +40,7 @@ export const LayerPanel = ({ scene, sceneIndex, selectedIndex, dispatch }: Props
       <div className="button-row">
         {LAYER_KINDS.map((kind) => (
           <button key={kind} className="btn small" onClick={() => dispatch({ type: "addLayer", sceneIndex, kind })}>
-            + {kind}
+            + {label(kind)}
           </button>
         ))}
       </div>
