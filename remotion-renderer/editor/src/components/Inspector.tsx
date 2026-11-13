@@ -8,6 +8,7 @@ import type { Action } from "../state";
 import { canChooseMedia, chooseAndImport, type MediaKind } from "../media";
 import { useEffect, useState } from "react";
 import { AssistantPanel } from "./AssistantPanel";
+import { LayerPanel } from "./LayerPanel";
 
 export type InspectorTab = "scene" | "subtitles" | "music" | "assistant";
 
@@ -56,7 +57,7 @@ export const Inspector = (props: Props) => {
 };
 
 const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
-  if (selection.kind !== "scene" && selection.kind !== "keyframe") {
+  if (selection.kind !== "scene" && selection.kind !== "keyframe" && selection.kind !== "layer") {
     return <Empty title="No scene selected" hint="Click a scene block on the timeline to edit it." />;
   }
   const index = selection.kind === "scene" ? selection.index : selection.sceneIndex;
@@ -104,6 +105,12 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
           ))}
         </select>
       </Field>
+      <LayerPanel
+        scene={scene}
+        sceneIndex={index}
+        selectedIndex={selection.kind === "layer" ? selection.index : -1}
+        dispatch={dispatch}
+      />
       <div className="section-title">Transition in</div>
       {index === 0 ? (
         <div className="dim">The first scene has nothing to transition from.</div>
@@ -255,7 +262,7 @@ const SubtitleEditor = ({ timeline, selection, playheadMs, dispatch, onSelect, o
   );
 };
 
-const Field = ({ label, hint, suffix, children }: { label: string; hint?: string; suffix?: string; children: React.ReactNode }) => (
+export const Field = ({ label, hint, suffix, children }: { label: string; hint?: string; suffix?: string; children: React.ReactNode }) => (
   <label className="field">
     <span className="field-label">
       {label}
@@ -274,7 +281,7 @@ const Empty = ({ title, hint }: { title: string; hint: string }) => (
 );
 
 /** A path field with a Choose button that copies the picked file into the public folder. */
-const MediaInput = ({
+export const MediaInput = ({
   kind,
   value,
   placeholder,
@@ -366,7 +373,7 @@ const MusicEditor = ({ timeline, dispatch }: Props) => {
 };
 
 /** Number input that only commits values passing `validate`; otherwise it shows the reason. */
-const NumField = ({
+export const NumField = ({
   label, suffix, hint, value, step, validate, onCommit,
 }: {
   label: string; suffix?: string; hint?: string; value: number; step: number;

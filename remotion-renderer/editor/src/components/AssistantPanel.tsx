@@ -23,7 +23,7 @@ type View =
 const STATUS_LABEL = { edited: "Proposed edit", clarify: "Needs more detail", refused: "Not possible" } as const;
 
 const selectedSceneId = (t: VideoTimeline, s: Selection): string | null => {
-  const index = s.kind === "scene" ? s.index : s.kind === "keyframe" ? s.sceneIndex : -1;
+  const index = s.kind === "scene" ? s.index : s.kind === "keyframe" || s.kind === "layer" ? s.sceneIndex : -1;
   return t.scenes[index]?.id ?? null;
 };
 

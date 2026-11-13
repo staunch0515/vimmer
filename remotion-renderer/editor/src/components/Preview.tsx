@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Timeline } from "../../../src/compositions/Timeline";
-import type { VideoTimeline } from "../../../src/types/timeline";
+import type { Layer, VideoTimeline } from "../../../src/types/timeline";
 import { frameCount } from "../model";
 import { AssetUrlContext } from "../../../src/assets";
 import { assetUrlFor } from "../media";
@@ -11,10 +11,58 @@ type Props = {
   assetRoot: string | null;
   playerRef: React.RefObject<PlayerRef | null>;
   onFrame: (frame: number) => void;
+  // The selected layer: outlined on the canvas and draggable. Moving it calls onMoveLayer once,
+  // when the drag ends, so a drag is one undo step.
+  selectedLayer?: Layer | null;
+  onMoveLayer?: (x: number, y: number) => void;
+};
+
+const round4 = (v: number) => Math.round(v * 10_000) / 10_000;
+
+const LayerHandle = ({ layer, onMove }: { layer: Layer; onMove: (x: number, y: number) => void }) => {
+  const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
+  const start = useRef<{ px: number; py: number; w: number; h: number } | null>(null);
+  const x = layer.x + (drag?.dx ?? 0);
+  const y = layer.y + (drag?.dy ?? 0);
+  // Auto-height text: outline about one line.
+  const height = layer.height ?? (layer.kind === "text" ? (layer.font_size ?? 0.06) * (layer.line_height ?? 1.2) : 0.05);
+  const transforms = [layer.anchor === "center" ? "translate(-50%, -50%)" : "", layer.rotation ? `rotate(${layer.rotation}deg)` : ""];
+  return (
+    <div
+      className={drag ? "layer-handle dragging" : "layer-handle"}
+      data-layer-handle={layer.id}
+      style={{
+        left: `${x * 100}%`,
+        top: `${y * 100}%`,
+        width: `${layer.width * 100}%`,
+        height: `${Math.max(height, 0.004) * 100}%`,
+        transform: transforms.filter(Boolean).join(" ") || undefined,
+      }}
+      onPointerDown={(e) => {
+        const frame = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+        start.current = { px: e.clientX, py: e.clientY, w: frame.width, h: frame.height };
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDrag({ dx: 0, dy: 0 });
+      }}
+      onPointerMove={(e) => {
+        const s = start.current;
+        if (!s) return;
+        setDrag({ dx: (e.clientX - s.px) / s.w, dy: (e.clientY - s.py) / s.h });
+      }}
+      onPointerUp={() => {
+        const moved = drag && (drag.dx !== 0 || drag.dy !== 0);
+        start.current = null;
+        setDrag(null);
+        if (moved) onMove(round4(Math.min(2, Math.max(-1, x))), round4(Math.min(2, Math.max(-1, y))));
+      }}
+    >
+      <span className="layer-handle-label">{layer.id}</span>
+    </div>
+  );
 };
 
 // The preview is the real Remotion composition running in the Player, so what you see is what renders.
-export const Preview = ({ timeline, assetRoot, playerRef, onFrame }: Props) => {
+export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer, onMoveLayer }: Props) => {
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
@@ -45,6 +93,11 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame }: Props) => {
         style={{ width: "100%", height: "100%" }}
       />
       </AssetUrlContext.Provider>
+      {selectedLayer && onMoveLayer && (
+        <div className="layer-overlay">
+          <LayerHandle layer={selectedLayer} onMove={onMoveLayer} />
+        </div>
+      )}
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
-import type { Keyframe, Music, Scene, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import type { Keyframe, Layer, LayerKind, Music, Scene, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
 import { emptyScene, type Selection } from "./model";
+import { clampLayers, moveInStack, newLayer } from "./layers";
 import { patchCue } from "../../src/subtitles/words";
 
 export type EditorState = {
@@ -22,6 +23,11 @@ export type Action =
   | { type: "patchKeyframe"; sceneIndex: number; index: number; patch: Partial<Keyframe> }
   | { type: "moveKeyframe"; sceneIndex: number; index: number; atMs: number }
   | { type: "deleteKeyframe"; sceneIndex: number; index: number }
+  | { type: "addLayer"; sceneIndex: number; kind: LayerKind }
+  // `patch` replaces whole keys; a key set to undefined is removed (back to its default).
+  | { type: "patchLayer"; sceneIndex: number; index: number; patch: Partial<Record<string, unknown>> }
+  | { type: "deleteLayer"; sceneIndex: number; index: number }
+  | { type: "moveLayer"; sceneIndex: number; index: number; delta: -1 | 1 }
   | { type: "patchSubtitle"; index: number; patch: Partial<SubtitleCue> }
   | { type: "addSubtitle"; startMs: number }
   | { type: "deleteSubtitle"; index: number }
@@ -63,6 +69,8 @@ const normalizeScenes = (scenes: Scene[]): Scene[] =>
       }
       next = { ...next, keyframes: kept };
     }
+    const layers = clampLayers(next.layers, next.duration_ms);
+    if (layers !== next.layers) next = { ...next, layers };
     return next;
   });
 
@@ -70,6 +78,13 @@ const withScene = (t: VideoTimeline, i: number, fn: (s: Scene) => Scene): VideoT
   ...t,
   scenes: t.scenes.map((s, j) => (j === i ? fn(s) : s)),
 });
+
+const withLayers = (t: VideoTimeline, sceneIndex: number, layers: Layer[]): VideoTimeline =>
+  withScene(t, sceneIndex, (s) => {
+    if (layers.length > 0) return { ...s, layers };
+    const { layers: _l, ...rest } = s;
+    return rest;
+  });
 
 // Removes optional keys whose value is undefined so they are not written to the JSON.
 const compactKeyframe = (k: Keyframe): Keyframe =>
@@ -144,6 +159,39 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
         { kind: "scene", index: action.sceneIndex },
       );
     }
+    case "addLayer": {
+      const scene = t.scenes[action.sceneIndex];
+      if (!scene) return state;
+      const layers = [...(scene.layers ?? []), newLayer(action.kind, scene)];
+      return commit(state, withLayers(t, action.sceneIndex, layers), {
+        kind: "layer", sceneIndex: action.sceneIndex, index: layers.length - 1,
+      });
+    }
+    case "patchLayer": {
+      const layer = t.scenes[action.sceneIndex]?.layers?.[action.index];
+      if (!layer) return state;
+      const merged = Object.fromEntries(
+        Object.entries({ ...layer, ...action.patch }).filter(([, v]) => v !== undefined),
+      ) as Layer;
+      const layers = t.scenes[action.sceneIndex].layers!.map((l, i) => (i === action.index ? merged : l));
+      return commit(state, withLayers(t, action.sceneIndex, layers));
+    }
+    case "deleteLayer": {
+      const list = t.scenes[action.sceneIndex]?.layers;
+      if (!list?.[action.index]) return state;
+      return commit(state, withLayers(t, action.sceneIndex, list.filter((_, i) => i !== action.index)), {
+        kind: "scene", index: action.sceneIndex,
+      });
+    }
+    case "moveLayer": {
+      const list = t.scenes[action.sceneIndex]?.layers;
+      if (!list?.[action.index]) return state;
+      const moved = list[action.index];
+      const next = moveInStack(list, action.index, action.delta);
+      if (next === list) return state;
+      const index = next.findIndex((l) => l.id === moved.id);
+      return commit(state, withLayers(t, action.sceneIndex, next), { kind: "layer", sceneIndex: action.sceneIndex, index });
+    }
     case "addScene": {
       const scene = emptyScene(t.scenes.length);
       return commit(state, { ...t, scenes: [...t.scenes, scene] }, { kind: "scene", index: t.scenes.length });
@@ -154,7 +202,7 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
     }
     case "duplicateScene": {
       const src = t.scenes[action.index];
-      const copy = { ...src, id: `${src.id}-copy`, highlights: [...src.highlights] };
+      const copy = { ...src, id: `${src.id}-copy`, highlights: [...src.highlights], ...(src.layers ? { layers: [...src.layers] } : {}) };
       const scenes = [...t.scenes.slice(0, action.index + 1), copy, ...t.scenes.slice(action.index + 1)];
       return commit(state, { ...t, scenes }, { kind: "scene", index: action.index + 1 });
     }
@@ -190,6 +238,7 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
       const next = { ...action.timeline, subtitles: action.timeline.subtitles ?? [] };
       const keep =
         (state.selection.kind === "scene" && next.scenes[state.selection.index]) ||
+        (state.selection.kind === "layer" && next.scenes[state.selection.sceneIndex]?.layers?.[state.selection.index]) ||
         (state.selection.kind === "subtitle" && next.subtitles[state.selection.index]) ||
         (state.selection.kind === "music" && next.music);
       return commit(state, next, keep ? state.selection : { kind: "none" });
