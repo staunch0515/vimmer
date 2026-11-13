@@ -37,6 +37,8 @@ pub const DEFAULT_MAX_RETRIES: u32 = 2;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(900);
 
 pub const HELPER_SCRIPT: &str = include_str!("../scripts/generate_storyboard.py");
+/// Illustration helper (style guide and per-scene SVG); imports the storyboard helper.
+pub const ILLUSTRATE_SCRIPT: &str = include_str!("../scripts/illustrate.py");
 pub const PROMPT_TEMPLATE: &str = include_str!("../prompts/storyboard.md");
 /// JSON schema of the reply: the fields of [`Storyboard`] / `SceneSpec` minus the asset paths
 /// (`music`, `voice`, `image`), which this flow never fills.
@@ -218,6 +220,9 @@ impl LlmHelper {
     pub fn script_path(&self) -> PathBuf {
         self.dir.join("generate_storyboard.py")
     }
+    pub fn illustrate_script_path(&self) -> PathBuf {
+        self.dir.join("illustrate.py")
+    }
     pub fn prompt_path(&self) -> PathBuf {
         self.dir.join("storyboard.md")
     }
@@ -232,6 +237,7 @@ impl LlmHelper {
             (self.script_path(), HELPER_SCRIPT),
             (self.prompt_path(), PROMPT_TEMPLATE),
             (self.schema_path(), STORYBOARD_SCHEMA),
+            (self.illustrate_script_path(), ILLUSTRATE_SCRIPT),
         ] {
             if fs::read_to_string(&path).is_ok_and(|s| s == body) {
                 continue;
@@ -260,16 +266,34 @@ impl LlmHelper {
         }
         cmd
     }
+
+    /// The illustration helper invocation (see [`crate::illustrate`]).
+    pub fn illustrate_command(&self, request: &Path, record: Option<&Path>) -> Command {
+        let mut cmd = Command::new(&self.python);
+        cmd.arg("-I")
+            .arg(self.illustrate_script_path())
+            .arg("--request")
+            .arg(request);
+        if let Some(path) = record {
+            cmd.arg("--record").arg(path);
+        }
+        cmd
+    }
 }
 
 fn default_helper_dir() -> PathBuf {
-    let key = format!("{HELPER_SCRIPT}\0{PROMPT_TEMPLATE}\0{STORYBOARD_SCHEMA}");
+    let key = format!("{HELPER_SCRIPT}\0{PROMPT_TEMPLATE}\0{STORYBOARD_SCHEMA}\0{ILLUSTRATE_SCRIPT}");
     std::env::temp_dir().join(format!("vimmer-llm-{:016x}", fnv1a(&key)))
 }
 
 /// 64-bit FNV-1a, for a stable directory name.
-fn fnv1a(s: &str) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+pub(crate) fn fnv1a(s: &str) -> u64 {
+    fnv1a_from(0xcbf2_9ce4_8422_2325, s)
+}
+
+/// FNV-1a with another starting value (two of them make a 128-bit cache key).
+pub(crate) fn fnv1a_from(seed: u64, s: &str) -> u64 {
+    let mut hash: u64 = seed;
     for byte in s.bytes() {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
@@ -590,7 +614,7 @@ pub fn generate_with_key_check(
 }
 
 /// The last `n` non-empty lines of a child's stderr.
-fn tail(text: &str, n: usize) -> String {
+pub(crate) fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(n)..].join(" | ")
 }

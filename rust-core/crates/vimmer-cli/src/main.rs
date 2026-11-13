@@ -12,13 +12,18 @@ use std::{
 use clap::{Args, Parser, ValueEnum};
 use serde_json::json;
 use vimmer_dsl::VideoTimeline;
-use vimmer_media::{FfmpegProbe, Limits, SaySpeech, TtsEngine};
+use vimmer_media::{find_chrome, run_limited, FfmpegProbe, Limits, SaySpeech, TtsEngine};
 use vimmer_scheduler::{render_timeline, SchedulerConfig, DEFAULT_CHUNK_MS};
 use vimmer_storyboard::generate::{
     generate, GenerateFailure, GenerateOptions, Generated, LlmHelper, DEFAULT_EFFORT,
     DEFAULT_MAX_RETRIES, DEFAULT_MODEL, EFFORTS,
 };
-use vimmer_storyboard::{Language, Orientation};
+use vimmer_storyboard::illustrate::{
+    estimate_cost, illustrate, IllustrateOptions, IllustrationReport,
+    DEFAULT_CONCURRENCY as DEFAULT_ILLUSTRATE_JOBS, DEFAULT_EFFORT as DEFAULT_ILLUSTRATE_EFFORT,
+    DEFAULT_MODEL as DEFAULT_ILLUSTRATE_MODEL,
+};
+use vimmer_storyboard::{convert, Language, Orientation, Storyboard};
 
 /// Render a timeline JSON to MP4.
 ///
@@ -27,7 +32,7 @@ use vimmer_storyboard::{Language, Orientation};
 #[command(
     name = "vimmer",
     version,
-    after_help = "Generate from text: vimmer generate <input.txt> --lang zh -o out.mp4 (see `vimmer generate --help`)"
+    after_help = "Generate from text: vimmer generate <input.txt> --lang zh -o out.mp4 (see `vimmer generate --help`)\nAdd illustrations to a saved storyboard: vimmer illustrate <storyboard.json> (see `vimmer illustrate --help`)"
 )]
 struct Cli {
     /// Timeline JSON (see fixtures/sample-timeline.json).
@@ -91,7 +96,70 @@ struct GenerateCli {
     #[arg(long)]
     llm_python: Option<PathBuf>,
     #[command(flatten)]
+    illustrate: IllustrateArgs,
+    #[command(flatten)]
     render: RenderArgs,
+}
+
+/// Draw one SVG illustration per scene of a saved storyboard with Claude, and write (and
+/// optionally render) a timeline that uses them.
+///
+/// Scenes that already have an `image` keep it. Pictures are cached in
+/// remotion-renderer/public/generated/illustrations/, so running this again with the same
+/// storyboard and model makes no API call. Costs money otherwise: the estimate is printed
+/// before and the actual cost after.
+#[derive(Debug, Parser)]
+#[command(name = "vimmer illustrate", version)]
+struct IllustrateCli {
+    /// Storyboard JSON (e.g. storyboard.json from `vimmer generate --save-dir`).
+    storyboard: PathBuf,
+    /// Timeline to add the pictures to (same scenes as the storyboard, e.g. an edited
+    /// timeline.json). Default: converted from the storyboard.
+    #[arg(long)]
+    timeline: Option<PathBuf>,
+    /// Where to write the illustrated timeline. Default: timeline.illustrated.json next to the
+    /// storyboard.
+    #[arg(long)]
+    timeline_out: Option<PathBuf>,
+    /// Also render the illustrated timeline to this MP4.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Seconds one API call may take before it is stopped.
+    #[arg(long, default_value_t = 600)]
+    llm_timeout: u64,
+    /// Python interpreter with the anthropic SDK (default: $VIMMER_LLM_PYTHON, then
+    /// ~/.local/share/vimmer/llm-venv/bin/python).
+    #[arg(long)]
+    llm_python: Option<PathBuf>,
+    /// Save the raw API replies and illustrations.json (per-scene usage) here.
+    #[arg(long)]
+    save_dir: Option<PathBuf>,
+    #[command(flatten)]
+    illustrate: IllustrateArgs,
+    #[command(flatten)]
+    render: RenderArgs,
+}
+
+/// Illustration options shared by `vimmer generate` and `vimmer illustrate`.
+#[derive(Debug, Args)]
+struct IllustrateArgs {
+    /// Draw one SVG illustration per scene with Claude (costs money; the estimate is printed
+    /// first). Always on for `vimmer illustrate`.
+    #[arg(long)]
+    illustrate: bool,
+    /// Claude model for the illustrations.
+    #[arg(long, default_value = DEFAULT_ILLUSTRATE_MODEL)]
+    illustrate_model: String,
+    /// Reasoning effort for the illustrations: low, medium, high, xhigh or max.
+    #[arg(long, default_value = DEFAULT_ILLUSTRATE_EFFORT, value_parser = clap::builder::PossibleValuesParser::new(EFFORTS))]
+    illustrate_effort: String,
+    /// Illustrations drawn at the same time.
+    #[arg(long, default_value_t = DEFAULT_ILLUSTRATE_JOBS)]
+    illustrate_jobs: usize,
+    /// Headless Chrome used to turn the SVGs into PNGs (default: $VIMMER_CHROME, then the
+    /// browser Remotion downloads into <remotion-dir>/node_modules/.remotion/).
+    #[arg(long)]
+    chrome: Option<PathBuf>,
 }
 
 /// Rendering options shared by `vimmer` and `vimmer generate`.
@@ -181,6 +249,11 @@ async fn main() -> ExitCode {
         rest.remove(1);
         rest[0] = "vimmer generate".into();
         run_generate(GenerateCli::parse_from(rest)).await
+    } else if args.get(1).is_some_and(|a| a == "illustrate") {
+        let mut rest = args;
+        rest.remove(1);
+        rest[0] = "vimmer illustrate".into();
+        run_illustrate(IllustrateCli::parse_from(rest)).await
     } else {
         run(Cli::parse_from(args)).await
     };
@@ -268,20 +341,7 @@ async fn run_generate(cli: GenerateCli) -> Result<(), Box<dyn std::error::Error>
     opts.timeout = Duration::from_secs(cli.llm_timeout.max(1));
     opts.record_dir = cli.save_dir.clone();
 
-    // Ctrl-C stops the helper (it runs in its own process group, so it would not see the
-    // terminal's SIGINT) instead of leaving a paid API call running.
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let flag = cancelled.clone();
-    let watcher = tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            eprintln!("cancelling ...");
-            flag.store(true, Ordering::SeqCst);
-        }
-    });
-    let limits = Limits {
-        timeout: None,
-        cancelled: Arc::new(move || cancelled.load(Ordering::SeqCst)),
-    };
+    let (limits, watcher) = ctrl_c_limits();
     let llm_work = cli.render.work_dir.join("llm");
     eprintln!(
         "generating a {} storyboard with {} (effort {}) ...",
@@ -289,13 +349,17 @@ async fn run_generate(cli: GenerateCli) -> Result<(), Box<dyn std::error::Error>
         opts.model,
         opts.effort
     );
-    let outcome =
-        tokio::task::spawn_blocking(move || generate(&helper, &opts, &llm_work, &limits)).await?;
-    watcher.abort();
+    let helper_for_illustrations = helper.clone();
+    let generate_limits = limits.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        generate(&helper, &opts, &llm_work, &generate_limits)
+    })
+    .await?;
 
-    let generated = match outcome {
+    let mut generated = match outcome {
         Ok(g) => g,
         Err(failure) => {
+            watcher.abort();
             report_failure(&failure, &cli);
             return Err(Box::new(failure));
         }
@@ -320,8 +384,33 @@ async fn run_generate(cli: GenerateCli) -> Result<(), Box<dyn std::error::Error>
     );
     eprintln!("usage: {}", generated.usage);
 
+    let illustrations = if cli.illustrate.illustrate {
+        let report = run_illustrations(
+            helper_for_illustrations,
+            generated.storyboard.clone(),
+            &cli.illustrate,
+            &cli.render,
+            Duration::from_secs(cli.llm_timeout.max(1)),
+            cli.save_dir.clone(),
+            limits.clone(),
+        )
+        .await?;
+        report.apply(&mut generated.conversion.timeline)?;
+        eprintln!(
+            "total usage (storyboard + illustrations): ${:.4}",
+            generated.usage.cost_usd + report.usage.cost_usd
+        );
+        Some(report)
+    } else {
+        None
+    };
+    watcher.abort();
+    if limits.cancelled.as_ref()() {
+        return Err("cancelled".into());
+    }
+
     if let Some(dir) = &cli.save_dir {
-        save_artifacts(dir, &generated, &cli)?;
+        save_artifacts(dir, &generated, &cli, illustrations.as_ref())?;
         eprintln!("saved storyboard, timeline and usage in {}", dir.display());
     } else if cli.no_render {
         println!("{}", serde_json::to_string_pretty(&generated.storyboard)?);
@@ -334,6 +423,173 @@ async fn run_generate(cli: GenerateCli) -> Result<(), Box<dyn std::error::Error>
         .clone()
         .expect("clap requires --output without --no-render");
     render(generated.conversion.timeline, cli.render, output).await
+}
+
+/// Ctrl-C stops the helpers (they run in their own process group, so they would not see the
+/// terminal's SIGINT) instead of leaving a paid API call running.
+fn ctrl_c_limits() -> (Limits, tokio::task::JoinHandle<()>) {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = cancelled.clone();
+    let watcher = tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            eprintln!("cancelling ...");
+            flag.store(true, Ordering::SeqCst);
+        }
+    });
+    let limits = Limits {
+        timeout: None,
+        cancelled: Arc::new(move || cancelled.load(Ordering::SeqCst)),
+    };
+    (limits, watcher)
+}
+
+/// The headless Chrome for rasterizing: --chrome, $VIMMER_CHROME, Remotion's download; when
+/// Remotion has not downloaded one yet, `remotion browser ensure` fetches it.
+fn locate_chrome(chrome: Option<PathBuf>, remotion_dir: &Path, limits: &Limits) -> Option<PathBuf> {
+    if chrome.is_some() {
+        return chrome;
+    }
+    if let Some(p) = find_chrome(remotion_dir) {
+        return Some(p);
+    }
+    let remotion = remotion_dir.join("node_modules/.bin/remotion");
+    if !remotion.is_file() {
+        return None;
+    }
+    eprintln!("downloading Remotion's headless Chrome (remotion browser ensure) ...");
+    let mut cmd = std::process::Command::new(remotion);
+    cmd.arg("browser").arg("ensure").current_dir(remotion_dir);
+    let _ = run_limited(cmd, &limits.with_timeout(Duration::from_secs(900)));
+    find_chrome(remotion_dir)
+}
+
+/// Prints the estimate, draws the illustrations and prints what they cost. Problems become
+/// warnings; only a crashed task is an error.
+async fn run_illustrations(
+    helper: LlmHelper,
+    storyboard: Storyboard,
+    args: &IllustrateArgs,
+    render: &RenderArgs,
+    timeout: Duration,
+    record_dir: Option<PathBuf>,
+    limits: Limits,
+) -> Result<IllustrationReport, Box<dyn std::error::Error>> {
+    let todo = storyboard.scenes.iter().filter(|s| s.image.is_none()).count();
+    let model = args.illustrate_model.clone();
+    match estimate_cost(&model, &args.illustrate_effort, todo) {
+        Some((typical, worst)) => eprintln!(
+            "illustrating {todo} scene(s) with {model} (effort {}): estimated ${typical:.2} (at most about ${worst:.2} if every picture needs a correction; cached pictures are free)",
+            args.illustrate_effort
+        ),
+        None => eprintln!(
+            "illustrating {todo} scene(s) with {model}: no price known for this model, cost not estimated"
+        ),
+    }
+    let chrome_limits = limits.clone();
+    let (chrome_arg, remotion_dir) = (args.chrome.clone(), render.remotion_dir.clone());
+    let chrome = tokio::task::spawn_blocking(move || {
+        locate_chrome(chrome_arg, &remotion_dir, &chrome_limits)
+    })
+    .await?;
+    let Some(chrome) = chrome else {
+        eprintln!(
+            "warning: no headless Chrome to turn the SVGs into pictures (run `npm ci` in {}, or pass --chrome); rendering without illustrations",
+            render.remotion_dir.display()
+        );
+        return Ok(IllustrationReport::default());
+    };
+    let mut opts = IllustrateOptions::new(render.remotion_dir.join("public"), chrome);
+    opts.model = model;
+    opts.effort = args.illustrate_effort.clone();
+    opts.concurrency = args.illustrate_jobs.max(1);
+    opts.timeout = timeout;
+    opts.record_dir = record_dir;
+    let work = render.work_dir.join("illustrate");
+    let report = tokio::task::spawn_blocking(move || {
+        illustrate(&helper, &storyboard, &opts, &work, &limits, &|e| {
+            eprintln!("{e}")
+        })
+    })
+    .await?;
+    for w in report.all_warnings() {
+        eprintln!("warning: illustration: {w}");
+    }
+    if let Some(reason) = &report.unavailable {
+        eprintln!(
+            "warning: illustrations unavailable: {reason}. The video is made without the missing pictures."
+        );
+    }
+    let calls: u32 = report.scenes.iter().map(|s| s.calls).sum();
+    eprintln!(
+        "illustrations: {} of {todo} scene(s) drawn ({} cached), {} scene call(s); actual cost: {}",
+        report.drawn(),
+        report.scenes.iter().filter(|s| s.cached).count(),
+        calls,
+        report.usage
+    );
+    Ok(report)
+}
+
+async fn run_illustrate(cli: IllustrateCli) -> Result<(), Box<dyn std::error::Error>> {
+    let raw = tokio::fs::read_to_string(&cli.storyboard)
+        .await
+        .map_err(|e| format!("cannot read {}: {e}", cli.storyboard.display()))?;
+    let storyboard: Storyboard = serde_json::from_str(&raw)
+        .map_err(|e| format!("{} is not a storyboard: {e}", cli.storyboard.display()))?;
+    let mut timeline = match &cli.timeline {
+        Some(path) => {
+            let raw = tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            serde_json::from_str::<VideoTimeline>(&raw)?
+        }
+        None => convert(&storyboard)?.timeline,
+    };
+    if timeline.scenes.len() != storyboard.scenes.len() {
+        return Err(format!(
+            "the timeline has {} scenes but the storyboard has {}",
+            timeline.scenes.len(),
+            storyboard.scenes.len()
+        )
+        .into());
+    }
+    let helper = LlmHelper::locate(cli.llm_python.as_deref())?;
+    let (limits, watcher) = ctrl_c_limits();
+    let report = run_illustrations(
+        helper,
+        storyboard,
+        &cli.illustrate,
+        &cli.render,
+        Duration::from_secs(cli.llm_timeout.max(1)),
+        cli.save_dir.clone(),
+        limits.clone(),
+    )
+    .await?;
+    watcher.abort();
+    if limits.cancelled.as_ref()() {
+        return Err("cancelled".into());
+    }
+    report.apply(&mut timeline)?;
+    let out = cli.timeline_out.clone().unwrap_or_else(|| {
+        cli.storyboard
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("timeline.illustrated.json")
+    });
+    std::fs::write(&out, serde_json::to_string_pretty(&timeline)? + "\n")
+        .map_err(|e| format!("cannot write {}: {e}", out.display()))?;
+    eprintln!("wrote {}", out.display());
+    if let Some(dir) = &cli.save_dir {
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(
+            dir.join("illustrations.json"),
+            serde_json::to_string_pretty(&report)? + "\n",
+        )?;
+    }
+    match cli.output {
+        Some(output) => render(timeline, cli.render, output).await,
+        None => Ok(()),
+    }
 }
 
 fn lang_name(l: Lang) -> &'static str {
@@ -394,6 +650,7 @@ fn save_artifacts(
     dir: &Path,
     generated: &Generated,
     cli: &GenerateCli,
+    illustrations: Option<&IllustrationReport>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(dir)?;
     let write = |name: &str, value: String| -> Result<(), Box<dyn std::error::Error>> {
@@ -421,5 +678,11 @@ fn save_artifacts(
             None,
         ))?,
     )?;
+    if let Some(report) = illustrations {
+        write(
+            "illustrations.json",
+            serde_json::to_string_pretty(report)?,
+        )?;
+    }
     Ok(())
 }

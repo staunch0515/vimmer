@@ -94,15 +94,18 @@ npm run render:test      # writes out/test-scene.mp4
 - `vimmer-dsl`: schema, validation, frame math.
 - `vimmer-media`: image normalization (blurred-background letterboxing), audio
   duration probing via `ffmpeg`, narration (`say`, or Kokoro through
-  `scripts/kokoro_tts.py`) and speech recognition.
+  `scripts/kokoro_tts.py`), speech recognition, and the SVG sanitizer / Chrome rasterizer
+  for illustrations (`svg.rs`).
 - `vimmer-scheduler`: chunk planner (whole scenes, ≤ 30 s per chunk) and a tokio
   pipeline: preprocess images → check audio → render chunks through Remotion with
   bounded concurrency → concatenate with ffmpeg `-c copy`.
 - `vimmer-cli`: `vimmer <timeline.json> -o out.mp4` (`--tts kokoro` for Kokoro narration), and
-  `vimmer generate <input.txt> --lang zh -o out.mp4` (text → Claude storyboard → MP4).
+  `vimmer generate <input.txt> --lang zh -o out.mp4` (text → Claude storyboard → MP4, with
+  `--illustrate` for Claude-drawn pictures), and `vimmer illustrate <storyboard.json>`.
 - `vimmer-storyboard`: converter from a storyboard JSON (the format an LLM writes, see
   below) to a validated timeline JSON (offline, bin `vimmer-storyboard`), and the Claude
-  generation behind `vimmer generate` (Python helper `scripts/generate_storyboard.py`).
+  generation behind `vimmer generate` (Python helpers `scripts/generate_storyboard.py` and
+  `scripts/illustrate.py`).
 
 ```bash
 cd rust-core && cargo run -p vimmer-cli -- ../fixtures/sample-timeline.json \
@@ -161,7 +164,7 @@ cargo run -p vimmer-storyboard -- crates/vimmer-storyboard/examples/en-coffee.st
 | `transition` | no | Transition into this scene, see the mapping below. Ignored on the first scene. |
 | `transition_ms` | no (`500`) | Transition length. Clamped to the scene length. Given without `transition`, it is ignored. |
 | `image` | no | Relative path under `public/`, e.g. `assets/sample.png`. No `..`, no URL, no leading `/`. No `image` means text only. |
-| `image_prompt` | no | Description of a wanted picture. Stored only; nothing generates images from it. |
+| `image_prompt` | no | Description of a wanted picture. Drawn by Claude with `--illustrate` / `vimmer illustrate` (see "Illustrations"); otherwise stored only. |
 
 Unknown field names are rejected (`deny_unknown_fields`). Unknown `camera` or `transition`
 values do not fail: they fall back to `static` or `none` with a warning. Values are trimmed,
@@ -252,8 +255,9 @@ cargo run --release -p vimmer-cli -- generate story.txt --lang en --no-render > 
 - Every render option of `vimmer <timeline.json>` works here too (`--tts`, `--auto-subtitles`,
   `--word-subtitles`, `--remotion-dir`, `--work-dir`, …). Generated timelines carry no subtitle
   cues, so pass `--auto-subtitles on` to get subtitles.
-- Pictures are not generated: each scene's `image_prompt` is kept in the storyboard, `image`
-  stays empty, and scenes render as text.
+- Pictures are not generated unless you pass `--illustrate` (see "Illustrations" below):
+  without it each scene's `image_prompt` is kept in the storyboard, `image` stays empty, and
+  scenes render as text.
 - `vimmer <timeline.json> -o out.mp4` works as before. (`vimmer generate` is recognized only as
   the first argument; render a timeline file that is literally named `generate` as
   `./generate`.)
@@ -295,6 +299,86 @@ Prices used (USD per million tokens, input / output): Opus 5.5 $4 / $20, Sonnet 
 Haiku 5.5 $0.10 / $0.50. The figure Vimmer prints is an estimate from these prices; the
 Anthropic Console has the billed amount. A validation retry resends the conversation, so it
 costs roughly one more call.
+
+### Illustrations (`--illustrate`, `vimmer illustrate`)
+
+With `--illustrate`, Claude also draws one flat vector illustration (SVG) per scene, and the
+scene renders on that picture instead of a plain background. It is **off by default** because
+it costs far more than the storyboard (about $0.10 per scene with Opus, see the table below).
+Before it starts, Vimmer prints an estimate; at the end, the actual tokens and cost.
+
+```bash
+# Text → storyboard → illustrations → MP4
+cargo run --release -p vimmer-cli -- generate crates/vimmer-storyboard/examples/zh-xian.source.txt \
+  --lang zh -o ../out/xian.mp4 --remotion-dir ../remotion-renderer \
+  --tts kokoro --auto-subtitles on --illustrate --save-dir ../out/xian
+
+# Illustrate a storyboard you already have (no new storyboard call); optionally render it
+cargo run --release -p vimmer-cli -- illustrate ../out/xian/storyboard.json \
+  --remotion-dir ../remotion-renderer -o ../out/xian-illustrated.mp4 --tts kokoro --auto-subtitles on
+```
+
+- `--illustrate-model` (default `claude-opus-5-5`; `claude-sonnet-5-5` is about half the
+  price), `--illustrate-effort` (default `medium`; `low` is cheaper but visibly rougher),
+  `--illustrate-jobs` (pictures drawn at once, default 3), `--chrome PATH`.
+- `vimmer illustrate STORYBOARD` writes `timeline.illustrated.json` next to the storyboard
+  (`--timeline-out` to change it), or adds the pictures to an existing timeline with
+  `--timeline FILE` (same scene count and order). `-o out.mp4` renders it too; every render
+  option works. Scenes that already have an `image` keep it.
+- One picture failing only affects its scene (it stays text only, with a warning). When the
+  API cannot be used at all (no key, rejected key, no connection, no SDK) or Chrome cannot
+  rasterize, Vimmer warns and makes the video without pictures; no money is spent once that
+  is known.
+
+How it works:
+
+1. **One style for the whole video.** A first, cheap call (structured output) reads the title
+   and every scene's `image_prompt` and returns a style guide: 5–7 hex colours, background,
+   line and shape rules, composition, mood, recurring motifs. Every scene request carries that
+   guide, so the pictures share palette, line work and layout.
+2. **One SVG per scene**, up to 3 at once. The prompt fixes the canvas (`viewBox` 1920x1080 or
+   1080x1920 like the timeline), keeps the main subject in the upper ~55 % and the lower ~45 %
+   calm and dark where the scene text and subtitles go, keeps a 6 % margin for the camera
+   motion, and forbids text in the picture.
+3. **Sanitize** (`vimmer-media/src/svg.rs`). The SVG is untrusted. A strict XML parser (no
+   DOCTYPE/entities, 512 KB, 8000 elements, depth 48) rebuilds the document from an allow-list
+   of drawing elements: `script`, `foreignObject`, `image`, `a`, `iframe`, animation elements and
+   anything unknown are dropped with their content; `on*` attributes, `href`/`xlink:href` that
+   are not `#id`, `xml:base`, foreign namespaces, `javascript:`/`data:` values and every
+   `url(...)` not pointing at `#id` are removed; CSS loses `@import` and external `url()`, and
+   CSS with escapes or `image-set()` is dropped. A `viewBox` with the canvas aspect ratio is
+   required. A rejected SVG goes back to Claude once with the reason; if the second one fails
+   too, the scene stays text only.
+4. **Rasterize** with the headless Chrome Remotion already downloads
+   (`remotion-renderer/node_modules/.remotion/`, fetched with `remotion browser ensure` when
+   missing), network sent to a closed proxy port, into a PNG of the frame size; a PNG that is
+   one flat colour counts as a failed picture. The PNG then takes the normal image path
+   (normalization, Ken Burns motion). Scenes on a picture get a soft dark gradient under the
+   text; text-only scenes look exactly as before.
+5. **Cache**: `remotion-renderer/public/generated/illustrations/` (git-ignored) holds
+   `<hash>.svg` and `<hash>.png`, the hash covering model, effort, a cache version, the style
+   guide, the picture prompt and the canvas size; the style guide is cached as
+   `style-<hash>.json`. Running again with the same storyboard makes no API call (it works
+   even without a key). If rasterizing fails, the sanitized SVG is kept, so the next run only
+   rasterizes.
+
+`--save-dir` also keeps `illustrations.json` (style guide, per-scene tokens, cost, SVG size,
+what the sanitizer removed, warnings) and the raw replies `illustration-*.json`.
+
+Measured on 2026-11-13 (effort `medium`, landscape, every SVG accepted on the first try,
+nothing removed by the sanitizer):
+
+| Run | Scenes | Output tokens / picture | Cost / picture | SVG size | Style call | Total |
+|---|---|---|---|---|---|---|
+| zh-xian, `claude-opus-5-5` | 11 | 2,365–5,192 (avg 3,855) | $0.084 | 4.1–7.1 KB | $0.027 | $0.95 |
+| ja-sakura, `claude-opus-5-5` | 10 | 1,988–3,846 (avg 2,679) | $0.061 | 3.7–7.2 KB | $0.027 | $0.63 |
+| zh-xian, `claude-sonnet-5-5` | 11 | 1,396–1,901 (avg 1,662) | $0.020 | 2.5–3.4 KB | $0.013 | $0.23 |
+
+Input is about 1,700 tokens per picture (prompt, style guide, scene). Opus draws richer
+scenes (more buildings, lanterns, light, depth); Sonnet's are simpler and flatter but in the
+same consistent style, at about a quarter of the cost. A correction call roughly doubles the
+cost of that picture. The printed estimate assumes ~3,500 output tokens per picture at
+`medium`.
 
 Tests (no network): `cd rust-core && cargo test -p vimmer-storyboard --lib` (a fake helper), and
 `~/.local/share/vimmer/llm-venv/bin/python -m unittest discover -s rust-core/crates/vimmer-storyboard/scripts/tests`

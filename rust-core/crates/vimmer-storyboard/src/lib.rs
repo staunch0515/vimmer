@@ -7,6 +7,7 @@
 mod convert;
 mod estimate;
 pub mod generate;
+pub mod illustrate;
 mod model;
 
 pub use convert::{
@@ -18,5 +19,7 @@ pub use model::{Language, Orientation, SceneSpec, Storyboard};
 
 #[cfg(test)]
 mod generate_tests;
+#[cfg(test)]
+mod illustrate_tests;
 #[cfg(test)]
 mod tests;
