@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::layer::{
     is_hex_color, Layer, LayerContent, ShapeKind, MAX_LAYERS, MAX_LAYER_KEYFRAMES,
-    MAX_LAYER_TEXT_CHARS,
+    MAX_LAYER_TEXT_CHARS, MAX_TYPING_CPS,
 };
 use crate::model::{
     Keyframe, Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
@@ -355,6 +355,13 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
             }
             if t.highlights.iter().any(|h| h.trim().is_empty()) {
                 out.push("a highlight is empty".to_string());
+            }
+            if let Some(cps) = t.typing_cps {
+                if !(cps.is_finite() && (1.0..=MAX_TYPING_CPS).contains(&cps)) {
+                    out.push(format!(
+                        "typing_cps must be between 1 and {MAX_TYPING_CPS} characters per second, got {cps}"
+                    ));
+                }
             }
         }
         LayerContent::Shape(sh) => {
@@ -1063,6 +1070,9 @@ mod tests {
             ),
             layer(r#"{"id":"bad id!","kind":"text","x":0,"y":0,"width":0.5,"text":"a"}"#),
             layer(r#"{"id":"empty","kind":"shape","x":0,"y":0,"width":0.5,"height":0.5}"#),
+            layer(
+                r#"{"id":"type","kind":"text","x":0,"y":0,"width":0.5,"text":"a","reveal":"typewriter","typing_cps":0}"#,
+            ),
         ];
         let errs = validate(&timeline(vec![a])).unwrap_err();
         assert!(errs.contains(&ValidationError::DuplicateLayerId {
@@ -1094,6 +1104,7 @@ mod tests {
         has("kf", "scale");
         has("bad id!", "id must be");
         has("empty", "fill or a stroke");
+        has("type", "typing_cps");
     }
 
     #[test]

@@ -114,7 +114,10 @@ export type TextLayer = LayerCommon & {
   line_height?: number; // default 1.2
   background?: TextBackground | null;
   highlights?: string[];
-  reveal?: "none" | "words"; // default none
+  // typewriter: unit by unit (motion/typewriter.ts) at typing_cps from the layer start
+  reveal?: "none" | "words" | "typewriter"; // default none
+  typing_cps?: number; // characters per second, 1..200, default 20
+  cursor?: boolean; // blinking cursor, typewriter only, default false
 };
 
 export type ShapeKind = "rect" | "ellipse" | "line";

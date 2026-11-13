@@ -9,9 +9,10 @@ pub mod srt;
 pub mod validation;
 
 pub use layer::{
-    is_hex_color, Anchor, IconLayer, ImageFit, ImageLayer, Layer, LayerAnimation,
+    is_hex_color, typing_units, Anchor, IconLayer, ImageFit, ImageLayer, Layer, LayerAnimation,
     LayerAnimationKind, LayerContent, ShapeKind, ShapeLayer, TextAlign, TextBackground, TextLayer,
-    TextReveal, MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS,
+    TextReveal, DEFAULT_TYPING_CPS, MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS,
+    MAX_TYPING_CPS,
 };
 pub use model::{
     AudioMapping, Duck, Easing, Keyframe, MotionType, Music, Narration, Resolution, Scene,

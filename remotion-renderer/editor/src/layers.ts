@@ -89,6 +89,7 @@ export const checkLayers = (s: Scene): string[] => {
         if (l.text.length > MAX_LAYER_TEXT_CHARS) out.push(`${name}: the text is over ${MAX_LAYER_TEXT_CHARS} characters.`);
         if (l.color !== undefined && !isColor(l.color)) out.push(`${name}: color must be #rgb, #rrggbb or #rrggbbaa.`);
         if (l.background && !isColor(l.background.color)) out.push(`${name}: background color must be #rgb, #rrggbb or #rrggbbaa.`);
+        if (l.typing_cps !== undefined && !(l.typing_cps >= 1 && l.typing_cps <= 200)) out.push(`${name}: typing speed must be 1 to 200 characters per second.`);
         break;
       case "shape":
         if (!l.fill && !l.stroke) out.push(`${name}: needs a fill or a stroke color.`);

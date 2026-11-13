@@ -104,6 +104,68 @@ pub enum TextReveal {
     None,
     /// Word by word, like the scene text.
     Words,
+    /// Character by character at `typing_cps`, from the layer's start. Characters are counted
+    /// as [`typing_units`] (an emoji or an accented letter is one character).
+    Typewriter,
+}
+
+/// Default typing speed of the typewriter reveal, in characters per second.
+pub const DEFAULT_TYPING_CPS: f32 = 20.0;
+/// Highest typing speed.
+pub const MAX_TYPING_CPS: f32 = 200.0;
+
+/// Code points that attach to the code point before them instead of being typed on their own:
+/// combining marks, variation selectors, zero-width joiner, emoji skin tones, tag characters.
+/// Mirrors `joinsPrevious` in `remotion-renderer/src/motion/typewriter.ts`.
+fn joins_previous(c: char) -> bool {
+    matches!(u32::from(c),
+        0x0300..=0x036F
+        | 0x1AB0..=0x1AFF
+        | 0x1DC0..=0x1DFF
+        | 0x20D0..=0x20FF
+        | 0xFE20..=0xFE2F
+        | 0xFE00..=0xFE0F
+        | 0x200D
+        | 0x1F3FB..=0x1F3FF
+        | 0xE0020..=0xE007F
+        | 0xE0100..=0xE01EF)
+}
+
+fn is_regional_indicator(c: char) -> bool {
+    (0x1F1E6..=0x1F1FF).contains(&u32::from(c))
+}
+
+/// The text split into the units a typewriter types one at a time: a code point plus everything
+/// that attaches to it (combining marks, variation selectors, skin tones, ZWJ sequences, flag
+/// pairs). An approximation of grapheme clusters that is good for CJK, emoji and accents and
+/// needs no Unicode tables; the renderer uses the same rule.
+pub fn typing_units(text: &str) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut start = 0;
+    let mut prev: Option<char> = None;
+    // Regional indicators already in the current unit (a flag is two).
+    let mut ri = 0;
+    for (i, c) in text.char_indices() {
+        let attach = match prev {
+            None => false,
+            Some(p) => {
+                joins_previous(c) || p == '\u{200D}' || (is_regional_indicator(c) && ri == 1)
+            }
+        };
+        if !attach && i > 0 {
+            out.push(&text[start..i]);
+            start = i;
+            ri = 0;
+        }
+        if is_regional_indicator(c) {
+            ri += 1;
+        }
+        prev = Some(c);
+    }
+    if start < text.len() {
+        out.push(&text[start..]);
+    }
+    out
 }
 
 fn default_box_padding() -> f32 {
@@ -192,6 +254,24 @@ pub struct TextLayer {
     pub highlights: Vec<String>,
     #[serde(default)]
     pub reveal: TextReveal,
+    /// Typing speed of the typewriter reveal, characters per second. Absent:
+    /// [`DEFAULT_TYPING_CPS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typing_cps: Option<f32>,
+    /// A blinking cursor after the typed text (typewriter reveal only).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cursor: bool,
+}
+
+impl TextLayer {
+    /// How long the typewriter takes to type the whole text, in ms (0 for other reveals).
+    pub fn typing_ms(&self) -> u64 {
+        if self.reveal != TextReveal::Typewriter {
+            return 0;
+        }
+        let cps = f64::from(self.typing_cps.unwrap_or(DEFAULT_TYPING_CPS));
+        (typing_units(&self.text).len() as f64 * 1000.0 / cps).ceil() as u64
+    }
 }
 
 /// A rectangle, ellipse or line.
@@ -253,6 +333,10 @@ impl LayerContent {
 
 fn default_opacity() -> f32 {
     1.0
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero_u64(v: &u64) -> bool {
@@ -372,6 +456,39 @@ mod tests {
             r#"{"id":"x","kind":"video","x":0,"y":0,"width":1,"height":1,"src":"a.mp4"}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn typing_units_keep_emoji_accents_and_flags_whole() {
+        assert_eq!(typing_units("abc"), ["a", "b", "c"]);
+        assert_eq!(typing_units("你好，世界"), ["你", "好", "，", "世", "界"]);
+        // e + combining acute, thumbs up + skin tone, family ZWJ sequence, flag, keycap.
+        let s = "e\u{301}👍🏽👨\u{200D}👩\u{200D}👧🇯🇵1\u{FE0F}\u{20E3}!";
+        let u = typing_units(s);
+        assert_eq!(u.len(), 6, "{u:?}");
+        assert_eq!(u.concat(), s);
+        assert_eq!(u[3], "🇯🇵");
+        // Two flags in a row are two units.
+        assert_eq!(typing_units("🇯🇵🇫🇷").len(), 2);
+        assert!(typing_units("").is_empty());
+    }
+
+    #[test]
+    fn typewriter_fields_default_and_time() {
+        let mut t: Layer = serde_json::from_str(
+            r#"{"id":"t","kind":"text","x":0,"y":0,"width":1,"text":"你好世界!","reveal":"typewriter"}"#,
+        )
+        .unwrap();
+        let LayerContent::Text(text) = &mut t.content else {
+            panic!()
+        };
+        assert_eq!(text.typing_cps, None);
+        assert!(!text.cursor);
+        assert_eq!(text.typing_ms(), 250); // 5 units at 20 cps
+        text.typing_cps = Some(3.0);
+        assert_eq!(text.typing_ms(), 1667);
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(!json.contains("cursor"));
     }
 
     #[test]

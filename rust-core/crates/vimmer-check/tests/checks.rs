@@ -488,3 +488,30 @@ fn layers_demo_fixture_has_no_errors() {
     let bad: Vec<_> = fs.iter().filter(|f| f.severity > Severity::Info).collect();
     assert!(bad.is_empty(), "{bad:#?}");
 }
+
+/// A one-scene 16:9 timeline whose scene holds `layers` (a JSON array).
+fn with_layers(scene_ms: u64, layers: &str) -> VideoTimeline {
+    serde_json::from_str(&format!(
+        r#"{{"fps":30,"resolution":{{"width":1920,"height":1080}},"subtitles":[],
+            "scenes":[{{"id":"s","duration_ms":{scene_ms},"text":null,"highlights":[],"image":null,
+            "motion":"static","audio":null,"layers":{layers}}}]}}"#
+    ))
+    .unwrap()
+}
+
+#[test]
+fn typewriter_that_never_finishes_is_a_warning() {
+    let t = with_layers(
+        3000,
+        r#"[{"id":"slow","kind":"text","x":0.1,"y":0.1,"width":0.8,"reveal":"typewriter","typing_cps":10,
+             "text":"这是一个很长的句子，打字机需要很久才能打完它。This one is long too.","exit":{"kind":"fade","duration_ms":500}},
+            {"id":"quick","kind":"text","x":0.1,"y":0.5,"width":0.8,"reveal":"typewriter","text":"你好 👋🏽"}]"#,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let f = one(&fs, "text.typing_unfinished", Some("s"), None);
+    assert!(f.message.contains("`slow`"), "{}", f.message);
+    assert_eq!(f.severity, Severity::Warning);
+    let fixed = apply(&t, f);
+    assert!(find(&run(&fixed, None), "text.typing_unfinished", None, None).is_empty());
+}

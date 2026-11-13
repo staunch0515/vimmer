@@ -198,6 +198,7 @@ const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, 
               <select value={layer.reveal ?? "none"} onChange={(e) => patch({ reveal: e.target.value === "none" ? undefined : e.target.value })}>
                 <option value="none">all at once</option>
                 <option value="words">word by word</option>
+                <option value="typewriter">typewriter</option>
               </select>
             </Field>
             <ColorField
@@ -207,6 +208,24 @@ const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, 
               onChange={(c) => patch({ background: c ? { ...(layer.background ?? {}), color: c } : undefined })}
             />
           </div>
+          {layer.reveal === "typewriter" && (
+            <div className="two-col">
+              <NumField
+                label="Typing speed"
+                suffix="chars/s"
+                value={layer.typing_cps ?? 20}
+                step={1}
+                validate={(v) => (v >= 1 && v <= 200 ? null : "1 to 200")}
+                onCommit={(v) => patch({ typing_cps: v === 20 ? undefined : v })}
+              />
+              <Field label="Cursor">
+                <label className="check">
+                  <input type="checkbox" checked={Boolean(layer.cursor)} onChange={(e) => patch({ cursor: e.target.checked || undefined })} />
+                  blinking cursor
+                </label>
+              </Field>
+            </div>
+          )}
           <Field label="Highlights" hint="Comma-separated words">
             <input
               value={(layer.highlights ?? []).join(", ")}

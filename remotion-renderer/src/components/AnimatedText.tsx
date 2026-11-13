@@ -15,7 +15,7 @@ const IMAGE_SCRIM =
 const STAGGER_FRAMES = 3;
 const WORD_FADE_FRAMES = 12;
 
-const normalize = (word: string): string => word.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+export const normalize = (word: string): string => word.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
 // One inline-block span per word. With `animate` (the default) each word fades and rises in,
 // STAGGER_FRAMES after the one before it, counting from `frame` 0; highlighted words glow in.
@@ -59,12 +59,7 @@ export const AnimatedWords: React.FC<{
             opacity,
             transform: `translateY(${rise}px)`,
             marginRight: "0.25em",
-            ...(isHighlight
-              ? {
-                  color: "#a5b4fc",
-                  textShadow: `0 0 ${24 * glow}px rgba(99, 102, 241, ${0.6 * glow})`,
-                }
-              : {}),
+            ...(isHighlight ? highlightStyle(glow) : {}),
           }}
         >
           {word}
@@ -73,6 +68,12 @@ export const AnimatedWords: React.FC<{
     })}
   </>
 );
+
+// The accent treatment of a highlighted word at glow 0..1.
+export const highlightStyle = (glow: number): React.CSSProperties => ({
+  color: "#a5b4fc",
+  textShadow: `0 0 ${24 * glow}px rgba(99, 102, 241, ${0.6 * glow})`,
+});
 
 export const highlightKeys = (highlights: readonly string[]): Set<string> => new Set(highlights.map(normalize));
 export const splitWords = (text: string): string[] => text.split(/\s+/).filter(Boolean);

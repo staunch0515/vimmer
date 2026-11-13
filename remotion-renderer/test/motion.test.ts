@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { IDENTITY_POSE, applyEasing, sampleKeyframes } from "../src/motion/keyframes.ts";
 import { transitionPose } from "../src/motion/transitions.ts";
 import { animationPose, layerFrames, layerStateAt, splitLayers } from "../src/motion/layers.ts";
+import { cursorVisible, typedCount, typedSegments, typingUnits } from "../src/motion/typewriter.ts";
 import type { Easing, Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
 
 const kf = (at_ms: number, extra: Partial<Keyframe> = {}): Keyframe => ({ at_ms, ...extra });
@@ -220,4 +221,45 @@ test("a layer's state depends only on the scene frame (chunked renders match ful
     const b = layerStateAt(l, f, 30, 90, 1920, 1080, sampleKeyframes(l.keyframes!, (f * 1000) / 30));
     assert.deepEqual(a, b);
   }
+});
+
+test("typewriter units keep CJK characters, emoji, accents and flags whole", () => {
+  assert.deepEqual(typingUnits("abc"), ["a", "b", "c"]);
+  assert.deepEqual(typingUnits("你好，世界"), ["你", "好", "，", "世", "界"]);
+  const s = "é👍🏽👨‍👩‍👧🇯🇵1️⃣!";
+  const u = typingUnits(s);
+  assert.equal(u.length, 6, JSON.stringify(u));
+  assert.equal(u.join(""), s);
+  assert.equal(u[3], "🇯🇵");
+  assert.equal(typingUnits("🇯🇵🇫🇷").length, 2);
+  // Astral CJK (surrogate pairs in UTF-16) is one unit per character.
+  assert.deepEqual(typingUnits("𠮷野家"), ["𠮷", "野", "家"]);
+});
+
+test("typewriter count and cursor depend only on the layer frame", () => {
+  assert.equal(typedCount(0, 30, 20, 10), 0);
+  assert.equal(typedCount(3, 30, 20, 10), 2);
+  assert.equal(typedCount(300, 30, 20, 10), 10);
+  // 10 units at 20 cps are typed by frame 15; solid cursor until then, then blinking.
+  assert.equal(cursorVisible(14, 30, 20, 10), true);
+  assert.equal(cursorVisible(15, 30, 20, 10), true);
+  assert.equal(cursorVisible(15 + 16, 30, 20, 10), false); // 533 ms after: off
+  assert.equal(cursorVisible(15 + 32, 30, 20, 10), true);
+});
+
+test("typed segments never split a unit and put the cursor after the typed text", () => {
+  const segs = typedSegments("Hi 👋🏽 世界", 3, (w) => w === "世界");
+  assert.deepEqual(
+    segs.map((s) => [s.shown, s.hidden, s.cursorAfter, s.highlight]),
+    [
+      ["Hi", "", false, false],
+      [" ", "", true, false],
+      ["", "👋🏽", false, false],
+      ["", " ", false, false],
+      ["", "世界", false, true],
+    ],
+  );
+  const none = typedSegments("abc", 0, () => false);
+  assert.equal(none[0].cursorAfter, true);
+  assert.equal(none[0].shown, "");
 });

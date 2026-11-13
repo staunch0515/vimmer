@@ -744,6 +744,8 @@ const LAYER_KIND_FIELDS: &[(&str, &[(&str, Kind)])] = &[
             ("background", Kind::TextBackground),
             ("highlights", Kind::Highlights),
             ("reveal", Kind::Leaf),
+            ("typing_cps", Kind::Leaf),
+            ("cursor", Kind::Leaf),
         ],
     ),
     (
@@ -789,6 +791,8 @@ const LAYER_FIELDS_ALL: &[(&str, Kind)] = &[
     ("background", Kind::TextBackground),
     ("highlights", Kind::Highlights),
     ("reveal", Kind::Leaf),
+    ("typing_cps", Kind::Leaf),
+    ("cursor", Kind::Leaf),
     ("shape", Kind::Leaf),
     ("fill", Kind::Leaf),
     ("stroke", Kind::Leaf),

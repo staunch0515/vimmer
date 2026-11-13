@@ -13,7 +13,8 @@ use std::path::Path;
 
 use serde_json::json;
 use vimmer_dsl::{
-    Anchor, ImageFit, Layer, LayerContent, Resolution, Scene, TextLayer, VideoTimeline,
+    typing_units, Anchor, ImageFit, Layer, LayerContent, Resolution, Scene, TextLayer, TextReveal,
+    VideoTimeline,
 };
 
 use crate::assets::{UPSCALE_INFO, UPSCALE_WARN};
@@ -169,6 +170,7 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
                     );
                 }
                 reading_speed(&mut out, scene, si, li, layer, t, at);
+                typing_time(&mut out, scene, si, li, layer, t, at);
             }
 
             let rect = place(layer, res, box_h);
@@ -241,6 +243,50 @@ fn reading_speed(
             .at(at),
         );
     }
+}
+
+/// A typewriter that is still typing when its layer starts to leave.
+fn typing_time(
+    out: &mut Vec<Finding>,
+    scene: &Scene,
+    si: usize,
+    li: usize,
+    layer: &Layer,
+    t: &TextLayer,
+    at: u64,
+) {
+    if t.reveal != TextReveal::Typewriter {
+        return;
+    }
+    let shown = layer
+        .end_ms_in(scene.duration_ms)
+        .saturating_sub(layer.start_ms);
+    let until_exit = shown.saturating_sub(layer.exit.map_or(0, |e| e.duration_ms));
+    let typing = t.typing_ms();
+    if typing <= until_exit || until_exit == 0 {
+        return;
+    }
+    let units = typing_units(&t.text).len();
+    let needed = (units as f64 * 1000.0 / until_exit as f64).ceil();
+    out.push(
+        Finding::new(
+            Severity::Warning,
+            "text.typing_unfinished",
+            format!(
+                "layer `{}` types {units} characters in {} but leaves after {}; the end of the text is never shown",
+                layer.id,
+                crate::secs(typing),
+                crate::secs(until_exit)
+            ),
+            Suggestion::set(
+                format!("type faster (typing_cps {needed}) or show the layer longer"),
+                layer_path(si, li, "typing_cps"),
+                json!(needed),
+            ),
+        )
+        .scene(&scene.id)
+        .at(at),
+    );
 }
 
 /// Image and icon files: missing, unreadable, too small for their box; icons without a viewBox.
@@ -362,7 +408,7 @@ pub fn check_assets(timeline: &VideoTimeline, public_dir: &Path) -> Vec<Finding>
                         ));
                     }
                 }
-                LayerContent::Text(_) | LayerContent::Shape(_) => {}
+                _ => {}
             }
         }
     }
