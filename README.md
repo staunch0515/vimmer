@@ -24,7 +24,7 @@ Rust `VideoTimeline` / `Scene` structs and the TypeScript types in
 
 - `fps` must be `30`; `resolution` must be `1920x1080` or `1080x1920`.
 - Total duration is capped at 200 000 ms (6 000 frames).
-- Each scene needs `text` or `image`; `motion` is one of `static`, `zoom_in`,
+- Each scene needs `text`, `image` or at least one layer; `motion` is one of `static`, `zoom_in`,
   `zoom_out`, `pan_left`, `pan_right`.
 - Asset paths are relative to `remotion-renderer/public/`.
 
@@ -62,6 +62,76 @@ that animates the image layer. Defaults: `scale` 1, `x` and `y` 0 (percent of th
 `fixtures/motion-demo.json` shows both: three scenes, one slide transition, and
 keyframes. Its scene 2 is a transition, and scenes 1 and 2 share a chunk with
 `--chunk-ms 3000`.
+
+### Layers (`layers`)
+
+Optional per scene: an ordered list of graphics drawn over (or under) the scene's text, each
+with its own box, timing and animation. Kinds: `image`, `text`, `shape` and `icon`. A scene
+without `layers` renders exactly as before (the key is not even written back out).
+
+```json
+{ "id": "logo", "kind": "icon", "src": "assets/icons/star.svg", "color": "#facc15",
+  "x": 0.85, "y": 0.2, "width": 0.09, "height": 0.16, "anchor": "center", "z": 1,
+  "start_ms": 300, "end_ms": 3000,
+  "enter": { "kind": "pop", "duration_ms": 400 }, "exit": { "kind": "fade" },
+  "keyframes": [{ "at_ms": 0, "rotation": -15 }, { "at_ms": 3000, "rotation": 20 }] }
+```
+
+Common fields (every kind):
+
+| field | default | meaning |
+|---|---|---|
+| `id` | required | unique within the scene; letters, digits, `-`, `_` |
+| `kind` | required | `image`, `text`, `shape`, `icon` |
+| `x`, `y` | required | position as fractions of the frame width / height (origin top-left); -1..2 |
+| `width` | required | fraction of the frame width, above 0, at most 4 |
+| `height` | required except text | fraction of the frame height; a text layer without it is as tall as its text, with it the text is centered vertically in the box |
+| `anchor` | `top_left` | which point of the box `x`/`y` place: `top_left` or `center` |
+| `z` | `0` | stacking (below) |
+| `start_ms`, `end_ms` | whole scene | from the scene start; `start_ms < end_ms <= duration_ms` |
+| `opacity` | `1` | 0..1 |
+| `rotation` | `0` | degrees clockwise about the box center, within ±360 |
+| `keyframes` | none | the scene keyframe format, `at_ms` from the scene start: `x`/`y` offset the box in percent of the frame, `scale` grows it about its center, `opacity` multiplies, `rotation` adds |
+| `enter`, `exit` | none | `{ "kind", "duration_ms" = 400 }`, kind `fade`, `slide_up`, `slide_down`, `slide_left`, `slide_right` (fade while moving 6% of the frame's short side) or `pop` (grows from half size with an overshoot; exit shrinks). `enter` starts on the layer's first frame, `exit` ends on its last; together they must fit in the layer's time |
+
+Kind fields (lengths that are not positions are fractions of the **frame height**):
+
+- `image`: `src` (path under `public/`), `fit` `cover` (default, crops to fill) or `contain`,
+  `corner_radius`. Layer images are drawn as they are (not normalized like `scene.image`), so
+  PNG transparency works.
+- `text`: `text` (≤ 400 characters), `font_size` (0.06), `color` (`#fafafa`), `weight`
+  (100..900, 600), `align` (`left`/`center`/`right`, center), `line_height` (1.2),
+  `background` `{ color, padding = 0.4, radius = 0.3 }` (padding and radius in font sizes),
+  `highlights` (accent color, as in the scene text), `reveal` `none` or `words` (word by word,
+  like the scene text). Same font as the scene text.
+- `shape`: `shape` `rect` (default) / `ellipse` / `line` (from the box's top-left to
+  bottom-right corner; `height` 0 is horizontal), `fill`, `stroke` (a shape needs one, a line a
+  stroke), `stroke_width` (0..0.1; 0 with a stroke draws 0.004), `corner_radius` (rect).
+- `icon`: `src` (an `.svg` under `public/`), `color` (`#fafafa`). The SVG is drawn as a
+  silhouette in `color` (an SVG flood filter keeps only its alpha), so its own colors do not
+  matter. Keep a `viewBox` so it scales to the box. Bundled, CC0:
+  `assets/icons/{star,check-circle,arrow-right}.svg`.
+
+Colors are `#rgb`, `#rrggbb` or `#rrggbbaa`. Validation also rejects duplicate ids, more than
+32 layers per scene, more than 24 keyframes per layer, and asset paths that are absolute,
+contain `..`, `\`, `%` or a URL scheme.
+
+**Stacking.** Inside a scene, bottom to top: the scene image (`scene.image`), layers with
+`z < 0`, the scene text, layers with `z >= 0`. Equal `z` keeps list order. Subtitles are always on
+top of everything. A transition moves the whole scene, layers included, and the held last frame
+of the previous scene shows its layers as they were on that frame.
+
+**Timing and chunks.** Everything about a layer is computed from the scene-relative frame
+(`remotion-renderer/src/motion/layers.ts`, pure and unit-tested). Chunks always start on a
+scene cut (the planner never splits a scene), so a layer renders the same in a chunked render
+as in a full one. A layer cannot outlive its scene; for something that continues across scenes,
+give each scene a layer with the same box and matching keyframes, as the progress bar in
+`fixtures/layers-demo.json` does (it runs across the chunk seam of `--chunk-ms 3000`).
+
+`fixtures/layers-demo.json` (16:9, 12 s, 3 scenes) uses every kind, negative and positive `z`,
+enter and exit animations, keyframes and a transition. In the Studio, the Scene tab lists the
+selected scene's layers (top first, with the scene text's place marked) and adds, edits,
+reorders and deletes them; the selected layer is outlined on the canvas and can be dragged.
 
 ## Commands
 
@@ -795,16 +865,19 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | code | severity | rule |
 |---|---|---|
 | `dsl.invalid` | error | the DSL validation fails (cue and word-timing problems are reported by the codes below instead) |
-| `text.overflow` | error / warning | scene text needs more lines than fit between the top padding and the 260 px bottom inset: 6 lines at 1920x1080, 14 at 1080x1920 (92 px font, 1.2 line height, 73.9% of the width per line). Error when it still overflows with every width 12% narrower |
-| `text.reading_speed` | warning | scene text without narration shown faster than the reading limit (below) |
+| `text.overflow` | error / warning | a text layer with a `height` needs more lines than its box holds (same width model, its own font size), or scene text needs more lines than fit between the top padding and the 260 px bottom inset: 6 lines at 1920x1080, 14 at 1080x1920 (92 px font, 1.2 line height, 73.9% of the width per line). Error when it still overflows with every width 12% narrower |
+| `text.reading_speed` | warning | scene text without narration, or a text layer over its shown time, faster than the reading limit (below) |
 | `subtitle.too_long` | error / warning | a cue needs more than 2 lines in the band (font 5% of the short side, text width 86% of the frame minus padding); error at 4+ lines even with 12% narrower widths. The fix splits the cue in two |
 | `subtitle.reading_speed` | warning | a cue without word timing above en 20, zh 9, ja 4 characters per second (Netflix limits; en counts spaces, zh/ja skip punctuation). Cues with word timing or over a narrated scene follow the speech and are not checked |
-| `safe_area.text`, `safe_area.subtitle` | warning / error | text or a cue reaches outside the title-safe area (inner 90%, 5% margins, for 16:9 and 9:16) |
+| `safe_area.text`, `safe_area.subtitle` | warning / error | text, a text layer's box or a cue reaches outside the title-safe area (inner 90%, 5% margins, for 16:9 and 9:16) |
 | `safe_area.subtitle_band` | info | at 1080x1920 the renderer puts the subtitle band 43 px from the bottom, inside the 96 px margin (a renderer change, not a timeline field) |
 | `motion.uncovered_edge` | warning | at some frame the keyframes (offset, rotation, scale below 1) leave part of the frame uncovered; the fix raises the keyframe scales |
-| `assets.missing_image`, `assets.unreadable_image` | error | image missing, or not a PNG/JPEG the renderer can normalize |
+| `assets.missing_image`, `assets.unreadable_image` | error | image missing, or not a PNG/JPEG the renderer can normalize (scene images and image layers) |
+| `assets.missing_icon`, `assets.unreadable_icon` | error | an icon layer's file is missing or has no `<svg>` root |
+| `assets.icon_no_viewbox` | warning | the icon's `<svg>` has no `viewBox`, so it does not scale to the layer box (an SVG has no resolution otherwise) |
+| `layer.off_frame` | warning | a layer's box (at every keyframe pose) lies entirely outside the frame |
 | `assets.aspect_ratio` | warning / info | the picture fills under 40% / 60% of the frame; the rest is blurred padding (the renderer fits, never crops) |
-| `assets.low_resolution` | warning / info | the image is enlarged more than 2.0x / 1.5x on screen (fit factor times the largest zoom) |
+| `assets.low_resolution` | warning / info | the image is enlarged more than 2.0x / 1.5x on screen (fit factor times the largest zoom; for an image layer, the factor that fits it to its box) |
 | `audio.missing`, `audio.unreadable` | error | `scene.audio` or `music` file missing or not decodable |
 | `audio.cut_off` | error / warning | the clip is longer than the scene after `offset_ms`: error when more than 250 ms is cut |
 | `audio.offset_past_end` | error | `offset_ms` at or past the scene end; the clip never plays |
@@ -874,6 +947,12 @@ Loudness and clipping of `http(s)` assets are not checked.
 - **Building a `SubtitleCue`**: use `SubtitleCue::new(start_ms, end_ms, text)` or
   `SubtitleCue { ..Default::default() }`. A struct literal with every field listed breaks
   whenever a field is added (as `words` was).
+- **Adding a layer kind** (counter, chart, video, ...): add a variant to `LayerContent`
+  (`vimmer-dsl/src/layer.rs`) with its fields and checks in `layer_problems` (`validation.rs`),
+  the TS type in `types/timeline.ts`, a view in `components/LayerKinds.tsx` and a case in
+  `LayerStack.tsx`, its fields in `LAYER_KIND_FIELDS` (`vimmer-storyboard/src/edit.rs`) and
+  `prompts/edit.md`, and a default in the editor (`editor/src/layers.ts` `newLayer`). Box,
+  timing, stacking and animation come for free.
 - **Building a `Scene` or `VideoTimeline`**: neither implements `Default`. Build them from JSON
   with `serde_json::from_value` (as `vimmer-storyboard` does) so that new DSL fields take their
   serde defaults. A literal would fail to compile when a field is added.
