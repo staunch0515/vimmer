@@ -5,10 +5,11 @@
 cases. `--budget` (USD, default 10) stops starting new cases once a run has spent that much.
 Every run appends its spend to `results/spend.log`.
 
-- `cases.json`: 53 instructions in zh, en and ja, over `examples/*.timeline.json`, the
+- `cases.json`: 62 instructions in zh, en and ja, over `examples/*.timeline.json`, the
   `fixtures/*.json` and `timelines/zh-injected.timeline.json`. The last has a prompt injection
   in a scene's text. Groups: easy, multi (multi-scene and subtitles), ambiguous, impossible,
-  hostile.
+  hostile, layers (add / move / restyle / remove scene layers, on `fixtures/layers-demo.json` and
+  the example timelines).
 - `run_eval.py`: runs each case through `vimmer edit --dry-run --json` (4 at a time). A case
   passes when:
   - the status is one of the expected ones;
@@ -29,4 +30,6 @@ Runs in `results/`, in order:
 - `r1`-`r4`: the first prompt.
 - `final-*`: after the subtitle retiming and the explanation-language rule.
 - `v2-*`: after the narration rule (the renderer lengthens a narrated scene to fit its speech).
-  This is the current prompt.
+  This is the current prompt for the 53 original cases.
+- `layers-r1-sonnet-low`: the 9 `layer-*` cases after scene layers were added to the model and
+  the prompt (`--only layer-...`): 9/9, $0.14.

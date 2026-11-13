@@ -112,6 +112,16 @@ class EditHelperTest(unittest.TestCase):
         self.assertIn("<instruction>\n第二段节奏快一点\n</instruction>", user)
         self.assertIn('"id": "scene-01"', user)
 
+    def test_scene_table_lists_layers_by_index(self):
+        t = timeline()
+        t["scenes"][1]["layers"] = [
+            {"id": "logo", "kind": "icon", "src": "assets/icons/star.svg", "x": 0, "y": 0, "width": 0.1, "height": 0.1},
+            {"id": "note", "kind": "text", "text": "hi", "x": 0, "y": 0, "width": 0.5},
+        ]
+        lines, _ = et.scene_table(t)
+        self.assertIn("layers=[0:logo(icon),1:note(text)]", lines[1])
+        self.assertNotIn("layers=", lines[0])
+
     def test_system_prompt_is_identical_across_requests(self):
         a, b = FakeClient(message("{}")), FakeClient(message("{}"))
         run_main(request(), a)

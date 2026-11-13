@@ -909,3 +909,250 @@ fn music_duck_unknown_keys_and_bad_ranges_are_rejected() {
     );
     assert_eq!(e.stage, Stage::Validation, "{e}");
 }
+
+// --- layers -------------------------------------------------------------------------------------
+
+fn with_layers() -> Value {
+    let mut doc = small();
+    doc["scenes"][1]["layers"] = json!([
+        {"id": "bar", "kind": "shape", "x": 0, "y": 0.9, "width": 1, "height": 0.1, "fill": "#000000aa", "z": -1},
+        {"id": "title", "kind": "text", "x": 0.1, "y": 0.1, "width": 0.8, "text": "Hello"}
+    ]);
+    doc
+}
+
+#[test]
+fn add_a_layer() {
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/layers", "value": [
+            {"id": "logo", "kind": "icon", "src": "assets/icons/star.svg", "color": "#facc15",
+             "x": 0.85, "y": 0.1, "width": 0.08, "height": 0.14, "enter": {"kind": "pop", "duration_ms": 300}}
+        ]}]),
+    );
+    assert_eq!(out.timeline["scenes"][0]["layers"][0]["id"], "logo");
+    assert!(
+        out.summary
+            .iter()
+            .any(|l| l.contains("layer `logo` added (icon assets/icons/star.svg, z 0)")),
+        "{:?}",
+        out.summary
+    );
+    // Append to an existing list.
+    let out = ok(
+        &with_layers(),
+        json!([{"op": "add", "path": "/scenes/1/layers/-", "value":
+            {"id": "note", "kind": "text", "x": 0.1, "y": 0.5, "width": 0.4, "text": "Note", "background": {"color": "#fff"}}}]),
+    );
+    assert!(
+        out.summary
+            .iter()
+            .any(|l| l.contains("layer `note` added (text \"Note\", z 0)")),
+        "{:?}",
+        out.summary
+    );
+}
+
+#[test]
+fn move_and_restyle_a_layer() {
+    let out = ok(
+        &with_layers(),
+        json!([
+            {"op": "replace", "path": "/scenes/1/layers/1/x", "value": 0.2},
+            {"op": "add", "path": "/scenes/1/layers/1/z", "value": -2},
+            {"op": "add", "path": "/scenes/1/layers/1/color", "value": "#ff0000"}
+        ]),
+    );
+    let line = out
+        .summary
+        .iter()
+        .find(|l| l.contains("layer `title`"))
+        .expect("title line");
+    assert!(line.contains("x 0.1 -> 0.2"), "{line}");
+    assert!(line.contains("z none -> -2"), "{line}");
+    assert!(line.contains("color \"#fafafa\" -> \"#ff0000\""), "{line}");
+    // Reordering the list is reported as such.
+    let out = ok(
+        &with_layers(),
+        json!([{"op": "move", "from": "/scenes/1/layers/1", "path": "/scenes/1/layers/0"}]),
+    );
+    assert!(
+        out.summary
+            .iter()
+            .any(|l| l.contains("layer order bar, title -> title, bar")),
+        "{:?}",
+        out.summary
+    );
+    // Moving a layer to another scene.
+    let out = ok(
+        &with_layers(),
+        json!([
+            {"op": "add", "path": "/scenes/0/layers", "value": []},
+            {"op": "move", "from": "/scenes/1/layers/0", "path": "/scenes/0/layers/-"}
+        ]),
+    );
+    assert_eq!(out.timeline["scenes"][0]["layers"][0]["id"], "bar");
+    assert!(out
+        .summary
+        .iter()
+        .any(|l| l.starts_with("b:") && l.contains("layer `bar` removed")));
+}
+
+#[test]
+fn remove_a_layer() {
+    let out = ok(
+        &with_layers(),
+        json!([{"op": "remove", "path": "/scenes/1/layers/0"}]),
+    );
+    assert!(
+        out.summary
+            .iter()
+            .any(|l| l.contains("layer `bar` removed")),
+        "{:?}",
+        out.summary
+    );
+    let out = ok(
+        &with_layers(),
+        json!([{"op": "remove", "path": "/scenes/1/layers"}]),
+    );
+    assert!(out.timeline["scenes"][1].get("layers").is_none());
+}
+
+#[test]
+fn unknown_layer_keys_are_rejected() {
+    // A key no layer has.
+    let r = err(
+        &with_layers(),
+        json!([{"op": "add", "path": "/scenes/1/layers/0/blur", "value": 3}]),
+    );
+    assert_eq!(r.stage, Stage::Guard);
+    assert!(
+        text(&r).contains("`blur` is not a field of a layer"),
+        "{}",
+        text(&r)
+    );
+    // A key of another kind: `text` on a shape, inside a value.
+    let r = err(
+        &with_layers(),
+        json!([{"op": "add", "path": "/scenes/1/layers/-", "value":
+            {"id": "x", "kind": "shape", "x": 0, "y": 0, "width": 1, "height": 1, "fill": "#000", "text": "hi"}}]),
+    );
+    assert_eq!(r.stage, Stage::Guard);
+    assert!(
+        text(&r).contains("unknown field `text` in a shape layer"),
+        "{}",
+        text(&r)
+    );
+    // ... and by pointer, caught on the patched document.
+    let r = err(
+        &with_layers(),
+        json!([{"op": "add", "path": "/scenes/1/layers/0/font_size", "value": 0.1}]),
+    );
+    assert_eq!(r.stage, Stage::Guard);
+    assert!(
+        text(&r).contains("unknown field `font_size` in a shape layer"),
+        "{}",
+        text(&r)
+    );
+    // Unknown keys inside nested layer objects.
+    let r = err(
+        &with_layers(),
+        json!([{"op": "add", "path": "/scenes/1/layers/1/enter", "value": {"kind": "fade", "easing": "x"}}]),
+    );
+    assert!(text(&r).contains("unknown field `easing`"), "{}", text(&r));
+    // An unknown kind is a model error.
+    let r = err(
+        &with_layers(),
+        json!([{"op": "replace", "path": "/scenes/1/layers/0/kind", "value": "video"}]),
+    );
+    assert_eq!(r.stage, Stage::Model);
+    // A layer value moved to a non-layer place.
+    let r = err(
+        &with_layers(),
+        json!([{"op": "move", "from": "/scenes/1/layers/0", "path": "/scenes/0/keyframes/-"}]),
+    );
+    assert_eq!(r.stage, Stage::Guard);
+}
+
+#[test]
+fn hostile_layer_asset_paths_are_rejected() {
+    for src in [
+        "/etc/passwd.svg",
+        "../secret.svg",
+        "assets/../../x.svg",
+        "https://evil.example/x.svg",
+        "file:///x.svg",
+        "data:image/svg+xml,<svg onload=alert(1)>",
+        "~/x.svg",
+        "assets\\x.svg",
+        "assets/%2e%2e/x.svg",
+    ] {
+        let r = err(
+            &small(),
+            json!([{"op": "add", "path": "/scenes/0/layers", "value": [
+                {"id": "i", "kind": "icon", "src": src, "x": 0, "y": 0, "width": 0.1, "height": 0.1}
+            ]}]),
+        );
+        assert_eq!(r.stage, Stage::Validation, "{src}");
+        let r = err(
+            &small(),
+            json!([{"op": "add", "path": "/scenes/0/layers", "value": [
+                {"id": "i", "kind": "image", "src": src, "x": 0, "y": 0, "width": 0.1, "height": 0.1}
+            ]}]),
+        );
+        assert_eq!(r.stage, Stage::Validation, "{src}");
+        assert!(
+            text(&r).contains("layer `i` src") || text(&r).contains("layer `i`"),
+            "{src}: {}",
+            text(&r)
+        );
+    }
+    // An icon that is not an SVG.
+    let r = err(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/layers", "value": [
+            {"id": "i", "kind": "icon", "src": "assets/x.png", "x": 0, "y": 0, "width": 0.1, "height": 0.1}
+        ]}]),
+    );
+    assert!(text(&r).contains(".svg"), "{}", text(&r));
+}
+
+#[test]
+fn layer_rules_from_the_dsl_apply() {
+    let r = err(
+        &with_layers(),
+        json!([
+            {"op": "replace", "path": "/scenes/1/layers/1/id", "value": "bar"},
+            {"op": "add", "path": "/scenes/1/layers/0/end_ms", "value": 9000},
+            {"op": "replace", "path": "/scenes/1/layers/0/fill", "value": "red"}
+        ]),
+    );
+    assert_eq!(r.stage, Stage::Validation);
+    let t = text(&r);
+    assert!(t.contains("two layers with id `bar`"), "{t}");
+    assert!(t.contains("start_ms < end_ms"), "{t}");
+    assert!(t.contains("`red` must be a color"), "{t}");
+}
+
+#[test]
+fn layer_asset_files_are_checked_in_the_public_dir() {
+    let dir = public_dir();
+    let check = EditCheck {
+        public_dir: Some(dir.clone()),
+    };
+    let out = apply_edit(
+        &small(),
+        &json!([{"op": "add", "path": "/scenes/0/layers", "value": [
+            {"id": "i", "kind": "image", "src": "assets/nope.png", "x": 0, "y": 0, "width": 0.1, "height": 0.1}
+        ]}]),
+        &check,
+    )
+    .unwrap();
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.contains("layer `i` src") && w.contains("not found")),
+        "{:?}",
+        out.warnings
+    );
+}

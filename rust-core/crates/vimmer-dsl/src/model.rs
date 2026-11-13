@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::layer::Layer;
+
 /// Target frame rate for every render.
 pub const TARGET_FPS: u32 = 30;
 /// Hard ceiling on total timeline length.
@@ -135,6 +137,9 @@ pub struct Scene {
     /// Animation of the image layer. When non-empty it replaces `motion`.
     #[serde(default)]
     pub keyframes: Vec<Keyframe>,
+    /// Extra graphics in this scene, in list order (see [`crate::layer`] for units and stacking).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<Layer>,
 }
 
 impl Scene {
@@ -379,6 +384,17 @@ mod tests {
         assert_eq!(music.duck.release_ms, 800);
         let back: Music = serde_json::from_str(&serde_json::to_string(&music).unwrap()).unwrap();
         assert_eq!(back, music);
+    }
+
+    #[test]
+    fn timelines_without_layers_write_no_layers_key() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fixtures");
+        for name in ["sample-timeline.json", "motion-demo.json"] {
+            let raw = std::fs::read_to_string(format!("{dir}/{name}")).unwrap();
+            let t: VideoTimeline = serde_json::from_str(&raw).unwrap();
+            assert!(t.scenes.iter().all(|s| s.layers.is_empty()));
+            assert!(!serde_json::to_string(&t).unwrap().contains("\"layers\""));
+        }
     }
 
     #[test]

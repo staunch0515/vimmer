@@ -1,0 +1,45 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1920, "height": 1080 },
+  "scenes": [
+    {
+      "id": "text-layers",
+      "duration_ms": 4000,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        { "id": "ok", "kind": "text", "x": 0.1, "y": 0.1, "width": 0.5, "text": "A short title" },
+        { "id": "crammed", "kind": "text", "x": 0.1, "y": 0.3, "width": 0.3, "height": 0.1, "font_size": 0.06,
+          "text": "This text is far too long to fit in a box that is only one line tall" },
+        { "id": "edge", "kind": "text", "x": 0.01, "y": 0.9, "width": 0.4, "text": "Too close to the corner" },
+        { "id": "rushed", "kind": "text", "x": 0.1, "y": 0.5, "width": 0.8, "font_size": 0.03, "start_ms": 3000,
+          "text": "Twenty-five words of text shown for a single second cannot be read by anyone at all, whatever font size or colour you pick for it here today" }
+      ]
+    },
+    {
+      "id": "graphics",
+      "duration_ms": 3000,
+      "text": "Graphics",
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        { "id": "gone", "kind": "shape", "x": 1.2, "y": 0.2, "width": 0.2, "height": 0.2, "fill": "#fff" },
+        { "id": "slides-in", "kind": "shape", "x": 1.2, "y": 0.2, "width": 0.2, "height": 0.2, "fill": "#fff",
+          "keyframes": [{ "at_ms": 0 }, { "at_ms": 1000, "x": -100 }] },
+        { "id": "missing", "kind": "image", "src": "img/nope.png", "x": 0.1, "y": 0.1, "width": 0.2, "height": 0.2 },
+        { "id": "tiny", "kind": "image", "src": "img/tiny.png", "x": 0.5, "y": 0.1, "width": 0.4, "height": 0.4 },
+        { "id": "sharp", "kind": "image", "src": "img/big.png", "x": 0.5, "y": 0.5, "width": 0.2, "height": 0.2 },
+        { "id": "no-icon", "kind": "icon", "src": "icons/nope.svg", "x": 0.1, "y": 0.5, "width": 0.1, "height": 0.1 },
+        { "id": "fake-icon", "kind": "icon", "src": "icons/fake.svg", "x": 0.2, "y": 0.5, "width": 0.1, "height": 0.1 },
+        { "id": "fixed-icon", "kind": "icon", "src": "icons/fixed.svg", "x": 0.3, "y": 0.5, "width": 0.1, "height": 0.1 },
+        { "id": "good-icon", "kind": "icon", "src": "icons/good.svg", "x": 0.4, "y": 0.5, "width": 0.1, "height": 0.1 }
+      ]
+    }
+  ],
+  "subtitles": []
+}

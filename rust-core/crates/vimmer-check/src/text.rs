@@ -294,7 +294,7 @@ fn break_segments(text: &str) -> Vec<(bool, String)> {
 }
 
 /// Characters of `text` that fit in `lines` lines, at the average width of its own characters.
-fn capacity_chars(text: &str, per_line_px: f64, font_px: f64, lines: u32) -> usize {
+pub(crate) fn capacity_chars(text: &str, per_line_px: f64, font_px: f64, lines: u32) -> usize {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() {
         return 0;

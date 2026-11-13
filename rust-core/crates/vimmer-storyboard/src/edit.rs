@@ -585,6 +585,10 @@ enum Kind {
     Transition,
     Keyframes,
     Keyframe,
+    Layers,
+    Layer,
+    LayerAnimation,
+    TextBackground,
     Subtitles,
     Cue,
     Words,
@@ -618,7 +622,12 @@ impl Kind {
                 ("narration", Narration),
                 ("transition_in", Transition),
                 ("keyframes", Keyframes),
+                ("layers", Layers),
             ],
+            // Every field any layer kind has; `check_value` narrows it to the value's `kind`.
+            Layer => LAYER_FIELDS_ALL,
+            LayerAnimation => &[("kind", Leaf), ("duration_ms", Leaf)],
+            TextBackground => &[("color", Leaf), ("padding", Leaf), ("radius", Leaf)],
             Audio => &[("source", Leaf), ("offset_ms", Leaf)],
             Narration => &[("voice", Leaf)],
             Transition => &[("kind", Leaf), ("duration_ms", Leaf)],
@@ -660,6 +669,7 @@ impl Kind {
             Kind::Scenes => Some(Kind::Scene),
             Kind::Highlights => Some(Kind::Leaf),
             Kind::Keyframes => Some(Kind::Keyframe),
+            Kind::Layers => Some(Kind::Layer),
             Kind::Subtitles => Some(Kind::Cue),
             Kind::Words => Some(Kind::Word),
             _ => None,
@@ -678,6 +688,10 @@ impl Kind {
             Kind::Transition => "a transition",
             Kind::Keyframes => "a keyframe list",
             Kind::Keyframe => "a keyframe",
+            Kind::Layers => "a layer list",
+            Kind::Layer => "a layer",
+            Kind::LayerAnimation => "a layer enter/exit animation",
+            Kind::TextBackground => "a text layer background",
             Kind::Subtitles => "the subtitle list",
             Kind::Cue => "a subtitle cue",
             Kind::Words => "a word list",
@@ -686,6 +700,111 @@ impl Kind {
             Kind::Duck => "the music ducking settings",
             Kind::Leaf => "a plain value",
         }
+    }
+}
+
+/// Fields every layer has (`vimmer_dsl::Layer`), `kind` included.
+const LAYER_COMMON: &[(&str, Kind)] = &[
+    ("id", Kind::Leaf),
+    ("kind", Kind::Leaf),
+    ("x", Kind::Leaf),
+    ("y", Kind::Leaf),
+    ("width", Kind::Leaf),
+    ("height", Kind::Leaf),
+    ("anchor", Kind::Leaf),
+    ("z", Kind::Leaf),
+    ("start_ms", Kind::Leaf),
+    ("end_ms", Kind::Leaf),
+    ("opacity", Kind::Leaf),
+    ("rotation", Kind::Leaf),
+    ("keyframes", Kind::Keyframes),
+    ("enter", Kind::LayerAnimation),
+    ("exit", Kind::LayerAnimation),
+];
+
+/// Kind-specific layer fields (`vimmer_dsl::LayerContent`), by `kind`.
+const LAYER_KIND_FIELDS: &[(&str, &[(&str, Kind)])] = &[
+    (
+        "image",
+        &[
+            ("src", Kind::Leaf),
+            ("fit", Kind::Leaf),
+            ("corner_radius", Kind::Leaf),
+        ],
+    ),
+    (
+        "text",
+        &[
+            ("text", Kind::Leaf),
+            ("font_size", Kind::Leaf),
+            ("color", Kind::Leaf),
+            ("weight", Kind::Leaf),
+            ("align", Kind::Leaf),
+            ("line_height", Kind::Leaf),
+            ("background", Kind::TextBackground),
+            ("highlights", Kind::Highlights),
+            ("reveal", Kind::Leaf),
+        ],
+    ),
+    (
+        "shape",
+        &[
+            ("shape", Kind::Leaf),
+            ("fill", Kind::Leaf),
+            ("stroke", Kind::Leaf),
+            ("stroke_width", Kind::Leaf),
+            ("corner_radius", Kind::Leaf),
+        ],
+    ),
+    ("icon", &[("src", Kind::Leaf), ("color", Kind::Leaf)]),
+];
+
+/// The union of [`LAYER_COMMON`] and every kind's fields, for pointers (which do not know the
+/// layer's kind). Values are checked against their own kind in [`check_value`].
+const LAYER_FIELDS_ALL: &[(&str, Kind)] = &[
+    ("id", Kind::Leaf),
+    ("kind", Kind::Leaf),
+    ("x", Kind::Leaf),
+    ("y", Kind::Leaf),
+    ("width", Kind::Leaf),
+    ("height", Kind::Leaf),
+    ("anchor", Kind::Leaf),
+    ("z", Kind::Leaf),
+    ("start_ms", Kind::Leaf),
+    ("end_ms", Kind::Leaf),
+    ("opacity", Kind::Leaf),
+    ("rotation", Kind::Leaf),
+    ("keyframes", Kind::Keyframes),
+    ("enter", Kind::LayerAnimation),
+    ("exit", Kind::LayerAnimation),
+    ("src", Kind::Leaf),
+    ("fit", Kind::Leaf),
+    ("corner_radius", Kind::Leaf),
+    ("text", Kind::Leaf),
+    ("font_size", Kind::Leaf),
+    ("color", Kind::Leaf),
+    ("weight", Kind::Leaf),
+    ("align", Kind::Leaf),
+    ("line_height", Kind::Leaf),
+    ("background", Kind::TextBackground),
+    ("highlights", Kind::Highlights),
+    ("reveal", Kind::Leaf),
+    ("shape", Kind::Leaf),
+    ("fill", Kind::Leaf),
+    ("stroke", Kind::Leaf),
+    ("stroke_width", Kind::Leaf),
+];
+
+/// The fields a layer object may have: common fields plus those of its `kind`, when the kind is
+/// known. An unknown or missing kind gets the union (deserialization then reports the kind).
+fn layer_fields_for(map: &Map<String, Value>) -> (Vec<(&'static str, Kind)>, Option<&str>) {
+    let kind = map.get("kind").and_then(Value::as_str);
+    match kind.and_then(|k| LAYER_KIND_FIELDS.iter().find(|(name, _)| *name == k)) {
+        Some((name, fields)) => (
+            LAYER_COMMON.iter().chain(fields.iter()).copied().collect(),
+            Some(name),
+        ),
+        None => (LAYER_FIELDS_ALL.to_vec(), None),
     }
 }
 
@@ -737,15 +856,24 @@ fn kind_at(tokens: &[String]) -> Result<Kind, String> {
 fn check_value(kind: Kind, value: &Value, at: &str) -> Result<(), String> {
     match value {
         Value::Object(map) => {
-            let Some(fields) = kind.fields() else {
-                return Ok(()); // a type mismatch: deserialization reports it
+            let (fields, layer_kind) = if kind == Kind::Layer {
+                let (f, k) = layer_fields_for(map);
+                (f, k)
+            } else {
+                let Some(fields) = kind.fields() else {
+                    return Ok(()); // a type mismatch: deserialization reports it
+                };
+                (fields.to_vec(), None)
             };
             for (key, child) in map {
                 let Some((_, child_kind)) = fields.iter().find(|(n, _)| n == key) else {
                     let names: Vec<&str> = fields.iter().map(|(n, _)| *n).collect();
+                    let what = match layer_kind {
+                        Some(k) => format!("a {k} layer"),
+                        None => kind.describe().to_string(),
+                    };
                     return Err(format!(
-                        "unknown field `{key}` in {} at `{at}`; known fields: {}",
-                        kind.describe(),
+                        "unknown field `{key}` in {what} at `{at}`; known fields: {}",
                         names.join(", ")
                     ));
                 };
@@ -1437,6 +1565,14 @@ fn asset_refs(t: &VideoTimeline) -> Vec<(String, String)> {
                 audio.source.clone(),
             ));
         }
+        for layer in &s.layers {
+            if let Some(src) = layer.content.asset() {
+                out.push((
+                    format!("scene `{}` layer `{}` src", s.id, layer.id),
+                    src.to_string(),
+                ));
+            }
+        }
     }
     if let Some(m) = &t.music {
         out.push(("music.source".into(), m.source.clone()));
@@ -1550,6 +1686,10 @@ fn secs(ms: u64) -> String {
 fn show(v: &Value) -> String {
     match v {
         Value::Null => "none".into(),
+        // DSL floats are f32; print them as such (0.1, not 0.10000000149011612).
+        Value::Number(n) if !n.is_i64() && !n.is_u64() => n
+            .as_f64()
+            .map_or_else(|| n.to_string(), |f| (f as f32).to_string()),
         Value::String(s) => format!("\"{}\"", clip(s, 40)),
         other => clip(&other.to_string(), 60),
     }
@@ -1654,6 +1794,8 @@ pub fn summarize(before: &VideoTimeline, after: &VideoTimeline) -> Vec<String> {
             }
             if key == "keyframes" {
                 changes.push(keyframe_change(old_value, new_value));
+            } else if key == "layers" {
+                changes.extend(layer_changes(old_value, new_value));
             } else {
                 changes.push(format!(
                     "{} {} -> {}",
@@ -1736,6 +1878,78 @@ pub fn summarize(before: &VideoTimeline, after: &VideoTimeline) -> Vec<String> {
     let (t0, t1) = (before.total_duration_ms(), after.total_duration_ms());
     if t0 != t1 {
         out.push(format!("total length: {} -> {}", secs(t0), secs(t1)));
+    }
+    out
+}
+
+/// One phrase per layer change, layers matched by id: added, removed, fields changed, reordered.
+fn layer_changes(old: &Value, new: &Value) -> Vec<String> {
+    let list = |v: &Value| -> Vec<Map<String, Value>> {
+        v.as_array()
+            .map(|a| a.iter().filter_map(|l| l.as_object().cloned()).collect())
+            .unwrap_or_default()
+    };
+    let id = |l: &Map<String, Value>| {
+        l.get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_string()
+    };
+    let (a, b) = (list(old), list(new));
+    let old_ids: Vec<String> = a.iter().map(id).collect();
+    let new_ids: Vec<String> = b.iter().map(id).collect();
+    let mut out = Vec::new();
+    for l in &a {
+        if !new_ids.contains(&id(l)) {
+            out.push(format!("layer `{}` removed", id(l)));
+        }
+    }
+    for l in &b {
+        let lid = id(l);
+        let kind = l.get("kind").and_then(Value::as_str).unwrap_or("?");
+        let Some(prev) = a.iter().find(|p| id(p) == lid) else {
+            let z = l.get("z").and_then(Value::as_i64).unwrap_or(0);
+            let what = match l.get("text").and_then(Value::as_str) {
+                Some(t) => format!(" \"{}\"", clip(t, 30)),
+                None => l
+                    .get("src")
+                    .and_then(Value::as_str)
+                    .map_or(String::new(), |s| format!(" {}", clip(s, 40))),
+            };
+            out.push(format!("layer `{lid}` added ({kind}{what}, z {z})"));
+            continue;
+        };
+        let mut keys: Vec<&String> = l.keys().chain(prev.keys()).collect();
+        keys.sort();
+        keys.dedup();
+        let mut fields = Vec::new();
+        for key in keys {
+            let (x, y) = (
+                prev.get(key).unwrap_or(&Value::Null),
+                l.get(key).unwrap_or(&Value::Null),
+            );
+            if json_equal(x, y) {
+                continue;
+            }
+            if key == "keyframes" {
+                fields.push(keyframe_change(x, y));
+            } else {
+                fields.push(format!("{key} {} -> {}", show(x), show(y)));
+            }
+        }
+        if !fields.is_empty() {
+            out.push(format!("layer `{lid}` {}", fields.join(", ")));
+        }
+    }
+    let kept_old: Vec<&String> = old_ids.iter().filter(|i| new_ids.contains(i)).collect();
+    let kept_new: Vec<&String> = new_ids.iter().filter(|i| old_ids.contains(i)).collect();
+    if kept_old != kept_new {
+        let names = |v: &[&String]| v.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+        out.push(format!(
+            "layer order {} -> {}",
+            names(&kept_old),
+            names(&kept_new)
+        ));
     }
     out
 }

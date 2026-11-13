@@ -1167,6 +1167,7 @@ mod tests {
             narration: Some(Narration::default()),
             transition_in: None,
             keyframes: vec![],
+            layers: vec![],
         }
     }
 

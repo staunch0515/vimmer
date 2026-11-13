@@ -117,6 +117,11 @@ export const App = () => {
     if (frame > max) playerRef.current?.seekTo(max);
   }, [timeline, frame]);
 
+  const selectedLayer =
+    state.selection.kind === "layer" && tab === "scene"
+      ? timeline.scenes[state.selection.sceneIndex]?.layers?.[state.selection.index] ?? null
+      : null;
+
   const discardOk = async () => !dirtyRef.current || (await confirmDiscard("Discard unsaved changes?"));
 
   const doNew = async () => {
@@ -194,7 +199,7 @@ export const App = () => {
     // In the assistant tab, picking a scene only sets the assistant's context.
     if (tab === "assistant") return;
     if (selection.kind === "subtitle") setTab("subtitles");
-    if (selection.kind === "scene" || selection.kind === "keyframe") setTab("scene");
+    if (selection.kind === "scene" || selection.kind === "keyframe" || selection.kind === "layer") setTab("scene");
     if (selection.kind === "music") setTab("music");
   };
 
@@ -269,7 +274,18 @@ export const App = () => {
       )}
       <main className="workspace">
         <section className="stage">
-          <Preview timeline={timeline} assetRoot={assetRoot} playerRef={playerRef} onFrame={setFrame} />
+          <Preview
+            timeline={timeline}
+            assetRoot={assetRoot}
+            playerRef={playerRef}
+            onFrame={setFrame}
+            selectedLayer={selectedLayer}
+            onMoveLayer={(x, y) => {
+              if (state.selection.kind !== "layer") return;
+              const { sceneIndex, index } = state.selection;
+              dispatch({ type: "patchLayer", sceneIndex, index, patch: { x, y } });
+            }}
+          />
           <div className="stage-meta">
             <span className="mono">{timecode(frameToMs(frame, fps))}</span>
             <span className="dim mono">/ {timecode(totalMs(timeline))}</span>

@@ -344,6 +344,7 @@ mod tests {
             narration: narration.then(Narration::default),
             transition_in: None,
             keyframes: vec![],
+            layers: vec![],
         }
     }
 
