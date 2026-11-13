@@ -330,3 +330,21 @@ textarea { resize: vertical; width: 100%; }
 .kf-marker.active { background: #fff; box-shadow: 0 0 0 2px var(--accent), 0 0 12px var(--accent-soft); z-index: 2; }
 .field input[aria-invalid="true"] { border-color: #f87171; }
 .field-error { color: #f87171; font-size: 11px; }
+
+/* Editing assistant */
+.assistant textarea { resize: vertical; }
+.assistant-row { display: flex; gap: 8px; align-items: center; }
+.assistant-row select { flex: 1; }
+.small { font-size: 11px; }
+.assistant-card {
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--elevated);
+}
+.assistant-card.edited { border-color: rgba(99, 102, 241, 0.45); }
+.assistant-card.clarify { border-color: rgba(251, 191, 36, 0.35); }
+.assistant-card.refused, .assistant-card.bad { border-color: rgba(248, 113, 113, 0.35); }
+.assistant-status { font-weight: 600; }
+.assistant-card.refused .assistant-status, .assistant-card.bad .assistant-status { color: var(--danger); }
+.assistant-card.clarify .assistant-status { color: var(--amber); }
+.assistant-diff { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-2); overflow-wrap: anywhere; }
+.assistant-warning { color: var(--amber); font-size: 12px; }

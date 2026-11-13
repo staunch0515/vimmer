@@ -7,12 +7,15 @@ import { sampleKeyframes } from "../../../src/motion/keyframes";
 import type { Action } from "../state";
 import { canChooseMedia, chooseAndImport, type MediaKind } from "../media";
 import { useEffect, useState } from "react";
+import { AssistantPanel } from "./AssistantPanel";
+
+export type InspectorTab = "scene" | "subtitles" | "music" | "assistant";
 
 type Props = {
   timeline: VideoTimeline;
   selection: Selection;
-  tab: "scene" | "subtitles" | "music";
-  setTab: (tab: "scene" | "subtitles" | "music") => void;
+  tab: InspectorTab;
+  setTab: (tab: InspectorTab) => void;
   playheadMs: number;
   dispatch: Dispatch<Action>;
   onSelect: (s: Selection) => void;
@@ -35,11 +38,18 @@ export const Inspector = (props: Props) => {
         <button role="tab" aria-selected={tab === "music"} className={tab === "music" ? "tab active" : "tab"} onClick={() => setTab("music")}>
           Music
         </button>
+        <button role="tab" aria-selected={tab === "assistant"} className={tab === "assistant" ? "tab active" : "tab"} onClick={() => setTab("assistant")}>
+          Assistant
+        </button>
       </div>
       <div className="inspector-body">
         {tab === "scene" && <SceneEditor {...props} />}
         {tab === "subtitles" && <SubtitleEditor {...props} />}
         {tab === "music" && <MusicEditor {...props} />}
+        {/* Stays mounted so a pending proposal survives switching tabs. */}
+        <div hidden={tab !== "assistant"}>
+          <AssistantPanel timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} />
+        </div>
       </div>
     </aside>
   );

@@ -28,6 +28,8 @@ export type Action =
   | { type: "setResolution"; width: number; height: number }
   | { type: "setMusic"; music: Music | null }
   | { type: "patchMusic"; patch: Partial<Music> }
+  // A whole timeline proposed by the editing assistant and accepted by the user: one undo step.
+  | { type: "applyAssistant"; timeline: VideoTimeline }
   | { type: "undo" }
   | { type: "redo" };
 
@@ -183,6 +185,14 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
     case "patchMusic": {
       if (!t.music) return state;
       return commit(state, { ...t, music: { ...t.music, ...action.patch } });
+    }
+    case "applyAssistant": {
+      const next = { ...action.timeline, subtitles: action.timeline.subtitles ?? [] };
+      const keep =
+        (state.selection.kind === "scene" && next.scenes[state.selection.index]) ||
+        (state.selection.kind === "subtitle" && next.subtitles[state.selection.index]) ||
+        (state.selection.kind === "music" && next.music);
+      return commit(state, next, keep ? state.selection : { kind: "none" });
     }
     case "undo": {
       const prev = state.history[state.history.length - 1];

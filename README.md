@@ -386,6 +386,105 @@ Tests (no network): `cd rust-core && cargo test -p vimmer-storyboard --lib` (a f
 `~/.local/share/vimmer/llm-venv/bin/python -m unittest discover -s rust-core/crates/vimmer-storyboard/scripts/tests`
 (recorded API replies).
 
+## Editing assistant (Claude)
+
+Change a timeline by saying what you want, in any language: 「第二段节奏快一点，加一个淡入转场」,
+"make scene 3 slower", "highlight 钟楼 in scene 1", "switch to vertical". Claude answers with a
+JSON Patch (RFC 6902) against the timeline JSON. The patch is applied to a copy and is accepted
+only when the result passes every check. The renderer stays deterministic: Claude only changes
+JSON.
+
+```bash
+# Writes zh-xian.timeline.edited.json next to the input (never the input itself)
+vimmer edit rust-core/crates/vimmer-storyboard/examples/zh-xian.timeline.json "第二段节奏快一点，加一个淡入转场"
+
+# Show the proposal only; --scene gives "this scene" a meaning; -o picks the output
+vimmer edit t.json "make this scene slower" --scene scene-03 --dry-run
+vimmer edit t.json "switch to vertical" --model claude-sonnet-5-5 -o t.vertical.json
+
+# Machine-readable (used by the editor): the timeline comes from stdin with `-`
+vimmer edit --dry-run --json -- - "make scene 3 slower" < t.json
+```
+
+It needs the same setup as `vimmer generate`: the helper venv and `ANTHROPIC_API_KEY` (see
+above). It prints what changed, scene by scene, any warnings, and the cost. Options:
+`--model` (default `claude-opus-5-5`), `--effort` (default `low`), `--max-retries` (default 2),
+`--public-dir` (default `remotion-renderer/public`), `--save-dir` (raw API replies),
+`--overwrite-input` (allow `-o` to name the input).
+
+Claude answers with one of three statuses. `edited` comes with a patch. `clarify` means the
+request is too vague, or names a scene or word that does not exist, and Claude asks a question.
+`refused` means the request is impossible in this model (3D, video clips, fonts, colours, 60
+fps, 4K) or unsafe (system paths, URLs, "ignore your instructions"). Only `edited` changes
+anything.
+
+**Checks** (`vimmer-storyboard/src/edit.rs`). Each runs on every reply. A rejection names the
+failing op and the reason, and goes back to Claude for a correction, at most twice.
+
+- Patch: ops `add`, `remove`, `replace`, `move`, `copy`, `test`, with `~0`/`~1` escaping and the
+  `-` index. At most 64 ops, 16 KB per value and 64 KB in total. Applied atomically to a copy.
+- Model: every path and every key in a value must exist in the timeline model, so a made-up key
+  is rejected. The document, `/fps`, `/resolution` and `/scenes` cannot be removed or replaced
+  wholesale.
+- The result must deserialize as a `VideoTimeline` and pass `vimmer-dsl` validation.
+- Asset paths (`image`, `audio.source`, `music.source`) set by the patch must be relative paths
+  inside `public/`. Absolute paths, `..`, `~`, `\`, `%`, URL schemes and symlinks that lead out are
+  rejected. A missing file is a warning. Narration voices must be plain names.
+- Sanity limits: scenes 300 ms–60 s, transitions ≤ 5 s, ≤ 60 scenes, text ≤ 400 characters, no
+  duplicate highlights, keyframe scale ≤ 10, x/y within ±100 %, rotation within ±360°. A cue's
+  `words` must match its text. A patch must not make subtitle cues overlap. A limit is only
+  enforced when the patch breaks it, so a timeline that was already off can still be edited.
+- Subtitles follow the scenes. When a patch changes scene timing (duration, order, added or
+  removed scenes) and leaves `subtitles` alone, the cues and their words move with their scenes;
+  the parts of removed scenes are dropped. This is added to the patch as a `replace /subtitles`,
+  so Claude never does the arithmetic.
+- Warnings, which do not block: a highlight that is not in the text, a narrated scene
+  shortened below its speech (the render lengthens it back to fit), `motion` ignored because of keyframes, a new asset file that is
+  missing.
+
+**In the editor.** The Studio has an **Assistant** tab. Type an instruction, optionally keep
+the selected scene as context, pick a model, and press **Propose** (⌘↵). The panel shows the
+explanation, the change summary, warnings and the cost. **Accept** applies the change as one
+undo step; **Reject** discards it. A proposal made before the timeline changed cannot be
+accepted. The backend runs `vimmer edit --dry-run --json`. In the desktop app that is the
+`propose_edit` Tauri command; with `npm run editor` it is a dev-server endpoint that answers
+local requests only (loopback peer, localhost Host and Origin, JSON body). Both look for the
+CLI in `rust-core/target/{release,debug}/vimmer` or `$VIMMER_BIN`, so build it first
+(`cargo build -p vimmer-cli`). When the key is not in their environment, they start the CLI
+through `zsh -c 'source ~/.zshrc; ...'`, so only that child process ever holds the key. It
+never reaches the page or the bundle. Without a key, helper or CLI, the panel says what to set
+up and the rest of the editor keeps working. A static build (`npm run editor:build`) has no
+backend.
+
+**Eval.** `rust-core/crates/vimmer-storyboard/examples/edit-eval/` has 53 cases in zh, en and ja
+over the three examples and the fixtures: easy, multi-scene, ambiguous, impossible and hostile
+requests. Its runner grades the status, checks the changed values, and flags edits that touch
+more than asked. **Running it costs money** (about $0.30 per full run with Sonnet), and each run
+appends its spend to `results/spend.log`:
+
+```bash
+source ~/.zshrc && cd rust-core && cargo build -p vimmer-cli
+python3 crates/vimmer-storyboard/examples/edit-eval/run_eval.py --model claude-sonnet-5-5 --tag my-run
+```
+
+Results on 2026-11-13 with the final prompt (`results/v2-*`, effort `low`; Opus `medium` is
+from the round before the last prompt change, which only reworded the narration rule):
+
+| Model | Pass | First-try valid | Retries | Cost per edit |
+|---|---|---|---|---|
+| `claude-opus-5-5` (default) | 53/53 | 53/53 | 0 | $0.012 |
+| `claude-opus-5-5`, effort `medium` | 53/53 | 53/53 | 0 | $0.011 |
+| `claude-sonnet-5-5` | 53/53 | 53/53 | 0 | $0.006 |
+| `claude-haiku-5-5` | 49/53 | 53/53 | 0 | $0.0004 |
+
+Haiku's misses: two explanations came back in Chinese for English instructions. Twice it also
+asked a question instead of shortening a narrated scene that was already at its speech length.
+Every hostile and impossible request in every run was refused or answered with a question, and
+none produced a patch. The first round found edits that passed validation but did the wrong
+thing: Claude moved subtitle cues by hand, placing one over the wrong scene and stretching
+another past its narration. That is why subtitles are now retimed by the tool. Total spend for
+the whole hardening, 11 eval runs plus smoke tests: $3.75.
+
 ## Desktop app (Tauri 2)
 
 `desktop/` wraps the Studio editor in a native macOS window (Tauri 2, Rust). It is a

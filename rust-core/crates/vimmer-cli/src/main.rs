@@ -10,6 +10,7 @@ use std::{
 };
 
 mod check_cmd;
+mod edit_cmd;
 
 use clap::{Args, Parser, ValueEnum};
 use serde_json::json;
@@ -251,6 +252,11 @@ async fn main() -> ExitCode {
         rest.remove(1);
         rest[0] = "vimmer generate".into();
         run_generate(GenerateCli::parse_from(rest)).await
+    } else if args.get(1).is_some_and(|a| a == "edit") {
+        let mut rest = args;
+        rest.remove(1);
+        rest[0] = "vimmer edit".into();
+        edit_cmd::run_edit(edit_cmd::EditCli::parse_from(rest)).await
     } else if args.get(1).is_some_and(|a| a == "illustrate") {
         let mut rest = args;
         rest.remove(1);

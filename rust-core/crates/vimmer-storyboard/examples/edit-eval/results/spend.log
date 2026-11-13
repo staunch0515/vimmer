@@ -1,0 +1,11 @@
+2026-11-13T20:43:03	r1-sonnet-low	claude-sonnet-5-5	low	51 cases	$0.3112
+2026-11-13T20:51:56	r2-sonnet-low	claude-sonnet-5-5	low	53 cases	$0.3026
+2026-11-13T20:54:53	r3-haiku-low	claude-haiku-5-5	low	53 cases	$0.0179
+2026-11-13T21:00:31	r4-opus-low	claude-opus-5-5	low	53 cases	$0.5280
+2026-11-13T21:09:40	final-haiku-low	claude-haiku-5-5	low	53 cases	$0.0181
+2026-11-13T21:12:31	final-sonnet-low	claude-sonnet-5-5	low	53 cases	$0.3095
+2026-11-13T21:16:42	final-opus-low	claude-opus-5-5	low	53 cases	$0.6252
+2026-11-13T21:20:23	final-opus-medium	claude-opus-5-5	medium	53 cases	$0.5936
+2026-11-13T21:23:24	v2-haiku-low	claude-haiku-5-5	low	53 cases	$0.0198
+2026-11-13T21:25:23	v2-sonnet-low	claude-sonnet-5-5	low	53 cases	$0.3242
+2026-11-13T21:27:16	v2-opus-low	claude-opus-5-5	low	53 cases	$0.6307
