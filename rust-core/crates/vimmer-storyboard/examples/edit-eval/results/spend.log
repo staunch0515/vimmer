@@ -9,3 +9,4 @@
 2026-11-13T21:23:24	v2-haiku-low	claude-haiku-5-5	low	53 cases	$0.0198
 2026-11-13T21:25:23	v2-sonnet-low	claude-sonnet-5-5	low	53 cases	$0.3242
 2026-11-13T21:27:16	v2-opus-low	claude-opus-5-5	low	53 cases	$0.6307
+2026-11-14T05:54:53	layers-r1-sonnet-low	claude-sonnet-5-5	low	9 cases	$0.1358
