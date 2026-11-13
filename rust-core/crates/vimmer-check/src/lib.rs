@@ -10,6 +10,7 @@
 
 pub mod assets;
 pub mod audio;
+pub mod layers;
 pub mod layout;
 pub mod motion;
 pub mod rendered;
@@ -227,6 +228,7 @@ pub fn check_timeline(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Find
     findings.extend(timing::validation(timeline));
     findings.extend(text::check(timeline));
     findings.extend(layout::check(timeline));
+    findings.extend(layers::check(timeline));
     findings.extend(motion::check(timeline));
     findings.extend(timing::check(timeline));
     let measured = if opts.synth {
@@ -240,6 +242,7 @@ pub fn check_timeline(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Find
     match &opts.public_dir {
         Some(dir) => {
             findings.extend(assets::check(timeline, dir));
+            findings.extend(layers::check_assets(timeline, dir));
             findings.extend(audio::check_sources(timeline, dir, &opts.ffmpeg));
         }
         None => findings.push(Finding::new(

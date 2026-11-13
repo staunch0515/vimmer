@@ -401,3 +401,90 @@ fn report_counts_and_exit_codes() {
     assert_eq!(report.exit_code(false), 0);
     assert_eq!(report.exit_code(true), 1);
 }
+
+#[test]
+fn layer_text_assets_and_frame() {
+    let t = fixture("bad-layers.json");
+    vimmer_dsl::validate(&t).expect("the fixture is a valid timeline");
+    let public = temp_dir("layers");
+    png(&public, "img/tiny.png", 160, 90);
+    png(&public, "img/big.png", 800, 800);
+    std::fs::create_dir_all(public.join("icons")).unwrap();
+    std::fs::write(public.join("icons/fake.svg"), b"\x89PNG not an svg").unwrap();
+    std::fs::write(
+        public.join("icons/fixed.svg"),
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="10"/></svg>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        public.join("icons/good.svg"),
+        br#"<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>"#,
+    )
+    .unwrap();
+    let fs = run(&t, Some(&public));
+    let about = |code: &str, layer: &str| -> Vec<&Finding> {
+        find(&fs, code, None, None)
+            .into_iter()
+            .filter(|f| f.message.contains(&format!("`{layer}`")))
+            .collect()
+    };
+
+    // Text layers: overflow of a fixed box, title-safe area, reading speed.
+    let f = about("text.overflow", "crammed");
+    assert_eq!(f.len(), 1, "{fs:#?}");
+    assert_eq!(f[0].severity, Severity::Error);
+    assert_eq!(
+        f[0].suggestion.path.as_deref(),
+        Some("/scenes/0/layers/1/text")
+    );
+    assert_eq!(about("safe_area.text", "edge").len(), 1);
+    let f = about("text.reading_speed", "rushed");
+    assert_eq!(f.len(), 1);
+    assert_eq!(f[0].time_ms, Some(3000));
+    assert_eq!(
+        f[0].suggestion.path.as_deref(),
+        Some("/scenes/0/layers/3/end_ms")
+    );
+    for code in ["text.overflow", "safe_area.text", "text.reading_speed"] {
+        assert!(about(code, "ok").is_empty(), "{code} on the good layer");
+    }
+
+    // Off frame: never on screen vs. sliding in through keyframes.
+    let f = one(&fs, "layer.off_frame", Some("graphics"), None);
+    assert!(f.message.contains("`gone`"));
+    let fixed = apply(&t, f);
+    assert!(find(&run(&fixed, Some(&public)), "layer.off_frame", None, None).is_empty());
+
+    // Assets.
+    assert_eq!(
+        about("assets.missing_image", "missing")[0].severity,
+        Severity::Error
+    );
+    let f = about("assets.low_resolution", "tiny");
+    assert_eq!(f.len(), 1);
+    assert_eq!(f[0].severity, Severity::Warning);
+    assert!(about("assets.low_resolution", "sharp").is_empty());
+    assert_eq!(
+        about("assets.missing_icon", "no-icon")[0].severity,
+        Severity::Error
+    );
+    assert_eq!(
+        about("assets.unreadable_icon", "fake-icon")[0].severity,
+        Severity::Error
+    );
+    assert_eq!(about("assets.icon_no_viewbox", "fixed-icon").len(), 1);
+    assert!(
+        fs.iter().all(|f| !f.message.contains("`good-icon`")),
+        "{fs:#?}"
+    );
+}
+
+#[test]
+fn layers_demo_fixture_has_no_errors() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures/layers-demo.json");
+    let t: VideoTimeline = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let public = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer/public");
+    let fs = run(&t, Some(&public));
+    let bad: Vec<_> = fs.iter().filter(|f| f.severity > Severity::Info).collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
