@@ -1,8 +1,9 @@
 import type { Dispatch } from "react";
 import { useEffect, useState } from "react";
-import type { Layer, LayerAnimation, LayerAnimationKind, Scene } from "../../../src/types/timeline";
+import type { Easing, Layer, LayerAnimation, LayerAnimationKind, Scene } from "../../../src/types/timeline";
 import { splitLayers } from "../../../src/motion/layers";
 import { ANIMATION_KINDS, LAYER_KINDS } from "../layers";
+import { EASINGS } from "../model";
 import type { Action } from "../state";
 import { Field, MediaInput, NumField } from "./Inspector";
 
@@ -353,6 +354,18 @@ const AnimationField = ({
             if (ms > 0) onChange({ ...value, duration_ms: ms });
           }}
         />
+      )}
+      {value && (
+        <select
+          value={value.ease ?? ""}
+          aria-label={`${label} easing`}
+          onChange={(e) => onChange({ ...value, ease: (e.target.value || undefined) as Easing | undefined })}
+        >
+          <option value="">default curve</option>
+          {EASINGS.map((k) => (
+            <option key={k} value={k}>{k.replace(/_/g, " ")}</option>
+          ))}
+        </select>
       )}
     </div>
   </Field>

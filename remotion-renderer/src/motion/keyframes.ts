@@ -19,17 +19,38 @@ export type KeyframePose = {
 
 export const IDENTITY_POSE: KeyframePose = { scale: 1, x: 0, y: 0, opacity: 1, rotation: 0 };
 
-// Maps progress t in [0, 1] to eased progress. Quadratic curves, so the motion stays gentle.
+// Maps progress t in [0, 1] (clamped) to eased progress. Every curve starts at 0 and ends at 1;
+// back_out and elastic_out go above 1 on the way. The quadratic curves keep motion gentle.
+// Mirrors `Easing::apply` in rust-core/crates/vimmer-dsl/src/model.rs.
 export const applyEasing = (ease: Easing | undefined, t: number): number => {
+  const x = Math.min(1, Math.max(0, t));
   switch (ease ?? "ease_in_out") {
     case "linear":
-      return t;
+      return x;
     case "ease_in":
-      return t * t;
+      return x * x;
     case "ease_out":
-      return 1 - (1 - t) * (1 - t);
+      return 1 - (1 - x) * (1 - x);
     case "ease_in_out":
-      return t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;
+      return x < 0.5 ? 2 * x * x : 1 - ((-2 * x + 2) ** 2) / 2;
+    case "back_out": {
+      const c1 = 1.70158;
+      const c3 = c1 + 1;
+      return 1 + c3 * (x - 1) ** 3 + c1 * (x - 1) ** 2;
+    }
+    case "elastic_out": {
+      if (x === 0 || x === 1) return x;
+      const c4 = (2 * Math.PI) / 3;
+      return 2 ** (-10 * x) * Math.sin((x * 10 - 0.75) * c4) + 1;
+    }
+    case "bounce_out": {
+      const n1 = 7.5625;
+      const d1 = 2.75;
+      if (x < 1 / d1) return n1 * x * x;
+      if (x < 2 / d1) return n1 * (x - 1.5 / d1) ** 2 + 0.75;
+      if (x < 2.5 / d1) return n1 * (x - 2.25 / d1) ** 2 + 0.9375;
+      return n1 * (x - 2.625 / d1) ** 2 + 0.984375;
+    }
   }
 };
 

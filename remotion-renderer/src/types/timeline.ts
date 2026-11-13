@@ -14,7 +14,9 @@ export type Narration = {
 };
 
 // Easing of the segment that leaves a keyframe. Mirrors `Easing` in model.rs.
-export type Easing = "linear" | "ease_in" | "ease_out" | "ease_in_out";
+// back_out overshoots to about 1.1, elastic_out springs to about 1.37 and rings out, bounce_out
+// bounces up to 1 (never above).
+export type Easing = "linear" | "ease_in" | "ease_out" | "ease_in_out" | "back_out" | "elastic_out" | "bounce_out";
 
 // One pose of the scene's image layer. Mirrors `Keyframe` in model.rs.
 // Optional fields fall back to the identity pose when absent from the JSON.
@@ -69,6 +71,7 @@ export type LayerAnimationKind = "fade" | "slide_up" | "slide_down" | "slide_lef
 export type LayerAnimation = {
   kind: LayerAnimationKind;
   duration_ms?: number; // default 400
+  ease?: Easing; // default: the kind's own curve (ease-out cubic in, ease-in cubic out, back-out for pop in)
 };
 
 export type LayerCommon = {

@@ -23,7 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::Keyframe;
+use crate::model::{Easing, Keyframe};
 
 /// Most layers one scene may have.
 pub const MAX_LAYERS: usize = 32;
@@ -69,6 +69,10 @@ pub struct LayerAnimation {
     pub kind: LayerAnimationKind,
     #[serde(default = "default_animation_ms")]
     pub duration_ms: u64,
+    /// Progress curve of the animation. Absent: the kind's own curve (ease-out cubic for an
+    /// enter, ease-in cubic for an exit, back-out for `pop` entering).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ease: Option<Easing>,
 }
 
 /// How an image fills its box.

@@ -626,7 +626,7 @@ impl Kind {
             ],
             // Every field any layer kind has; `check_value` narrows it to the value's `kind`.
             Layer => LAYER_FIELDS_ALL,
-            LayerAnimation => &[("kind", Leaf), ("duration_ms", Leaf)],
+            LayerAnimation => &[("kind", Leaf), ("duration_ms", Leaf), ("ease", Leaf)],
             TextBackground => &[("color", Leaf), ("padding", Leaf), ("radius", Leaf)],
             Audio => &[("source", Leaf), ("offset_ms", Leaf)],
             Narration => &[("voice", Leaf)],

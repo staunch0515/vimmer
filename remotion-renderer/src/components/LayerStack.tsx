@@ -1,5 +1,5 @@
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
-import { sampleKeyframes } from "../motion/keyframes";
+import { applyEasing, sampleKeyframes } from "../motion/keyframes";
 import { layerFrames, layerStateAt, splitLayers } from "../motion/layers";
 import type { Layer } from "../types/timeline";
 import { IconLayerView, ImageLayerView, ShapeLayerView, TextLayerView } from "./LayerKinds";
@@ -10,7 +10,7 @@ const LayerBox: React.FC<{ layer: Layer; sceneFrames: number }> = ({ layer, scen
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const kf = layer.keyframes && layer.keyframes.length > 0 ? sampleKeyframes(layer.keyframes, (frame * 1000) / fps) : undefined;
-  const state = layerStateAt(layer, frame, fps, sceneFrames, width, height, kf);
+  const state = layerStateAt(layer, frame, fps, sceneFrames, width, height, kf, applyEasing);
   if (!state.visible) return null;
   const local = frame - layerFrames(layer, fps, sceneFrames).start;
   const ctx = { frameHeight: height, frame: local };

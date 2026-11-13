@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { IDENTITY_POSE, applyEasing, sampleKeyframes } from "../src/motion/keyframes.ts";
 import { transitionPose } from "../src/motion/transitions.ts";
 import { animationPose, layerFrames, layerStateAt, splitLayers } from "../src/motion/layers.ts";
-import type { Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
+import type { Easing, Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
 
 const kf = (at_ms: number, extra: Partial<Keyframe> = {}): Keyframe => ({ at_ms, ...extra });
 const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`);
@@ -59,6 +59,51 @@ test("easing curves hit their endpoints and midpoint", () => {
   close(applyEasing("ease_in_out", 0.5), 0.5);
   assert.ok(applyEasing("ease_in_out", 0.25) < 0.25);
   assert.ok(applyEasing("ease_in_out", 0.75) > 0.75);
+});
+
+const peak = (ease: Easing): number => {
+  let m = -Infinity;
+  for (let i = 0; i <= 1000; i++) m = Math.max(m, applyEasing(ease, i / 1000));
+  return m;
+};
+
+test("springy easings start at 0, end at 1, and overshoot where expected", () => {
+  for (const ease of ["back_out", "elastic_out", "bounce_out"] as const) {
+    close(applyEasing(ease, 0), 0);
+    close(applyEasing(ease, 1), 1);
+    assert.equal(applyEasing(ease, -0.5), applyEasing(ease, 0)); // clamped
+    assert.equal(applyEasing(ease, 1.5), applyEasing(ease, 1));
+  }
+  const back = peak("back_out");
+  assert.ok(back > 1.09 && back < 1.11, `back_out peak ${back}`);
+  const elastic = peak("elastic_out");
+  assert.ok(elastic > 1.3 && elastic < 1.4, `elastic_out peak ${elastic}`);
+  assert.ok(peak("bounce_out") <= 1 + 1e-9);
+  close(applyEasing("bounce_out", 1 / 2.75), 1); // first landing
+  assert.ok(applyEasing("bounce_out", 1.5 / 2.75) < 0.76); // top of the first bounce
+  // Old curves are unchanged by the clamp inside [0, 1].
+  close(applyEasing("ease_in_out", 0.3), 2 * 0.09);
+});
+
+test("a springy keyframe ease overshoots between keyframes", () => {
+  const keys = [kf(0, { scale: 1, ease: "elastic_out" }), kf(1000, { scale: 2 })];
+  assert.ok(Math.max(...[100, 150, 200].map((t) => sampleKeyframes(keys, t).scale)) > 2.2);
+  close(sampleKeyframes(keys, 1000).scale, 2);
+});
+
+test("an enter/exit ease replaces the kind's curve; without one the pose is unchanged", () => {
+  const W = 1920;
+  const H = 1080;
+  const springy = animationPose("pop", 0.15, "enter", W, H, (t) => applyEasing("elastic_out", t));
+  assert.ok(springy.scale > 1, `elastic pop overshoots: ${springy.scale}`);
+  assert.deepEqual(animationPose("slide_up", 0.4, "enter", W, H), animationPose("slide_up", 0.4, "enter", W, H, undefined));
+  const shape: ShapeLayer = { id: "s", kind: "shape", x: 0, y: 0, width: 0.1, height: 0.1, fill: "#fff", enter: { kind: "slide_up", duration_ms: 1000 } };
+  const plain = layerStateAt(shape, 10, 30, 90, W, H, undefined, applyEasing);
+  const without = layerStateAt(shape, 10, 30, 90, W, H);
+  assert.deepEqual(plain, without);
+  const eased = layerStateAt({ ...shape, enter: { kind: "slide_up", duration_ms: 1000, ease: "linear" } }, 15, 30, 90, W, H, undefined, applyEasing);
+  // Linear: halfway through the slide, half the distance is left and the opacity is 0.5.
+  close(eased.opacity, 0.5);
 });
 
 test("exact keyframe times return that keyframe's values", () => {

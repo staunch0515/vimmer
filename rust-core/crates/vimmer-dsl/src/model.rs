@@ -63,6 +63,62 @@ pub enum Easing {
     EaseOut,
     #[default]
     EaseInOut,
+    /// Overshoots to about 1.1, then settles at 1.
+    BackOut,
+    /// Springs past 1 (to about 1.37) and rings out.
+    ElasticOut,
+    /// Bounces up to 1 like a dropped ball; never above 1.
+    BounceOut,
+}
+
+impl Easing {
+    /// Eased progress for `t` in [0, 1] (clamped). Starts at 0 and ends at 1; `BackOut` and
+    /// `ElasticOut` go above 1 on the way. Same curves as `applyEasing` in
+    /// `remotion-renderer/src/motion/keyframes.ts`.
+    pub fn apply(self, t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            Easing::Linear => t,
+            Easing::EaseIn => t * t,
+            Easing::EaseOut => 1.0 - (1.0 - t) * (1.0 - t),
+            Easing::EaseInOut => {
+                if t < 0.5 {
+                    2.0 * t * t
+                } else {
+                    1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+                }
+            }
+            Easing::BackOut => {
+                const C1: f64 = 1.70158;
+                const C3: f64 = C1 + 1.0;
+                1.0 + C3 * (t - 1.0).powi(3) + C1 * (t - 1.0).powi(2)
+            }
+            Easing::ElasticOut => {
+                if t == 0.0 || t == 1.0 {
+                    t
+                } else {
+                    let c4 = 2.0 * std::f64::consts::PI / 3.0;
+                    2f64.powf(-10.0 * t) * ((t * 10.0 - 0.75) * c4).sin() + 1.0
+                }
+            }
+            Easing::BounceOut => {
+                const N1: f64 = 7.5625;
+                const D1: f64 = 2.75;
+                if t < 1.0 / D1 {
+                    N1 * t * t
+                } else if t < 2.0 / D1 {
+                    let u = t - 1.5 / D1;
+                    N1 * u * u + 0.75
+                } else if t < 2.5 / D1 {
+                    let u = t - 2.25 / D1;
+                    N1 * u * u + 0.9375
+                } else {
+                    let u = t - 2.625 / D1;
+                    N1 * u * u + 0.984375
+                }
+            }
+        }
+    }
 }
 
 /// One animation pose of a scene's image layer. Values between keyframes are interpolated.
@@ -324,6 +380,40 @@ mod tests {
                 ease: Easing::EaseInOut,
             }
         );
+    }
+
+    #[test]
+    fn easing_curves_start_at_0_end_at_1_and_overshoot_where_expected() {
+        let all = [
+            Easing::Linear,
+            Easing::EaseIn,
+            Easing::EaseOut,
+            Easing::EaseInOut,
+            Easing::BackOut,
+            Easing::ElasticOut,
+            Easing::BounceOut,
+        ];
+        for e in all {
+            assert!(e.apply(0.0).abs() < 1e-9, "{e:?} at 0");
+            assert!((e.apply(1.0) - 1.0).abs() < 1e-9, "{e:?} at 1");
+            assert_eq!(e.apply(-1.0), e.apply(0.0), "{e:?} clamps");
+            assert_eq!(e.apply(2.0), e.apply(1.0), "{e:?} clamps");
+        }
+        let peak = |e: Easing| {
+            (0..=1000)
+                .map(|i| e.apply(f64::from(i) / 1000.0))
+                .fold(f64::MIN, f64::max)
+        };
+        let back = peak(Easing::BackOut);
+        assert!(back > 1.09 && back < 1.11, "back_out peak {back}");
+        let elastic = peak(Easing::ElasticOut);
+        assert!(elastic > 1.3 && elastic < 1.4, "elastic_out peak {elastic}");
+        assert!(peak(Easing::BounceOut) <= 1.0 + 1e-9);
+        // bounce_out touches 1 at each bounce and dips between them.
+        assert!((Easing::BounceOut.apply(1.0 / 2.75) - 1.0).abs() < 1e-9);
+        assert!(Easing::BounceOut.apply(1.5 / 2.75) < 0.76);
+        let kf: Keyframe = serde_json::from_str(r#"{"at_ms":0,"ease":"elastic_out"}"#).unwrap();
+        assert_eq!(kf.ease, Easing::ElasticOut);
     }
 
     #[test]
