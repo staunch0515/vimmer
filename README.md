@@ -661,6 +661,115 @@ cd remotion-renderer && npm install && npm run editor   # http://localhost:5180
   Validation mirrors the Rust rules and appears above the workspace.
 - The draft autosaves to localStorage. Export JSON, then render it with the CLI.
 
+## Quality check
+
+`vimmer check` finds quality problems in a timeline before rendering, and in its MP4 after.
+It is rule-based: no AI, no network, no paid calls. The code is in `rust-core/crates/vimmer-check`.
+
+```bash
+# From the repository root (image and audio paths resolve against remotion-renderer/public)
+rust-core/target/debug/vimmer check fixtures/sample-timeline.json
+```
+
+```bash
+# Also check a render: streams, frame size, duration, peak, clipping, loudness
+rust-core/target/debug/vimmer check fixtures/sample-timeline.json --rendered out/sample.mp4
+```
+
+```bash
+# Machine-readable, and warnings fail too
+rust-core/target/debug/vimmer check timeline.json --json --strict
+```
+
+- `--synth` synthesizes narration with `say` into the render's cache
+  (`public/generated/tts/`, same file names, so the render reuses them) and measures it,
+  instead of estimating its length from the text.
+- `--public-dir DIR` sets where image and audio paths point (default `<--remotion-dir>/public`,
+  else the nearest `remotion-renderer/public` above the timeline or the current directory).
+- Exit code: 0 without errors, 1 with errors (with `--strict` also with warnings), 2 when the
+  timeline cannot be read or parsed.
+
+Output is grouped by scene; a cue belongs to the scene it starts in.
+
+### Checks and thresholds
+
+| code | severity | rule |
+|---|---|---|
+| `dsl.invalid` | error | the DSL validation fails (cue and word-timing problems are reported by the codes below instead) |
+| `text.overflow` | error / warning | scene text needs more lines than fit between the top padding and the 260 px bottom inset: 6 lines at 1920x1080, 14 at 1080x1920 (92 px font, 1.2 line height, 73.9% of the width per line). Error when it still overflows with every width 12% narrower |
+| `text.reading_speed` | warning | scene text without narration shown faster than the reading limit (below) |
+| `subtitle.too_long` | error / warning | a cue needs more than 2 lines in the band (font 5% of the short side, text width 86% of the frame minus padding); error at 4+ lines even with 12% narrower widths. The fix splits the cue in two |
+| `subtitle.reading_speed` | warning | a cue without word timing above en 20, zh 9, ja 4 characters per second (Netflix limits; en counts spaces, zh/ja skip punctuation). Cues with word timing or over a narrated scene follow the speech and are not checked |
+| `safe_area.text`, `safe_area.subtitle` | warning / error | text or a cue reaches outside the title-safe area (inner 90%, 5% margins, for 16:9 and 9:16) |
+| `safe_area.subtitle_band` | info | at 1080x1920 the renderer puts the subtitle band 43 px from the bottom, inside the 96 px margin (a renderer change, not a timeline field) |
+| `motion.uncovered_edge` | warning | at some frame the keyframes (offset, rotation, scale below 1) leave part of the frame uncovered; the fix raises the keyframe scales |
+| `assets.missing_image`, `assets.unreadable_image` | error | image missing, or not a PNG/JPEG the renderer can normalize |
+| `assets.aspect_ratio` | warning / info | the picture fills under 40% / 60% of the frame; the rest is blurred padding (the renderer fits, never crops) |
+| `assets.low_resolution` | warning / info | the image is enlarged more than 2.0x / 1.5x on screen (fit factor times the largest zoom) |
+| `audio.missing`, `audio.unreadable` | error | `scene.audio` or `music` file missing or not decodable |
+| `audio.cut_off` | error / warning | the clip is longer than the scene after `offset_ms`: error when more than 250 ms is cut |
+| `audio.offset_past_end` | error | `offset_ms` at or past the scene end; the clip never plays |
+| `audio.clipping` | warning | a run of 3+ consecutive full-scale samples in one channel |
+| `audio.hot_peak` | warning | sample peak at or above -0.1 dBFS without clipping |
+| `audio.quiet`, `audio.silent` | warning | integrated loudness below -35 LUFS; no signal above -60 dBFS |
+| `audio.music_inaudible`, `audio.music_too_loud` | warning | music after its `volume` below -45 LUFS, or above -22 LUFS while scenes have speech; the fix sets a volume for about -30 LUFS |
+| `audio.narration_ignored` | info | a scene has both `audio` and `narration` |
+| `narration.too_long` | warning / info | narration will not fit, so the render stretches the scene and later cues drift. Estimate (calibrated on the default `say` voices): zh 230 ms per character, ja 165 ms, en 250 ms per word, plus the 300 ms tail; a warning when even a 20% faster voice would not fit, info otherwise. With `--synth` the measured length (warning) |
+| `transition.too_long` | warning | `transition_in` longer than the previous scene |
+| `subtitle.too_short` | error / warning | a cue under 400 ms (its 6-frame fades never complete) / under 833 ms |
+| `subtitle.overlap` | error / warning | cues overlap; the renderer shows one cue at a time, so the later one is partly hidden (error when it is hidden completely) |
+| `subtitle.outside_timeline` | error | a cue starts or ends after the video |
+| `subtitle.word_outside_cue`, `subtitle.words_out_of_order` | error | `words` outside their cue or overlapping; the fix drops the word timing |
+| `rendered.*` | error / warning | with `--rendered`: no video stream, frame size or duration (±200 ms) not matching the timeline, no audio stream although there is narration, audio or music; clipping in the mix (error), sample peak ≥ -0.1 dBFS, integrated loudness below -30 or above -9 LUFS |
+
+**How text is measured.** The renderer loads no web font, so text is set in Inter if installed,
+else the system font (SF Pro on macOS, PingFang for CJK). Widths are estimated per character
+class from Inter SemiBold (CJK 1.0 em, Latin lowercase 0.55, uppercase 0.68, digits 0.62,
+narrow punctuation 0.28) and lines are filled the way the browser breaks them. Latin widths are
+within about ±12% and CJK within about ±3%, so overflow is an error only when it holds at the
+optimistic end. The constants come from `AnimatedText.tsx` and `Subtitles.tsx`
+(`vimmer-check/src/layout.rs`); change both together.
+
+### JSON schema (`--json`)
+
+```json
+{
+  "schema": "vimmer-check/1",
+  "timeline": "fixtures/motion-demo.json",
+  "rendered": "out.mp4",
+  "summary": { "errors": 0, "warnings": 2, "infos": 2 },
+  "findings": [
+    {
+      "severity": "warning",
+      "code": "motion.uncovered_edge",
+      "scene_id": "scene-03",
+      "time_ms": 8933,
+      "message": "keyframes leave part of the frame uncovered from 0.93 s into the scene ...",
+      "suggestion": {
+        "text": "raise the scale of the keyframes around that time",
+        "path": "/scenes/2/keyframes",
+        "value": [{ "at_ms": 0, "scale": 1.3, "...": "..." }]
+      }
+    }
+  ]
+}
+```
+
+- `severity`: `error`, `warning` or `info`. `code`: stable id from the table above.
+- `scene_id`, `cue_index` (index into `subtitles`), `time_ms` (from the video start): present
+  when they apply. `rendered` is present only with `--rendered`.
+- `suggestion.text` is always present. `suggestion.path` is a JSON pointer (RFC 6901) into the
+  timeline; with `suggestion.value`, writing that value there applies the fix. A path to a cue
+  (`/subtitles/3`) with an array value means "replace this cue with these cues". A path without a
+  value names the field a person has to change (for example text to shorten).
+- When the timeline cannot be read or parsed, the output is
+  `{"schema": "vimmer-check/1", "timeline": "...", "error": "..."}` with exit code 2.
+- Findings are sorted by `time_ms` (timeline-wide ones first), then by severity.
+
+**Limitations.** Text width is an estimate, not a browser layout. `--synth` measures `say`; with
+Kokoro narration lengths differ. Phone-app overlays on 9:16 (buttons, captions) are not modelled.
+Loudness and clipping of `http(s)` assets are not checked.
+
 ## For developers
 
 - **Building a `SubtitleCue`**: use `SubtitleCue::new(start_ms, end_ms, text)` or

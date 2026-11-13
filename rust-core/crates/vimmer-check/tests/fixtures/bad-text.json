@@ -1,0 +1,22 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1920, "height": 1080 },
+  "scenes": [
+    {
+      "id": "wall-of-text",
+      "duration_ms": 4000,
+      "text": "This scene carries far too much on-screen copy for a single frame, because somebody pasted the whole paragraph from the script into the text field instead of a short headline, and now it keeps going for many more words than any viewer could read before the next scene arrives and replaces it entirely."
+    },
+    {
+      "id": "cjk-wall",
+      "duration_ms": 30000,
+      "text": "西安钟楼位于西安市中心，始建于明代洪武十七年，是中国现存钟楼中形制最大、保存最完整的一座。登上城楼，四条大街一览无余，东西南北四个方向的城门与钟楼遥相呼应，构成了古城的基本格局。夜晚灯火通明，游人如织，是西安最有代表性的地标之一。"
+    },
+    { "id": "ok", "duration_ms": 4000, "text": "Short and sweet" }
+  ],
+  "subtitles": [
+    { "start_ms": 0, "end_ms": 4000, "text": "This subtitle is much too long for the band at the bottom of the frame, it would need three or even four lines of text to show everything that was written into it by hand." },
+    { "start_ms": 4000, "end_ms": 5000, "text": "This line is far too fast to read in one second." },
+    { "start_ms": 8000, "end_ms": 11000, "text": "Fine." }
+  ]
+}

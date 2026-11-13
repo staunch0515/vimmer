@@ -1,0 +1,19 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1920, "height": 1080 },
+  "scenes": [
+    { "id": "a", "duration_ms": 1000, "text": "First", "audio": { "source": "audio/long.wav", "offset_ms": 0 } },
+    { "id": "b", "duration_ms": 3000, "text": "Second", "audio": { "source": "audio/long.wav", "offset_ms": 3500 },
+      "transition_in": { "kind": "fade", "duration_ms": 1500 } },
+    { "id": "c", "duration_ms": 1500, "text": "这是一段很长的旁白，需要很多时间才能读完，但是场景只有一秒半。", "narration": {} },
+    { "id": "d", "duration_ms": 2000, "text": "Missing audio", "audio": { "source": "audio/nope.wav", "offset_ms": 0 } }
+  ],
+  "subtitles": [
+    { "start_ms": 0, "end_ms": 300, "text": "Blink" },
+    { "start_ms": 1000, "end_ms": 3000, "text": "Overlaps the next" },
+    { "start_ms": 2000, "end_ms": 4000, "text": "Partly hidden" },
+    { "start_ms": 4500, "end_ms": 6000, "text": "two words",
+      "words": [ { "text": "two ", "start_ms": 5000, "end_ms": 5500 }, { "text": "words", "start_ms": 5200, "end_ms": 5800 } ] },
+    { "start_ms": 6000, "end_ms": 7800, "text": "Ends past the video" }
+  ]
+}

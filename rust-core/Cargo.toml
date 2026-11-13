@@ -6,6 +6,7 @@ members = [
     "crates/vimmer-scheduler",
     "crates/vimmer-cli",
     "crates/vimmer-storyboard",
+    "crates/vimmer-check",
 ]
 
 [workspace.package]

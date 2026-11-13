@@ -9,6 +9,8 @@ use std::{
     time::Duration,
 };
 
+mod check_cmd;
+
 use clap::{Args, Parser, ValueEnum};
 use serde_json::json;
 use vimmer_dsl::VideoTimeline;
@@ -254,6 +256,8 @@ async fn main() -> ExitCode {
         rest.remove(1);
         rest[0] = "vimmer illustrate".into();
         run_illustrate(IllustrateCli::parse_from(rest)).await
+    } else if args.get(1).is_some_and(|a| a == "check") {
+        return check_cmd::main(args);
     } else {
         run(Cli::parse_from(args)).await
     };
