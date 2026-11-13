@@ -1,0 +1,2 @@
+# Claude storyboard generation for Vimmer (see README "Generate a video from text"). Python 3.10+.
+anthropic==2.8.0

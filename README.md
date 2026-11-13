@@ -10,7 +10,7 @@ repo_vimmer/
 │   └── motion-demo.json      # 3 scenes: a slide transition and keyframes
 ├── rust-core/                # Cargo workspace: orchestration + DSL
 │   ├── crates/vimmer-dsl/    # serde model, validation, frame math
-│   └── crates/vimmer-storyboard/  # storyboard JSON → timeline (offline)
+│   └── crates/vimmer-storyboard/  # storyboard JSON → timeline; `vimmer generate` (Claude)
 └── remotion-renderer/        # Node/TS Remotion project: frame-based composition
     ├── public/assets/        # Images/audio referenced by the timeline (relative paths)
     └── src/                  # Root, Timeline composition, Ken Burns + text components
@@ -98,9 +98,11 @@ npm run render:test      # writes out/test-scene.mp4
 - `vimmer-scheduler`: chunk planner (whole scenes, ≤ 30 s per chunk) and a tokio
   pipeline: preprocess images → check audio → render chunks through Remotion with
   bounded concurrency → concatenate with ffmpeg `-c copy`.
-- `vimmer-cli`: `vimmer <timeline.json> -o out.mp4` (`--tts kokoro` for Kokoro narration).
-- `vimmer-storyboard`: offline converter from a storyboard JSON (the format an LLM writes, see
-  below) to a validated timeline JSON. It calls no model or service. Bin: `vimmer-storyboard`.
+- `vimmer-cli`: `vimmer <timeline.json> -o out.mp4` (`--tts kokoro` for Kokoro narration), and
+  `vimmer generate <input.txt> --lang zh -o out.mp4` (text → Claude storyboard → MP4).
+- `vimmer-storyboard`: converter from a storyboard JSON (the format an LLM writes, see
+  below) to a validated timeline JSON (offline, bin `vimmer-storyboard`), and the Claude
+  generation behind `vimmer generate` (Python helper `scripts/generate_storyboard.py`).
 
 ```bash
 cd rust-core && cargo run -p vimmer-cli -- ../fixtures/sample-timeline.json \
@@ -191,6 +193,112 @@ The first scene's transition is dropped with a warning.
 - Then 600 ms of padding is added, and the result is at least 2000 ms.
 
 The total length must stay within the 200 s limit, or the conversion fails.
+
+## Generate a video from text (Claude)
+
+`vimmer generate` sends a text to Claude, gets a storyboard back, checks it with the storyboard
+converter and renders it. This is the one part of Vimmer that calls a paid cloud API: every run
+costs money (see "Cost" below). Without a key it stops with an error; there is no offline
+fallback.
+
+```
+input.txt ──► scripts/generate_storyboard.py (Claude, structured output)
+          ──► storyboard JSON ──► convert() ──ok──► timeline ──► render ──► MP4
+                                      │ error
+                                      └──► sent back to Claude for a fix (at most 2 times)
+```
+
+### Install
+
+```bash
+sh rust-core/crates/vimmer-storyboard/scripts/install_llm.sh
+```
+
+This makes a venv at `~/.local/share/vimmer/llm-venv` with the official `anthropic` SDK (uses
+`uv` when it is on `PATH`). Use another interpreter with `--llm-python` or `VIMMER_LLM_PYTHON`.
+
+### API key
+
+The key is read **only** from the environment variable `ANTHROPIC_API_KEY`. Add it to
+`~/.zshrc` and open a new terminal:
+
+```bash
+export ANTHROPIC_API_KEY='sk-ant-...'
+```
+
+Vimmer never prints the key, passes it on the command line, or writes it to a file; the
+Python helper inherits it from the environment. Keep it out of the repository.
+
+### Usage
+
+Run from `rust-core/` (or use the built `vimmer` binary anywhere; paths below are examples):
+
+```bash
+# Text → MP4, with Kokoro narration and word-by-word subtitles
+cargo run --release -p vimmer-cli -- generate crates/vimmer-storyboard/examples/zh-xian.source.txt \
+  --lang zh -o ../out/xian.mp4 --remotion-dir ../remotion-renderer \
+  --tts kokoro --auto-subtitles on --save-dir ../out/xian
+
+# Only the storyboard (no render); printed to stdout, or saved with --save-dir
+cargo run --release -p vimmer-cli -- generate story.txt --lang en --no-render > storyboard.json
+```
+
+- `--lang zh|en|ja` (required), `--orientation landscape|portrait`, `--target-seconds N`.
+- `--model` (default `claude-opus-5-5`), `--effort low|medium|high|xhigh|max` (default
+  `medium`), `--max-tokens` (default 32000, thinking included), `--max-retries` (default 2),
+  `--llm-timeout` seconds per API call (default 900).
+- `--save-dir DIR` keeps `storyboard.json`, `timeline.json`, `emphasis.json`, `usage.json`
+  (tokens, cost, retries per attempt) and `reply-N.json` (the raw API replies).
+- Every render option of `vimmer <timeline.json>` works here too (`--tts`, `--auto-subtitles`,
+  `--word-subtitles`, `--remotion-dir`, `--work-dir`, …). Generated timelines carry no subtitle
+  cues, so pass `--auto-subtitles on` to get subtitles.
+- Pictures are not generated: each scene's `image_prompt` is kept in the storyboard, `image`
+  stays empty, and scenes render as text.
+- `vimmer <timeline.json> -o out.mp4` works as before. (`vimmer generate` is recognized only as
+  the first argument; render a timeline file that is literally named `generate` as
+  `./generate`.)
+- Ctrl-C stops a running API call. Exit code is non-zero on any failure: no key, missing SDK,
+  API error (bad key, rate limit, …), refusal, `max_tokens`, timeout, or a storyboard that is
+  still invalid after the retries. The tokens already spent are printed either way.
+
+How it works: the helper fills `prompts/storyboard.md` (no assets offered) as the system prompt
+and asks for JSON with `output_config.format` using `schema/storyboard.schema.json` — the fields
+of `model.rs` minus `image`, `music` and `voice`, with `language` / `orientation` pinned to the
+request. It uses adaptive thinking, streams the reply, and on Opus / Sonnet 5.5 opts into the
+server-side refusal fallback (`fallbacks: "default"`); Claude Haiku 5.5 has none. Rust then runs
+`convert()` on the reply; an error (with scene number and field) goes back to Claude as the next
+turn, at most `--max-retries` times. Usage of every attempt, including fallback hops, is added up.
+
+Run the helper alone (prints one JSON result line):
+
+```bash
+~/.local/share/vimmer/llm-venv/bin/python rust-core/crates/vimmer-storyboard/scripts/generate_storyboard.py \
+  --text-file story.txt --lang ja --effort low
+```
+
+### Cost
+
+Measured on 2026-11-13 with the three `examples/*.source.txt` texts (about 250 characters / 165
+words each; effort `medium`; every reply passed validation on the first try):
+
+| Model | Input tokens | Output tokens | Cost per storyboard |
+|---|---|---|---|
+| `claude-opus-5-5` (default) | ~2,750 | 930–1,190 | $0.029–0.035 |
+| `claude-sonnet-5-5` | ~2,750 | 630–1,000 | $0.012–0.016 |
+| `claude-haiku-5-5` | ~2,750 | 960–1,810 | $0.0008–0.0012 |
+
+About 2,600 of the input tokens are the fixed prompt and schema, so cost grows slowly with the
+text. A longer text, higher `--effort`, or a retry raise it; budget roughly $0.05–0.10 per Opus
+video in the worst case.
+
+Prices used (USD per million tokens, input / output): Opus 5.5 $4 / $20, Sonnet 5.5 $2 / $10,
+Haiku 5.5 $0.10 / $0.50. The figure Vimmer prints is an estimate from these prices; the
+Anthropic Console has the billed amount. A validation retry resends the conversation, so it
+costs roughly one more call.
+
+Tests (no network): `cd rust-core && cargo test -p vimmer-storyboard --lib` (a fake helper), and
+`~/.local/share/vimmer/llm-venv/bin/python -m unittest discover -s rust-core/crates/vimmer-storyboard/scripts/tests`
+(recorded API replies).
 
 ## Desktop app (Tauri 2)
 

@@ -467,6 +467,7 @@ dependencies = [
  "vimmer-dsl",
  "vimmer-media",
  "vimmer-scheduler",
+ "vimmer-storyboard",
 ]
 
 [[package]]
@@ -508,6 +509,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "vimmer-dsl",
+ "vimmer-media",
 ]
 
 [[package]]
