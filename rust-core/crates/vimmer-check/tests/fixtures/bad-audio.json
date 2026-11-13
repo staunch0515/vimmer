@@ -1,0 +1,12 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1920, "height": 1080 },
+  "scenes": [
+    { "id": "clipped", "duration_ms": 3000, "text": "Clipped", "audio": { "source": "audio/clipped.wav" } },
+    { "id": "hot", "duration_ms": 3000, "text": "Hot", "audio": { "source": "audio/hot.wav" } },
+    { "id": "quiet", "duration_ms": 3000, "text": "Quiet", "audio": { "source": "audio/quiet.wav" } },
+    { "id": "silent", "duration_ms": 3000, "text": "Silent", "audio": { "source": "audio/silent.wav" } },
+    { "id": "clean", "duration_ms": 3000, "text": "Clean", "audio": { "source": "audio/clean.wav" } }
+  ],
+  "music": { "source": "audio/loud-music.wav", "volume": 1.0 }
+}

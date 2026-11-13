@@ -1,0 +1,13 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1080, "height": 1920 },
+  "scenes": [
+    { "id": "tilted", "duration_ms": 2000, "image": "img/canvas.png",
+      "keyframes": [ { "at_ms": 0, "scale": 1.0 }, { "at_ms": 1000, "scale": 1.0, "rotation": 6, "x": 4 } ] },
+    { "id": "landscape-on-portrait", "duration_ms": 2000, "image": "img/wide.png" },
+    { "id": "tiny", "duration_ms": 2000, "image": "img/tiny.png", "motion": "zoom_in" },
+    { "id": "missing", "duration_ms": 2000, "image": "img/missing.png" },
+    { "id": "broken", "duration_ms": 2000, "image": "img/broken.png" }
+  ],
+  "subtitles": [ { "start_ms": 0, "end_ms": 2000, "text": "A cue in portrait" } ]
+}
