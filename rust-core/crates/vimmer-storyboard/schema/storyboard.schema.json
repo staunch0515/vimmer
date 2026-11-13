@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Video title, not empty."
+    },
+    "orientation": {
+      "type": "string",
+      "enum": ["landscape", "portrait"]
+    },
+    "language": {
+      "type": "string",
+      "enum": ["zh", "en", "ja"]
+    },
+    "narration": {
+      "type": "boolean",
+      "description": "Read each scene's text aloud (default true)."
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Narration and on-screen text. One or two short sentences."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "description": "Scene length in ms, > 0. Omit to estimate from the text."
+          },
+          "emphasis": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "0-2 words copied exactly from this scene's text."
+          },
+          "camera": {
+            "type": "string",
+            "enum": ["static", "push_in", "pull_out", "pan_left", "pan_right", "ken_burns"]
+          },
+          "transition": {
+            "type": "string",
+            "enum": ["none", "fade", "slide_left", "slide_right", "slide_up", "slide_down", "zoom_in", "wipe_left"],
+            "description": "Never on the first scene."
+          },
+          "transition_ms": {
+            "type": "integer",
+            "description": "Transition length in ms (default 500), never longer than the scene."
+          },
+          "image_prompt": {
+            "type": "string",
+            "description": "Description of the picture this scene would show. Stored only."
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["title", "language", "scenes"],
+  "additionalProperties": false
+}

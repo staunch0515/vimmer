@@ -1,0 +1,47 @@
+{
+ "id": "msg_011CgzR45bWKiWBa9gj4qpMB",
+ "container": null,
+ "content": [
+  {
+   "text": "{\"title\":\"西安钟楼：古城中心的晨钟\",\"orientation\":\"landscape\",\"language\":\"zh\",\"narration\":true,\"scenes\":[{\"text\":\"西安钟楼，坐落在古城的正中心。\",\"emphasis\":[\"正中心\"],\"camera\":\"push_in\",\"image_prompt\":\"Aerial view of Xi'an Bell Tower at the center of the ancient city, daytime\"},{\"text\":\"东西南北四条大街，在这里交汇。\",\"emphasis\":[\"四条大街\"],\"camera\":\"pan_right\",\"transition\":\"fade\",\"image_prompt\":\"Four straight avenues radiating from the Bell Tower roundabout\"},{\"text\":\"它始建于明朝洪武十七年，也就是公元一三八四年。\",\"emphasis\":[\"一三八四年\"],\"camera\":\"ken_burns\",\"transition\":\"slide_left\",\"image_prompt\":\"Ming dynasty style illustration of the tower's construction\"},{\"text\":\"最初建在广济街附近，万历年间整体迁到了今天的位置。\",\"emphasis\":[\"整体迁\"],\"camera\":\"pan_left\",\"transition\":\"fade\",\"image_prompt\":\"Old map of Xi'an showing the tower's original and current locations\"},{\"text\":\"钟楼是重檐三滴水、四角攒尖顶的木结构建筑。\",\"emphasis\":[\"木结构\"],\"camera\":\"push_in\",\"transition\":\"slide_up\",\"image_prompt\":\"Close-up of triple eaves and pyramidal roof of the Bell Tower\"},{\"text\":\"通高三十六米，青砖高台四面各开一个券门洞。\",\"emphasis\":[\"三十六米\"],\"camera\":\"pan_right\",\"transition\":\"fade\",\"image_prompt\":\"Square grey-brick base with arched gateways on four sides\"},{\"text\":\"古时楼上悬挂大铁钟，每天清晨敲响报时。\",\"emphasis\":[\"大铁钟\"],\"camera\":\"ken_burns\",\"transition\":\"wipe_left\",\"image_prompt\":\"Large iron bell hanging in the tower at dawn\"},{\"text\":\"它与不远处的鼓楼，晨钟暮鼓，遥相呼应。\",\"emphasis\":[\"晨钟暮鼓\"],\"camera\":\"pan_left\",\"transition\":\"fade\",\"image_prompt\":\"Bell Tower and Drum Tower facing each other in the distance\"},{\"text\":\"今天的钟楼周围商业繁华，夜晚金碧辉煌。\",\"emphasis\":[\"金碧辉煌\"],\"camera\":\"push_in\",\"transition\":\"slide_left\",\"image_prompt\":\"Bell Tower illuminated at night amid bustling traffic and shops\"},{\"text\":\"登楼远眺，感受千年古都的格局与气度。\",\"emphasis\":[\"千年古都\"],\"camera\":\"pull_out\",\"transition\":\"fade\",\"image_prompt\":\"View from the top of the Bell Tower over long straight avenues to the horizon\"}]}",
+   "type": "text"
+  }
+ ],
+ "diagnostics": null,
+ "model": "claude-opus-5-5",
+ "role": "assistant",
+ "stop_details": null,
+ "stop_reason": "end_turn",
+ "stop_sequence": null,
+ "type": "message",
+ "usage": {
+  "cache_creation": {
+   "ephemeral_1h_input_tokens": 0,
+   "ephemeral_5m_input_tokens": 0
+  },
+  "cache_creation_input_tokens": 0,
+  "cache_read_input_tokens": 0,
+  "inference_geo": "global",
+  "input_tokens": 2756,
+  "iterations": [
+   {
+    "cache_creation": {
+     "ephemeral_1h_input_tokens": 0,
+     "ephemeral_5m_input_tokens": 0
+    },
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "input_tokens": 2756,
+    "model": null,
+    "output_tokens": 959,
+    "type": "message"
+   }
+  ],
+  "output_tokens": 959,
+  "output_tokens_details": {
+   "thinking_tokens": 0
+  },
+  "service_tier": "standard",
+  "speed": "standard"
+ }
+}
