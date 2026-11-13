@@ -3,7 +3,14 @@ import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
 type Props = {
   text: string;
   highlights: string[];
+  // True when the scene has an image under the text: a soft dark gradient rises from the bottom
+  // edge so the white text stays readable on bright pictures. Text-only scenes render without it.
+  onImage?: boolean;
 };
+
+// Behind the text (lower part of the frame) and the subtitle band.
+const IMAGE_SCRIM =
+  "linear-gradient(to top, rgba(9, 9, 11, 0.62) 0%, rgba(9, 9, 11, 0.45) 30%, rgba(9, 9, 11, 0) 62%)";
 
 const STAGGER_FRAMES = 3;
 const WORD_FADE_FRAMES = 12;
@@ -12,12 +19,12 @@ const normalize = (word: string): string => word.toLowerCase().replace(/[^\p{L}\
 
 // Word-by-word entrance with keyword highlights. Text wraps via CSS, and the
 // padding keeps content inside the safe area on phones.
-export const AnimatedText: React.FC<Props> = ({ text, highlights }) => {
+export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = false }) => {
   const frame = useCurrentFrame();
   const highlightSet = new Set(highlights.map(normalize));
   const words = text.split(/\s+/).filter(Boolean);
 
-  return (
+  const body = (
     <AbsoluteFill
       style={{
         justifyContent: "flex-end",
@@ -81,5 +88,12 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights }) => {
         })}
       </div>
     </AbsoluteFill>
+  );
+  if (!onImage) return body;
+  return (
+    <>
+      <AbsoluteFill style={{ background: IMAGE_SCRIM }} />
+      {body}
+    </>
   );
 };

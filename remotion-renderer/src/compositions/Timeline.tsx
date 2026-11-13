@@ -32,7 +32,7 @@ const SceneBody: React.FC<{ scene: Scene; durationInFrames: number }> = ({ scene
         durationInFrames={durationInFrames}
       />
     ) : null}
-    {scene.text ? <AnimatedText text={scene.text} highlights={scene.highlights} /> : null}
+    {scene.text ? <AnimatedText text={scene.text} highlights={scene.highlights} onImage={Boolean(scene.image)} /> : null}
   </AbsoluteFill>
 );
 

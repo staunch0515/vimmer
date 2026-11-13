@@ -7,6 +7,7 @@ pub mod image_norm;
 pub mod kokoro;
 pub mod process;
 pub mod speech;
+pub mod svg;
 pub mod transcribe;
 
 pub use align::{align_words, is_cjk, split_units, AlignedWord, RecognizedToken};
@@ -18,6 +19,10 @@ pub use kokoro::{
 };
 pub use process::{run_limited, Limits};
 pub use speech::{default_voice_for, SaySpeech, Speech};
+pub use svg::{
+    check_png, find_chrome, preflight_chrome, rasterize_svg, sanitize_svg, SanitizedSvg, SvgError, ENV_CHROME,
+    MAX_SVG_BYTES,
+};
 pub use transcribe::{
     guess_language, TranscribeRequest, Transcriber, WhisperCli, DEFAULT_MODEL_IN_HOME,
     ENV_WHISPER_CLI, ENV_WHISPER_DTW, ENV_WHISPER_GPU, ENV_WHISPER_MODEL,
