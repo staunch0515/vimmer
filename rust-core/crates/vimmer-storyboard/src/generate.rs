@@ -40,6 +40,10 @@ pub const HELPER_SCRIPT: &str = include_str!("../scripts/generate_storyboard.py"
 /// Illustration helper (style guide and per-scene SVG); imports the storyboard helper.
 pub const ILLUSTRATE_SCRIPT: &str = include_str!("../scripts/illustrate.py");
 pub const PROMPT_TEMPLATE: &str = include_str!("../prompts/storyboard.md");
+/// Timeline editing helper (JSON Patch from an instruction); imports the storyboard helper.
+pub const EDIT_SCRIPT: &str = include_str!("../scripts/edit_timeline.py");
+/// System prompt for timeline editing, with the field reference.
+pub const EDIT_PROMPT: &str = include_str!("../prompts/edit.md");
 /// JSON schema of the reply: the fields of [`Storyboard`] / `SceneSpec` minus the asset paths
 /// (`music`, `voice`, `image`), which this flow never fills.
 pub const STORYBOARD_SCHEMA: &str = include_str!("../schema/storyboard.schema.json");
@@ -229,6 +233,12 @@ impl LlmHelper {
     pub fn schema_path(&self) -> PathBuf {
         self.dir.join("storyboard.schema.json")
     }
+    pub fn edit_script_path(&self) -> PathBuf {
+        self.dir.join("edit_timeline.py")
+    }
+    pub fn edit_prompt_path(&self) -> PathBuf {
+        self.dir.join("edit.md")
+    }
 
     /// Writes the embedded helper files unless identical copies are already there.
     pub fn install_files(&self) -> std::io::Result<()> {
@@ -238,6 +248,8 @@ impl LlmHelper {
             (self.prompt_path(), PROMPT_TEMPLATE),
             (self.schema_path(), STORYBOARD_SCHEMA),
             (self.illustrate_script_path(), ILLUSTRATE_SCRIPT),
+            (self.edit_script_path(), EDIT_SCRIPT),
+            (self.edit_prompt_path(), EDIT_PROMPT),
         ] {
             if fs::read_to_string(&path).is_ok_and(|s| s == body) {
                 continue;
@@ -267,6 +279,21 @@ impl LlmHelper {
         cmd
     }
 
+    /// The timeline editing helper invocation (see [`crate::edit_claude`]).
+    pub fn edit_command(&self, request: &Path, record: Option<&Path>) -> Command {
+        let mut cmd = Command::new(&self.python);
+        cmd.arg("-I")
+            .arg(self.edit_script_path())
+            .arg("--request")
+            .arg(request)
+            .arg("--prompt-file")
+            .arg(self.edit_prompt_path());
+        if let Some(path) = record {
+            cmd.arg("--record").arg(path);
+        }
+        cmd
+    }
+
     /// The illustration helper invocation (see [`crate::illustrate`]).
     pub fn illustrate_command(&self, request: &Path, record: Option<&Path>) -> Command {
         let mut cmd = Command::new(&self.python);
@@ -282,7 +309,9 @@ impl LlmHelper {
 }
 
 fn default_helper_dir() -> PathBuf {
-    let key = format!("{HELPER_SCRIPT}\0{PROMPT_TEMPLATE}\0{STORYBOARD_SCHEMA}\0{ILLUSTRATE_SCRIPT}");
+    let key = format!(
+        "{HELPER_SCRIPT}\0{PROMPT_TEMPLATE}\0{STORYBOARD_SCHEMA}\0{ILLUSTRATE_SCRIPT}\0{EDIT_SCRIPT}\0{EDIT_PROMPT}"
+    );
     std::env::temp_dir().join(format!("vimmer-llm-{:016x}", fnv1a(&key)))
 }
 

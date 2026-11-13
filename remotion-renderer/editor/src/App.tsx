@@ -7,7 +7,7 @@ import { reducer, type EditorState } from "./state";
 import { baseName, confirmDiscard, guardClose, parseTimeline, pickToOpen, saveTimeline, serialize, setWindowTitle } from "./project";
 import { Toolbar } from "./components/Toolbar";
 import { Preview } from "./components/Preview";
-import { Inspector } from "./components/Inspector";
+import { Inspector, type InspectorTab } from "./components/Inspector";
 import { EditorTimeline } from "./components/EditorTimeline";
 import { RenderPanel } from "./components/RenderPanel";
 import {
@@ -55,7 +55,7 @@ const initial: EditorState = {
 export const App = () => {
   const [state, dispatch] = useReducer(reducer, initial);
   const [frame, setFrame] = useState(0);
-  const [tab, setTab] = useState<"scene" | "subtitles" | "music">("scene");
+  const [tab, setTab] = useState<InspectorTab>("scene");
   const [path, setPath] = useState<string | null>(null);
   // The last saved (or opened) document. Unsaved changes = the current document differs from it.
   // A recovered draft starts as "different", so it reads as unsaved until the user saves it.
@@ -191,6 +191,8 @@ export const App = () => {
 
   const select = (selection: Selection) => {
     dispatch({ type: "select", selection });
+    // In the assistant tab, picking a scene only sets the assistant's context.
+    if (tab === "assistant") return;
     if (selection.kind === "subtitle") setTab("subtitles");
     if (selection.kind === "scene" || selection.kind === "keyframe") setTab("scene");
     if (selection.kind === "music") setTab("music");

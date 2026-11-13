@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod assets;
+mod assistant;
 mod project;
 mod render;
 
@@ -20,7 +21,8 @@ fn main() {
             render::cancel_render,
             render::reveal_in_finder,
             assets::import_asset,
-            assets::asset_root
+            assets::asset_root,
+            assistant::propose_edit
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vimmer Studio");
