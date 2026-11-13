@@ -1,8 +1,9 @@
 //! Orchestration: validate → narrate → time subtitles word by word → preprocess assets →
-//! plan chunks → render chunks → concatenate.
+//! plan chunks → render chunks (silent) → concatenate → mix the soundtrack once.
 
+pub mod audio;
 pub mod control;
-pub mod music;
+pub mod duck;
 pub mod narrate;
 pub mod plan;
 pub mod run;

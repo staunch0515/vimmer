@@ -97,8 +97,9 @@ npm run render:test      # writes out/test-scene.mp4
   `scripts/kokoro_tts.py`), speech recognition, and the SVG sanitizer / Chrome rasterizer
   for illustrations (`svg.rs`).
 - `vimmer-scheduler`: chunk planner (whole scenes, ≤ 30 s per chunk) and a tokio
-  pipeline: preprocess images → check audio → render chunks through Remotion with
-  bounded concurrency → concatenate with ffmpeg `-c copy`.
+  pipeline: preprocess images → check audio → render silent chunks through Remotion with
+  bounded concurrency → concatenate with ffmpeg `-c copy` → mix the whole soundtrack once
+  (`audio.rs`, ducking in `duck.rs`).
 - `vimmer-cli`: `vimmer <timeline.json> -o out.mp4` (`--tts kokoro` for Kokoro narration), and
   `vimmer generate <input.txt> --lang zh -o out.mp4` (text → Claude storyboard → MP4, with
   `--illustrate` for Claude-drawn pictures), and `vimmer illustrate <storyboard.json>`.
@@ -418,9 +419,50 @@ Music is one track under the whole video. In the editor, open the **Music** tab 
 Inspector and choose a file (or type a path under `public/`). Set the volume (0–1) and
 optional fades in and out, in milliseconds. The track loops until the video ends.
 
-The renderer does not render music inside the segments. After the segments are joined, ffmpeg
-loops the track, applies volume and fades, and mixes it under any scene audio (narration).
-Music that runs past the end is cut. The editor preview plays the same loop and fades.
+Music that runs past the end is cut. The editor preview plays the same loop and fades (but
+not the ducking below).
+
+## Audio (soundtrack, sync and ducking)
+
+Segments are rendered **without audio** (`remotion render --muted`). After they are joined,
+ffmpeg builds the whole soundtrack once, from the timeline, and muxes it onto the video:
+
+- Each scene's audio (its `audio` file or its generated narration) starts at the scene's
+  start frame plus `offset_ms` rounded to a frame, and is cut at the scene's last frame:
+  the same placement Remotion uses. Mono clips play on both channels at full level.
+- Music loops from 0, with its volume and fades, ducked as below, and is mixed under the
+  scene audio without normalization. The track is exactly as long as the video.
+- One AAC encode (48 kHz, 320 kb/s) for the whole video.
+
+Before this, every segment carried its own AAC track. Each one starts with about 43 ms of
+encoder priming silence, and the `-c copy` join kept it, so the sound fell another ~43 ms
+behind the picture at every seam (a 3-minute video ended ~250 ms out of lip sync with 30 s
+segments). Now a chunked render sounds identical to a one-segment render.
+
+**Ducking.** Background music automatically drops under every scene's audio (narration or
+`audio`; the scheduler cannot tell speech from a sound effect, so all scene audio counts) and
+comes back up between them. The envelope comes from the known clip times, not from the signal,
+so the same timeline always sounds the same:
+
+- fully down (`depth_db`, default −12 dB relative to the music volume) when the clip starts:
+  the attack (default 200 ms) runs *before* the onset, so the first syllable is never masked;
+- held while the clip plays (until the clip's real end, or its scene's end if it is cut);
+- back up over the release (default 400 ms). Gaps shorter than attack + release stay down,
+  so the music does not bob up between two lines. Ramps are linear in dB.
+
+It is on by default. Tune or turn it off per timeline:
+
+```json
+"music": {
+  "source": "assets/pad-loop.m4a", "volume": 0.3, "fade_in_ms": 500, "fade_out_ms": 1500,
+  "duck": { "enabled": true, "depth_db": -12, "attack_ms": 200, "release_ms": 400 }
+}
+```
+
+Every `duck` field is optional; `"duck": { "enabled": false }` mixes the music at a constant
+level as before. Ranges: `depth_db` −40..0, `attack_ms` and `release_ms` 10..5000. Music with
+no scene audio under it sounds exactly as before. `fixtures/music-ducking.json` demonstrates it
+with `assets/pad-loop.m4a`, a short synthesized chord loop made for the fixture.
 
 ## Images and audio
 
