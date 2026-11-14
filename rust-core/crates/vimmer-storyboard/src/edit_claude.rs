@@ -350,11 +350,16 @@ pub fn propose_edit_with_key_check(
             lib.tracks
                 .iter()
                 .map(|t| {
-                    serde_json::json!({
+                    let mut v = serde_json::json!({
                         "id": t.id,
+                        "title": t.title,
                         "moods": t.moods,
                         "energy": (f64::from(t.energy) * 100.0).round() / 100.0,
-                    })
+                    });
+                    if t.placeholder {
+                        v["placeholder"] = true.into();
+                    }
+                    v
                 })
                 .collect()
         })

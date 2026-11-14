@@ -151,9 +151,13 @@ def build_user_message(req):
         out.append(
             "Music library (for music.pick; mood must be one of these tags, energy 0 calm .. 1 intense):"
         )
-        out.extend(
-            f"- {t['id']}: moods {', '.join(t['moods'])}; energy {t['energy']}" for t in tracks
-        )
+        for t in tracks:
+            line = f"- {t['id']}: moods {', '.join(t['moods'])}; energy {t['energy']}"
+            if t.get("title"):
+                line += f"; \"{t['title']}\""
+            if t.get("placeholder"):
+                line += "; synthesized placeholder, played only when no real track has the mood"
+            out.append(line)
     if req.get("music_now"):
         out.append(f"The music pick plays the track {req['music_now']} now.")
     out += [

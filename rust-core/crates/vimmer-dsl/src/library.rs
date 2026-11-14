@@ -3,8 +3,10 @@
 //! `music.pick` ([`MusicLibrary::pick`], [`resolve_music_pick`]).
 //!
 //! Choosing: only tracks whose `moods` contain the wanted mood (case does not matter) and that
-//! are not excluded count. With an `energy` target, the tracks closest to it win, the distance
-//! counted in steps of 0.1 (so 0.15 and 0.2 are equally close to 0.2). Ties are broken by a hash
+//! are not excluded count. Real music comes first: a `placeholder` track (synthesized by this
+//! project) is chosen only when no real track has the mood or every real one is excluded. Then,
+//! with an `energy` target, the tracks closest to it win, the distance counted in steps of 0.1
+//! (so 0.15 and 0.2 are equally close to 0.2). Ties are broken by a hash
 //! of the timeline ([`pick_seed`]) and the track id (rendezvous hashing): stable for one video,
 //! different between videos, and adding a track only moves the videos that now prefer it.
 //!
@@ -57,6 +59,27 @@ pub struct LibraryTrack {
     pub license: String,
     #[serde(default)]
     pub how_made: String,
+    /// A stand-in synthesized by this project (`scripts/make-music-library.sh`): ranked after
+    /// every real track with the mood. Kept so timelines that name it still play.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub placeholder: bool,
+    /// Who made the track and where it comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit: Option<TrackCredit>,
+}
+
+/// The origin of a track: title, artist, the page it was downloaded from, and its license
+/// (an SPDX id such as `CC0-1.0`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrackCredit {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub page: String,
+    #[serde(default)]
+    pub license: String,
 }
 
 impl LibraryTrack {
@@ -117,7 +140,8 @@ impl std::error::Error for LibraryError {}
 #[derive(Debug, Clone, PartialEq)]
 pub struct PickChoice {
     pub track: LibraryTrack,
-    /// Every track that had the mood and was not excluded, best first: `(id, energy distance)`
+    /// Every track that had the mood and was not excluded, best first (placeholders last):
+    /// `(id, energy distance)`
     /// (distance `None` without an energy target).
     pub candidates: Vec<(String, Option<f32>)>,
     /// One line: which track and why.
@@ -217,14 +241,15 @@ impl MusicLibrary {
                 available: self.moods(),
             });
         }
-        let mut ranked: Vec<(u32, u64, &LibraryTrack, Option<f32>)> = with_mood
+        // (placeholder, energy step, hash): real tracks first, then the closest energy.
+        let mut ranked: Vec<(Rank, &LibraryTrack, Option<f32>)> = with_mood
             .iter()
             .filter(|t| !pick.exclude.iter().any(|x| x.trim() == t.id))
             .map(|t| {
                 let dist = pick.energy.map(|e| (t.energy - e).abs());
                 // Steps of 0.1; the small margin keeps 0.3 - 0.2 in the step of 0.1.
                 let step = dist.map_or(0, |d| (d * 10.0 + 1e-4).floor() as u32);
-                (step, mix(seed, &t.id), *t, dist)
+                ((t.placeholder, step, mix(seed, &t.id)), *t, dist)
             })
             .collect();
         if ranked.is_empty() {
@@ -233,9 +258,13 @@ impl MusicLibrary {
                 excluded: with_mood.iter().map(|t| t.id.clone()).collect(),
             });
         }
-        ranked.sort_by_key(|a| (a.0, a.1));
-        let best = ranked[0].2.clone();
-        let ties = ranked.iter().filter(|r| r.0 == ranked[0].0).count();
+        ranked.sort_by_key(|a| a.0);
+        let best = ranked[0].1.clone();
+        let rank = |r: &Rank| (r.0, r.1);
+        let ties = ranked
+            .iter()
+            .filter(|r| rank(&r.0) == rank(&ranked[0].0))
+            .count();
         let mut reason = format!(
             "mood `{mood}`: {} of {} track(s) with that mood",
             best.id,
@@ -248,9 +277,17 @@ impl MusicLibrary {
         {
             reason.push_str(&format!(" ({} excluded)", with_mood.len() - ranked.len()));
         }
+        if best.placeholder {
+            reason.push_str("; a synthesized placeholder: no real track with that mood is left");
+        }
         if let Some(e) = pick.energy {
+            let among = if !best.placeholder && ranked.iter().any(|r| r.1.placeholder) {
+                " among the real tracks"
+            } else {
+                ""
+            };
             reason.push_str(&format!(
-                "; energy {:.2} is the closest to the target {e:.2}",
+                "; energy {:.2} is the closest to the target {e:.2}{among}",
                 best.energy
             ));
         }
@@ -261,7 +298,7 @@ impl MusicLibrary {
         }
         Ok(PickChoice {
             track: best,
-            candidates: ranked.iter().map(|r| (r.2.id.clone(), r.3)).collect(),
+            candidates: ranked.iter().map(|r| (r.1.id.clone(), r.2)).collect(),
             reason,
         })
     }
@@ -295,6 +332,9 @@ impl MusicLibrary {
         )
     }
 }
+
+/// How a candidate sorts: placeholder (real tracks first), energy step, hash.
+type Rank = (bool, u32, u64);
 
 /// FNV-1a over the bytes, then a SplitMix64 finish so close inputs spread out.
 fn fnv(mut h: u64, bytes: &[u8]) -> u64 {
@@ -366,11 +406,13 @@ pub fn track_json(t: &LibraryTrack) -> serde_json::Value {
         "source": t.source(),
         "moods": t.moods,
         "energy": (f64::from(t.energy) * 100.0).round() / 100.0,
-        "bpm": t.bpm,
+        "bpm": t.bpm.map(|b| (f64::from(b) * 100.0).round() / 100.0),
         "beat_offset_ms": t.beat_offset_ms,
         "duration_ms": t.duration_ms,
         "loopable": t.loopable,
         "license": t.license,
+        "placeholder": t.placeholder,
+        "credit": t.credit,
     })
 }
 
@@ -464,6 +506,8 @@ mod tests {
             loopable: true,
             license: String::new(),
             how_made: String::new(),
+            placeholder: false,
+            credit: None,
         }
     }
 
@@ -492,10 +536,79 @@ mod tests {
         let raw =
             include_str!("../../../../remotion-renderer/public/assets/music/library/library.json");
         let lib = MusicLibrary::parse(raw).unwrap();
-        assert_eq!(lib.tracks.len(), 6);
+        assert_eq!(lib.tracks.len(), 12);
+        let real: Vec<&LibraryTrack> = lib.tracks.iter().filter(|t| !t.placeholder).collect();
+        assert_eq!(real.len(), 6);
+        for t in &real {
+            let c = t
+                .credit
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} has no credit", t.id));
+            assert_eq!(c.license, "CC0-1.0", "{}", t.id);
+            assert!(
+                c.page.starts_with("https://opengameart.org/content/"),
+                "{}",
+                t.id
+            );
+            assert!(!c.artist.is_empty() && !c.title.is_empty(), "{}", t.id);
+        }
         for mood in ["calm", "upbeat", "tense", "warm", "epic", "playful"] {
             assert!(lib.main_moods().contains(&mood.to_string()), "{mood}");
+            // Each main mood has a real track first.
+            assert!(real.iter().any(|t| t.moods[0] == mood), "{mood}");
         }
+    }
+
+    #[test]
+    fn real_tracks_win_over_placeholders_whatever_the_energy() {
+        let raw =
+            include_str!("../../../../remotion-renderer/public/assets/music/library/library.json");
+        let lib = MusicLibrary::parse(raw).unwrap();
+        let real_moods: BTreeSet<String> = lib
+            .tracks
+            .iter()
+            .filter(|t| !t.placeholder)
+            .flat_map(|t| t.moods.iter().cloned())
+            .collect();
+        for mood in lib.moods() {
+            for energy in [None, Some(0.0), Some(0.5), Some(1.0)] {
+                for seed in 0..10 {
+                    let c = lib.pick(&pick(&mood, energy), seed).unwrap();
+                    assert_eq!(
+                        c.track.placeholder,
+                        !real_moods.contains(&mood),
+                        "{mood} {energy:?}: {}",
+                        c.reason
+                    );
+                }
+            }
+        }
+        // `ambient` is only on the placeholder calm-drift; it still plays, and says why.
+        let c = lib.pick(&pick("ambient", None), 1).unwrap();
+        assert_eq!(c.track.id, "calm-drift");
+        assert!(c.reason.contains("placeholder"), "{}", c.reason);
+    }
+
+    #[test]
+    fn placeholders_rank_last_but_still_play_when_the_real_ones_are_excluded() {
+        let mut l = lib();
+        l.tracks[0].placeholder = true; // calm-a, energy 0.1
+        let mut p = pick("calm", Some(0.1));
+        let c = l.pick(&p, 3).unwrap();
+        // calm-b (0.15) is real and in the same energy step; warm (0.35) is real but further:
+        // calm-b wins, calm-a comes last although it matches the energy exactly.
+        assert_eq!(c.track.id, "calm-b");
+        let order: Vec<&str> = c.candidates.iter().map(|x| x.0.as_str()).collect();
+        assert_eq!(order, ["calm-b", "warm", "calm-a"]);
+        assert!(c.reason.contains("among the real tracks"), "{}", c.reason);
+        p.exclude = vec!["calm-b".into(), "warm".into()];
+        let c = l.pick(&p, 3).unwrap();
+        assert_eq!(c.track.id, "calm-a");
+        assert!(c.reason.contains("placeholder"), "{}", c.reason);
+        // The flag round-trips and is left out of the JSON when false.
+        let json = serde_json::to_string(&l).unwrap();
+        assert_eq!(json.matches("placeholder").count(), 1);
+        assert_eq!(MusicLibrary::parse(&json).unwrap(), l);
     }
 
     #[test]

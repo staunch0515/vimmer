@@ -118,15 +118,24 @@ class EditHelperTest(unittest.TestCase):
                          "music": {"pick": {"mood": "calm"}}},
             "instruction": "换一首轻快点的音乐",
             "music_tracks": [
-                {"id": "calm-drift", "moods": ["calm", "ambient"], "energy": 0.15},
-                {"id": "upbeat-sunny", "moods": ["upbeat"], "energy": 0.75},
+                {"id": "another-august", "title": "Another August",
+                 "moods": ["calm", "reflective"], "energy": 0.2},
+                {"id": "calm-drift", "title": "Calm Drift", "moods": ["calm", "ambient"],
+                 "energy": 0.15, "placeholder": True},
+                {"id": "overdrive", "moods": ["upbeat"], "energy": 0.8},
             ],
-            "music_now": "calm-drift",
+            "music_now": "another-august",
         }
         user = et.build_user_message(req)
         self.assertIn("Music library (for music.pick", user)
-        self.assertIn("- calm-drift: moods calm, ambient; energy 0.15", user)
-        self.assertIn("The music pick plays the track calm-drift now.", user)
+        self.assertIn('- another-august: moods calm, reflective; energy 0.2; "Another August"\n', user)
+        self.assertIn(
+            '- calm-drift: moods calm, ambient; energy 0.15; "Calm Drift"; synthesized placeholder,'
+            " played only when no real track has the mood\n",
+            user,
+        )
+        self.assertIn("- overdrive: moods upbeat; energy 0.8\n", user)
+        self.assertIn("The music pick plays the track another-august now.", user)
         del req["music_tracks"], req["music_now"]
         self.assertNotIn("Music library", et.build_user_message(req))
 

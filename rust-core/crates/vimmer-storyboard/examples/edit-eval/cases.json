@@ -216,7 +216,7 @@
     {"id": "mood-en-calmer", "group": "mood", "timeline": "mood", "instruction": "The music is too busy for this, make it calmer",
      "status": ["edited"], "checks": [["/music/pick/mood", "in", ["calm", "warm", "reflective", "ambient"]]], "only": ["/music"]},
     {"id": "mood-ja-another-track", "group": "mood", "timeline": "mood", "instruction": "同じ雰囲気で別の曲にして",
-     "status": ["edited"], "checks": [["/music/pick/mood", "eq", "upbeat"], ["/music/pick/exclude", "contains", "playful-hop"]], "only": ["/music"]},
+     "status": ["edited"], "checks": [["/music/pick/mood", "eq", "upbeat"], ["/music/pick/exclude", "contains", "happy-clappy-loop"]], "only": ["/music"]},
     {"id": "mood-zh-add-warm", "group": "mood", "timeline": "zh", "instruction": "加一段温暖的背景音乐",
      "status": ["edited"], "checks": [["/music/pick/mood", "in", ["warm", "hopeful"]]], "only": ["/music"]},
     {"id": "mood-en-more-energy", "group": "mood", "timeline": "mood", "instruction": "Same kind of music but with more energy",
