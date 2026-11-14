@@ -34,10 +34,6 @@
     {
       "id": "body",
       "duration_ms": 5000,
-      "transition_in": {
-        "kind": "fade",
-        "duration_ms": 400
-      },
       "text": "Every scene picks up the brand",
       "highlights": [
         "brand"
@@ -94,10 +90,6 @@
     {
       "id": "quote",
       "duration_ms": 5000,
-      "transition_in": {
-        "kind": "fade",
-        "duration_ms": 400
-      },
       "template": {
         "name": "quote",
         "params": {
