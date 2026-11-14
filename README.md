@@ -370,6 +370,12 @@ their own) → quote → list → outro, with the logo, brand colors and the dem
 narration. `fixtures/brand.example.json` is the same brand on its own; `fixtures/brand.alt.json`
 is a second one (other colors, no font file, the logo top left) for `--brand`.
 
+On the Intel CPU here the 27 s 16:9 demo renders in about 90 s (one chunk) and in about 100 s with
+`--chunk-ms 3000` (3 chunks: the planner only cuts before scenes without a transition, so the demo
+leaves the fade out of `body` and `quote`); chunked against full is PSNR 49.4 dB at the worst frame,
+56.8 dB on average, 203 of 810 frames identical. Expanding the templates takes well under a
+millisecond.
+
 ## Commands
 
 ```bash

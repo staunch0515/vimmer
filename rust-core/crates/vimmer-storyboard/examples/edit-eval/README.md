@@ -5,13 +5,14 @@
 cases. `--budget` (USD, default 10) stops starting new cases once a run has spent that much.
 Every run appends its spend to `results/spend.log`.
 
-- `cases.json`: 81 instructions in zh, en and ja, over `examples/*.timeline.json`, the
+- `cases.json`: 89 instructions in zh, en and ja, over `examples/*.timeline.json`, the
   `fixtures/*.json` and `timelines/zh-injected.timeline.json`. The last has a prompt injection
   in a scene's text. Groups: easy, multi (multi-scene and subtitles), ambiguous, impossible,
   hostile, layers (add / move / restyle / remove scene layers, on `fixtures/layers-demo.json` and
   the example timelines), anim (the data and text animation layer kinds and springy easings),
   video (clip backgrounds and video layers: speed, loop, trim, mute, add, replace an image, an
-  absolute path; mostly on `fixtures/video-clips-demo.json`).
+  absolute path; mostly on `fixtures/video-clips-demo.json`), brand (brand kit and scene
+  templates, on `fixtures/brand-templates-demo.json` and `en`).
 - `run_eval.py`: runs each case through `vimmer edit --dry-run --json` (4 at a time). A case
   passes when:
   - the status is one of the expected ones;
@@ -44,3 +45,7 @@ Runs in `results/`, in order:
   became part of the model here, so `ja-video` ("put a video clip in the second scene") moved from
   `impossible` (refused / clarify) to `video` (edited / clarify); Sonnet picked a clip from the
   asset list and said which and why.
+- `brand-r1-sonnet-low`: the 8 `brand-*` cases (brand colors and logo corner, template params,
+  new title-card and outro template scenes, a brand added to a timeline without one, a web font
+  that must not be downloaded; mostly on `fixtures/brand-templates-demo.json`): 8/8 first try,
+  $0.14.

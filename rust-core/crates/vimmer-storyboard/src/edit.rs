@@ -820,6 +820,7 @@ const LAYER_KIND_FIELDS: &[(&str, &[(&str, Kind)])] = &[
             ("reveal", Kind::Leaf),
             ("typing_cps", Kind::Leaf),
             ("cursor", Kind::Leaf),
+            ("font", Kind::Leaf),
         ],
     ),
     (
@@ -931,6 +932,7 @@ const LAYER_FIELDS_ALL: &[(&str, Kind)] = &[
     ("reveal", Kind::Leaf),
     ("typing_cps", Kind::Leaf),
     ("cursor", Kind::Leaf),
+    ("font", Kind::Leaf),
     ("shape", Kind::Leaf),
     ("fill", Kind::Leaf),
     ("stroke", Kind::Leaf),

@@ -102,8 +102,17 @@ fn behind(scene: &Scene, index: usize, base: Option<[u8; 3]>) -> Option<[u8; 3]>
     color
 }
 
-/// A text of a layer: (what, color, color path, own color set, box color, font frac, weight).
-type Item = (String, String, String, bool, Option<String>, f64, u16);
+/// A text of a layer: (what, color, its field, the brand color it falls back to when the field
+/// is unset (`None` when it is set), box color, font frac, weight).
+type Item = (
+    String,
+    String,
+    String,
+    Option<&'static str>,
+    Option<String>,
+    f64,
+    u16,
+);
 
 fn samples(t: &VideoTimeline) -> Vec<Sample> {
     let brand = t.brand.as_ref();
@@ -143,7 +152,7 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
                     name.clone(),
                     tl.color.clone().unwrap_or_else(|| text.to_string()),
                     lp("color"),
-                    tl.color.is_some(),
+                    tl.color.is_none().then_some("text"),
                     tl.background.as_ref().map(|b| b.color.clone()),
                     f64::from(tl.font_size),
                     tl.weight,
@@ -152,7 +161,7 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
                     name.clone(),
                     c.color.clone().unwrap_or_else(|| text.to_string()),
                     lp("color"),
-                    c.color.is_some(),
+                    c.color.is_none().then_some("text"),
                     None,
                     f64::from(c.font_size),
                     c.weight,
@@ -163,7 +172,7 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
                         format!("{name} title"),
                         lt.color.clone().unwrap_or_else(|| text.to_string()),
                         lp("color"),
-                        lt.color.is_some(),
+                        lt.color.is_none().then_some("text"),
                         bx.clone(),
                         f64::from(lt.font_size),
                         700,
@@ -176,7 +185,7 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
                                 .clone()
                                 .unwrap_or_else(|| muted.to_string()),
                             lp("subtitle_color"),
-                            true,
+                            lt.subtitle_color.is_none().then_some("muted_text"),
                             bx,
                             f64::from(lt.font_size) * 0.62,
                             500,
@@ -189,7 +198,7 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
                         format!("{name} labels"),
                         ch.label_color.clone().unwrap_or_else(|| muted.to_string()),
                         lp("label_color"),
-                        true,
+                        ch.label_color.is_none().then_some("muted_text"),
                         None,
                         f64::from(ch.font_size),
                         400,
@@ -197,7 +206,36 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
                 }
                 _ => {}
             }
-            for (what, color, path, own, box_color, frac, weight) in items {
+            for (what, color, path, fallback, box_color, frac, weight) in items {
+                // Template layers carry the brand's colors explicitly: point at the brand color
+                // they came from.
+                let from_brand = fallback.or_else(|| {
+                    let c = &brand?.colors;
+                    let is_tpl = layer
+                        .id
+                        .starts_with(vimmer_dsl::template::TEMPLATE_LAYER_PREFIX);
+                    [
+                        ("text", &c.text),
+                        ("muted_text", &c.muted_text),
+                        ("primary", &c.primary),
+                    ]
+                    .into_iter()
+                    .find(|(_, v)| is_tpl && v.as_deref() == Some(color.as_str()))
+                    .map(|(k, _)| k)
+                });
+                let brand_has = |k: &str| {
+                    let c = brand.map(|b| &b.colors);
+                    match k {
+                        "text" => c.and_then(|c| c.text.as_ref()).is_some(),
+                        "muted_text" => c.and_then(|c| c.muted_text.as_ref()).is_some(),
+                        "primary" => c.and_then(|c| c.primary.as_ref()).is_some(),
+                        _ => false,
+                    }
+                };
+                let path = match from_brand {
+                    Some(k) if brand_has(k) => format!("/brand/colors/{k}"),
+                    _ => path,
+                };
                 let bg = match (&box_color, under) {
                     (Some(b), Some(u)) => flatten(b, u),
                     (Some(b), None) => rgb(b).filter(|c| c[3] == 255).map(|c| [c[0], c[1], c[2]]),
@@ -212,11 +250,7 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
                     fg: over(c, bg),
                     bg,
                     large: is_large(frac, weight),
-                    path: if path.ends_with("/color") {
-                        text_path(own, path)
-                    } else {
-                        path
-                    },
+                    path,
                 });
             }
         }
@@ -463,7 +497,10 @@ pub fn template_findings(
             ) else {
                 return f;
             };
-            if parts.get(3) != Some(&"layers") || templates.get(si).is_none_or(Option::is_none) {
+            if f.code == "brand.contrast"
+                || parts.get(3) != Some(&"layers")
+                || templates.get(si).is_none_or(Option::is_none)
+            {
                 return f;
             }
             let Some(layer) = expanded.scenes.get(si).and_then(|s| s.layers.get(li)) else {
@@ -546,5 +583,26 @@ mod tests {
         let t = timeline(r#","brand":{"logo":{"src":"l.png","hide_on":["zzz"]}}"#);
         let codes: Vec<&str> = check(&t, None).iter().map(|f| f.code).collect();
         assert_eq!(codes, ["brand.unknown_scene"]);
+    }
+
+    #[test]
+    fn template_text_that_does_not_fit_points_at_the_param() {
+        let title = "WWWWWWW MMMMMMM WWWWWWW MMMMMMM WWWWWWW MMMMMMM WWWWWWW MMM";
+        let t: VideoTimeline = serde_json::from_str(&format!(
+            r#"{{"fps":30,"resolution":{{"width":1920,"height":1080}},"scenes":[{{"id":"l","duration_ms":6000,
+            "template":{{"name":"list","params":{{"title":"{title}","items":["a"]}}}}}}]}}"#
+        ))
+        .unwrap();
+        let f = crate::check_timeline(&t, &crate::CheckOptions::default());
+        let over: Vec<_> = f
+            .iter()
+            .filter(|f| f.code == "template.text_overflow")
+            .collect();
+        assert_eq!(over.len(), 1, "{f:?}");
+        assert_eq!(
+            over[0].suggestion.path.as_deref(),
+            Some("/scenes/0/template/params/title")
+        );
+        assert!(over[0].message.starts_with("template param `title`"));
     }
 }
