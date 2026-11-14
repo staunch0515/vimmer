@@ -1063,7 +1063,7 @@ fn unknown_layer_keys_are_rejected() {
     // An unknown kind is a model error.
     let r = err(
         &with_layers(),
-        json!([{"op": "replace", "path": "/scenes/1/layers/0/kind", "value": "video"}]),
+        json!([{"op": "replace", "path": "/scenes/1/layers/0/kind", "value": "film"}]),
     );
     assert_eq!(r.stage, Stage::Model);
     // A layer value moved to a non-layer place.
@@ -1220,4 +1220,93 @@ fn data_layers_are_guarded_like_other_layers() {
         json!([{"op": "replace", "path": "/scenes/0/layers/2/value", "value": 1.5}]),
     );
     assert_eq!(r.stage, Stage::Validation);
+}
+
+#[test]
+fn video_background_and_layer_edits() {
+    // A clip as a scene background, in place of the image.
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/1/video", "value":
+            {"src": "assets/clips/counter-6s.mp4", "trim_start_ms": 500, "speed": 2, "fit_time": "loop"}}]),
+    );
+    assert_eq!(out.timeline["scenes"][1]["video"]["speed"], 2.0);
+    assert!(
+        out.summary.iter().any(|l| l
+            .contains("video none -> assets/clips/counter-6s.mp4 (trim 500..end ms, 2x, loop)")),
+        "{:?}",
+        out.summary
+    );
+    // A picture-in-picture video layer, then its speed changed by pointer.
+    let out = ok(
+        &with_layers(),
+        json!([{"op": "add", "path": "/scenes/1/layers/-", "value":
+            {"id": "pip", "kind": "video", "src": "assets/clips/pip-cellauto-2s.webm",
+             "x": 0.65, "y": 0.6, "width": 0.3, "height": 0.3, "volume": 0.5}}]),
+    );
+    assert!(
+        out.summary
+            .iter()
+            .any(|l| l.contains("layer `pip` added (video assets/clips/pip-cellauto-2s.webm, z 0)")),
+        "{:?}",
+        out.summary
+    );
+    let out2 = ok(
+        &out.timeline,
+        json!([{"op": "add", "path": "/scenes/1/layers/2/speed", "value": 0.5}]),
+    );
+    assert!(
+        out2.summary.iter().any(|l| l.contains("layer `pip` speed")),
+        "{:?}",
+        out2.summary
+    );
+}
+
+#[test]
+fn bad_video_edits_are_rejected() {
+    // Unknown key inside a scene video.
+    let r = err(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/1/video", "value": {"src": "a.mp4", "loop": true}}]),
+    );
+    assert_eq!(r.stage, Stage::Guard);
+    assert!(
+        text(&r).contains("unknown field `loop` in a scene background video"),
+        "{}",
+        text(&r)
+    );
+    // A text field on a video layer.
+    let r = err(
+        &with_layers(),
+        json!([{"op": "add", "path": "/scenes/1/layers/-", "value":
+            {"id": "v", "kind": "video", "src": "a.mp4", "x": 0, "y": 0, "width": 0.2, "height": 0.2, "text": "x"}}]),
+    );
+    assert!(
+        text(&r).contains("unknown field `text` in a video layer"),
+        "{}",
+        text(&r)
+    );
+    // DSL rules: extension, speed, image and video together.
+    let r = err(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/1/video", "value": {"src": "assets/sample.png", "speed": 8}}]),
+    );
+    let t = text(&r);
+    assert!(t.contains("must be a .mp4, .mov, .m4v, .webm file"), "{t}");
+    assert!(t.contains("speed must be between 0.25 and 4"), "{t}");
+    let r = err(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/video", "value": {"src": "assets/clips/counter-6s.mp4"}}]),
+    );
+    assert!(
+        text(&r).contains("both an image and a video"),
+        "{}",
+        text(&r)
+    );
+    // Hostile paths.
+    let r = err(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/1/video", "value": {"src": "../../etc/x.mp4"}}]),
+    );
+    assert!(text(&r).contains("not allowed"), "{}", text(&r));
 }
