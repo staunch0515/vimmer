@@ -31,7 +31,9 @@
 use serde_json::json;
 use vimmer_dsl::{SubtitleCue, VideoTimeline};
 
+use crate::fonts::Fonts;
 use crate::layout::{SceneTextArea, SubtitleBand};
+use crate::textbox::Role;
 use crate::{cue_path, scene_path, scene_starts_ms, Finding, Severity, Suggestion};
 
 /// Width factor of the optimistic estimate (see the module docs).
@@ -178,20 +180,24 @@ fn no_break_before(c: char) -> bool {
     )
 }
 
-/// Width in px of `s` at `font_px`, with `letter_spacing_em` after each character.
-pub(crate) fn width(s: &str, font_px: f64, letter_spacing_em: f64) -> f64 {
-    s.chars()
-        .map(|c| (char_em(c) + letter_spacing_em) * font_px)
-        .sum()
-}
-
 /// Estimated line count of scene text in [`SceneTextArea`] with widths scaled by `factor`.
 pub fn scene_text_lines(text: &str, area: &SceneTextArea, factor: f64) -> u32 {
+    scene_text_lines_with(text, area, factor, &Fonts::none(), Role::Heading)
+}
+
+/// [`scene_text_lines`] with the widths of `role`'s brand font when it was measured.
+pub fn scene_text_lines_with(
+    text: &str,
+    area: &SceneTextArea,
+    factor: f64,
+    fonts: &Fonts,
+    role: Role,
+) -> u32 {
     let gap = area.word_gap_em * area.font_px;
     let mut lines = 0u32;
     let mut cur = 0.0f64;
     for word in text.split_whitespace() {
-        let w = width(word, area.font_px, area.letter_spacing_em) * factor;
+        let w = fonts.width(role, word, area.font_px, area.letter_spacing_em) * factor;
         let boxed = w + gap;
         if w > area.line_width {
             // An inline-block wider than the line takes whole lines of its own.
@@ -217,13 +223,18 @@ pub fn scene_text_lines(text: &str, area: &SceneTextArea, factor: f64) -> u32 {
 
 /// Estimated line count of a subtitle cue in `band` with widths scaled by `factor`.
 pub fn cue_lines(text: &str, band: &SubtitleBand, factor: f64) -> u32 {
+    cue_lines_with(text, band, factor, &Fonts::none())
+}
+
+/// [`cue_lines`] with the widths of the brand's body font when it was measured.
+pub fn cue_lines_with(text: &str, band: &SubtitleBand, factor: f64, fonts: &Fonts) -> u32 {
     let segments = break_segments(text);
-    let space = char_em(' ') * band.font_px * factor;
+    let space = fonts.em(Role::Body, ' ') * band.font_px * factor;
     let max = band.text_width;
     let mut lines = 0u32;
     let mut cur = 0.0f64;
     for (spaced, seg) in segments {
-        let w = width(&seg, band.font_px, 0.0) * factor;
+        let w = fonts.width(Role::Body, &seg, band.font_px, 0.0) * factor;
         let add = if spaced && cur > 0.0 { space + w } else { w };
         if cur > 0.0 && cur + add > max + 0.5 {
             lines += 1;
@@ -294,16 +305,36 @@ fn break_segments(text: &str) -> Vec<(bool, String)> {
 }
 
 /// Characters of `text` that fit in `lines` lines, at the average width of its own characters.
-pub(crate) fn capacity_chars(text: &str, per_line_px: f64, font_px: f64, lines: u32) -> usize {
+pub(crate) fn capacity_chars_with(
+    text: &str,
+    per_line_px: f64,
+    font_px: f64,
+    lines: u32,
+    fonts: &Fonts,
+    role: Role,
+) -> usize {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() {
         return 0;
     }
-    let avg = chars.iter().map(|c| char_em(*c)).sum::<f64>() / chars.len() as f64 * font_px;
+    let avg = chars.iter().map(|c| fonts.em(role, *c)).sum::<f64>() / chars.len() as f64 * font_px;
     ((per_line_px * f64::from(lines) / avg) * 0.9).floor() as usize
 }
 
 pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
+    check_with(timeline, &Fonts::none())
+}
+
+/// Font name for a message: ` (measured in <family>)` when `role` is measured, else nothing.
+pub(crate) fn measured_note(fonts: &Fonts, role: Role) -> String {
+    fonts
+        .get(role)
+        .map(|m| format!(" (measured in {})", m.family))
+        .unwrap_or_default()
+}
+
+/// [`check`] with the brand's measured fonts.
+pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
     let mut out = Vec::new();
     let res = timeline.resolution;
     let area = SceneTextArea::new(res);
@@ -312,22 +343,30 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
         let Some(text) = scene.text.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
         };
-        let nominal = scene_text_lines(text, &area, 1.0);
-        let optimistic = scene_text_lines(text, &area, OPTIMISTIC);
+        let role = Role::Heading;
+        let nominal = scene_text_lines_with(text, &area, 1.0, fonts, role);
+        let optimistic = scene_text_lines_with(text, &area, fonts.optimistic(role), fonts, role);
         if nominal > area.max_lines {
             let severity = if optimistic > area.max_lines {
                 Severity::Error
             } else {
                 Severity::Warning
             };
-            let cap = capacity_chars(text, area.line_width, area.font_px, area.max_lines);
+            let cap = capacity_chars_with(
+                text,
+                area.line_width,
+                area.font_px,
+                area.max_lines,
+                fonts,
+                role,
+            );
             out.push(
                 Finding::new(
                     severity,
                     "text.overflow",
                     format!(
-                        "scene text needs about {nominal} lines at {} px but only {} fit above the subtitle area ({}x{}); the top lines run off the frame",
-                        area.font_px, area.max_lines, res.width, res.height
+                        "scene text needs about {nominal} lines at {} px{} but only {} fit above the subtitle area ({}x{}); the top lines run off the frame",
+                        area.font_px, measured_note(fonts, role), area.max_lines, res.width, res.height
                     ),
                     Suggestion::field(
                         format!("shorten the text to about {cap} characters, or split the scene in two"),
@@ -374,21 +413,29 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
         if text.trim().is_empty() {
             continue;
         }
-        let nominal = cue_lines(&text, &band, 1.0);
-        let optimistic = cue_lines(&text, &band, OPTIMISTIC);
+        let nominal = cue_lines_with(&text, &band, 1.0, fonts);
+        let optimistic = cue_lines_with(&text, &band, fonts.optimistic(Role::Body), fonts);
         if nominal > MAX_CUE_LINES {
             let severity = if optimistic > MAX_CUE_LINES + 1 {
                 Severity::Error
             } else {
                 Severity::Warning
             };
-            let cap = capacity_chars(&text, band.text_width, band.font_px, MAX_CUE_LINES);
+            let cap = capacity_chars_with(
+                &text,
+                band.text_width,
+                band.font_px,
+                MAX_CUE_LINES,
+                fonts,
+                Role::Body,
+            );
             out.push(
                 Finding::new(
                     severity,
                     "subtitle.too_long",
                     format!(
-                        "cue needs about {nominal} lines in the subtitle band (max {MAX_CUE_LINES}, about {cap} characters); a taller band covers the scene text",
+                        "cue needs about {nominal} lines in the subtitle band{} (max {MAX_CUE_LINES}, about {cap} characters); a taller band covers the scene text",
+                        measured_note(fonts, Role::Body),
                     ),
                     split_suggestion(i, cue, cap),
                 )

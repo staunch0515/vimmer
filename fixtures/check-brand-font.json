@@ -1,0 +1,41 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "brand": {
+    "fonts": {
+      "heading": {
+        "family": "Vimmer Demo Thin",
+        "src": "assets/fonts/FiraSans-Thin.ttf"
+      }
+    }
+  },
+  "scenes": [
+    {
+      "id": "narrow-letters",
+      "duration_ms": 20000,
+      "text": "little lights fill thin lines little lights fill thin lines little lights fill thin lines little lights fill thin lines little lights fill thin lines little lights fill thin lines little lights fill thin lines little lights fill thin lines"
+    },
+    {
+      "id": "wide-letters",
+      "duration_ms": 3000,
+      "layers": [
+        {
+          "id": "wordmark",
+          "kind": "text",
+          "font": "heading",
+          "x": 0.3825,
+          "y": 0.4,
+          "width": 0.235,
+          "height": 0.12,
+          "text": "WOW MOM",
+          "font_size": 0.09,
+          "weight": 700
+        }
+      ]
+    }
+  ],
+  "subtitles": []
+}

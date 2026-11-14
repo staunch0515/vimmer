@@ -1,0 +1,68 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1920, "height": 1080 },
+  "brand": {
+    "logo": {
+      "src": "assets/brand/vimmer-logo.png",
+      "corner": "top_right",
+      "size": 0.1,
+      "margin": 0.05,
+      "hide_on": ["hidden"]
+    }
+  },
+  "scenes": [
+    {
+      "id": "covered",
+      "duration_ms": 3000,
+      "layers": [
+        { "id": "bg", "kind": "shape", "x": 0, "y": 0, "width": 1, "height": 1, "fill": "#1e293b", "z": -1 },
+        {
+          "id": "headline",
+          "kind": "text",
+          "x": 0.45,
+          "y": 0.07,
+          "width": 0.5,
+          "text": "Quarterly results",
+          "font_size": 0.07,
+          "align": "right"
+        },
+        {
+          "id": "badge",
+          "kind": "icon",
+          "src": "assets/icons/star.svg",
+          "color": "#facc15",
+          "x": 0.86,
+          "y": 0.12,
+          "width": 0.05,
+          "height": 0.09
+        },
+        {
+          "id": "clear",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.45,
+          "width": 0.84,
+          "text": "Nothing near the logo here",
+          "font_size": 0.06
+        }
+      ]
+    },
+    {
+      "id": "hidden",
+      "duration_ms": 2000,
+      "layers": [
+        {
+          "id": "headline",
+          "kind": "text",
+          "x": 0.45,
+          "y": 0.07,
+          "width": 0.5,
+          "text": "The logo is hidden here",
+          "font_size": 0.07,
+          "align": "right"
+        }
+      ]
+    }
+  ],
+  "subtitles": [{ "start_ms": 0, "end_ms": 2500, "text": "Subtitles sit at the bottom, clear of a top logo" }]
+}

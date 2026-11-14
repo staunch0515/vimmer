@@ -488,7 +488,15 @@ fn layers_demo_fixture_has_no_errors() {
     let t: VideoTimeline = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let public = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer/public");
     let fs = run(&t, Some(&public));
-    let bad: Vec<_> = fs.iter().filter(|f| f.severity > Severity::Info).collect();
+    // The outro's scene text sits over the nearly white `design.png` (the scrim leaves a light
+    // gray under it): a real low-contrast spot, reported since `text.contrast_media` exists.
+    assert!(one(&fs, "text.contrast_media", Some("outro"), None)
+        .message
+        .starts_with("the scene text"));
+    let bad: Vec<_> = fs
+        .iter()
+        .filter(|f| f.severity > Severity::Info && f.code != "text.contrast_media")
+        .collect();
     assert!(bad.is_empty(), "{bad:#?}");
 }
 
@@ -746,9 +754,14 @@ fn beats_sfx_demo_fixture_has_no_errors() {
     let t: VideoTimeline = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let public = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer/public");
     let fs = run(&t, Some(&public));
+    // The outro's white title over the nearly white `design.png`, with no scrim (no scene text):
+    // a real 1:1 contrast, reported since `text.contrast_media` exists.
+    assert!(one(&fs, "text.contrast_media", Some("outro"), None)
+        .message
+        .contains("layer `end`"));
     let bad: Vec<_> = fs
         .iter()
-        .filter(|f| f.severity >= Severity::Warning)
+        .filter(|f| f.severity >= Severity::Warning && f.code != "text.contrast_media")
         .collect();
     assert!(bad.is_empty(), "{bad:#?}");
     assert!(one(&fs, "beats.summary", None, None)
@@ -764,7 +777,12 @@ fn music_pick_is_resolved_and_poor_fits_are_reported() {
     let dir = temp_dir("music-pick");
     let lib = dir.join("assets/music/library");
     std::fs::create_dir_all(&lib).unwrap();
-    wav(&dir, "assets/music/library/short.wav", "'0.2*sin(2*PI*220*t)'", 3.0);
+    wav(
+        &dir,
+        "assets/music/library/short.wav",
+        "'0.2*sin(2*PI*220*t)'",
+        3.0,
+    );
     std::fs::write(
         lib.join("library.json"),
         r#"{"tracks":[
@@ -782,10 +800,15 @@ fn music_pick_is_resolved_and_poor_fits_are_reported() {
             ]
         }))
     };
-    let fs = run(&t(serde_json::json!({"mood": "Calm", "energy": 0.9})), Some(&dir));
+    let fs = run(
+        &t(serde_json::json!({"mood": "Calm", "energy": 0.9})),
+        Some(&dir),
+    );
     let picked = one(&fs, "music.picked", None, None);
     assert!(
-        picked.message.contains("`short` (assets/music/library/short.wav)"),
+        picked
+            .message
+            .contains("`short` (assets/music/library/short.wav)"),
         "{}",
         picked.message
     );
@@ -808,4 +831,101 @@ fn music_pick_is_resolved_and_poor_fits_are_reported() {
         "{}",
         failed.message
     );
+}
+
+fn repo_fixture(name: &str) -> VideoTimeline {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../fixtures")
+        .join(name);
+    let t: VideoTimeline = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    vimmer_dsl::validate(&t).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+    t
+}
+
+fn repo_public() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer/public")
+}
+
+#[test]
+fn logo_over_text_is_a_warning_and_over_an_icon_info() {
+    let t = repo_fixture("check-logo-overlap.json");
+    let fs = run(&t, Some(&repo_public()));
+    let hits = find(&fs, "brand.logo_overlap", None, None);
+    assert_eq!(hits.len(), 2, "{hits:#?}");
+    let text = hits
+        .iter()
+        .find(|f| f.message.contains("`headline`"))
+        .unwrap();
+    assert_eq!(text.severity, Severity::Warning);
+    assert_eq!(text.scene_id.as_deref(), Some("covered"));
+    // The logo file is read: no "assumed" width, and the real (wide) box.
+    assert!(!text.message.contains("assumed"), "{}", text.message);
+    let icon = hits.iter().find(|f| f.message.contains("`badge`")).unwrap();
+    assert_eq!(icon.severity, Severity::Info);
+    // The fix moves the logo to a free corner; applied, nothing overlaps any more.
+    let fixed = apply(&t, text);
+    let after = run(&fixed, Some(&repo_public()));
+    assert!(find(&after, "brand.logo_overlap", None, None).is_empty());
+    assert!(find(&after, "brand.logo_subtitles", None, None).is_empty());
+}
+
+#[test]
+fn text_over_pale_pictures_and_bright_video_is_low_contrast() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let t = repo_fixture("check-contrast-media.json");
+    let fs = run(&t, Some(&repo_public()));
+    let hits = find(&fs, "text.contrast_media", None, None);
+    let named = |s: &str| hits.iter().any(|f| f.message.contains(s));
+    assert!(named("layer `white-on-white`"), "{hits:#?}");
+    assert!(named("the scene text"), "{hits:#?}");
+    assert!(named("layer `pale-label`"), "{hits:#?}");
+    assert!(!named("`boxed`") && !named("`on-dark`"), "{hits:#?}");
+    assert_eq!(hits.len(), 3, "{hits:#?}");
+    assert!(hits.iter().all(|f| f.severity == Severity::Warning));
+    // The suggested dark box fixes the white-on-white layer.
+    let white = hits
+        .iter()
+        .find(|f| f.message.contains("white-on-white"))
+        .unwrap();
+    let after = run(&apply(&t, white), Some(&repo_public()));
+    assert!(!find(&after, "text.contrast_media", None, None)
+        .iter()
+        .any(|f| f.message.contains("white-on-white")));
+}
+
+#[test]
+fn contrast_over_media_skips_missing_and_remote_pictures() {
+    let mut t = repo_fixture("check-contrast-media.json");
+    t.scenes.truncate(1);
+    t.scenes[0].image = Some("assets/nope.png".into());
+    let fs = run(&t, Some(&repo_public()));
+    assert!(find(&fs, "text.contrast_media", None, None).is_empty());
+    one(&fs, "assets.missing_image", None, None);
+    t.scenes[0].image = Some("https://example.com/a.png".into());
+    let fs = run(&t, Some(&repo_public()));
+    assert!(find(&fs, "text.contrast_media", None, None).is_empty());
+    // Without a public dir nothing is sampled.
+    let fs = run(&repo_fixture("check-contrast-media.json"), None);
+    assert!(find(&fs, "text.contrast_media", None, None).is_empty());
+}
+
+#[test]
+fn brand_font_widths_are_measured_from_the_font_file() {
+    let t = repo_fixture("check-brand-font.json");
+    // Measured (Fira Sans Thin): the long lowercase scene text fits in 6 lines, the uppercase
+    // wordmark does not fit its box.
+    let fs = run(&t, Some(&repo_public()));
+    let over = find(&fs, "text.overflow", None, None);
+    assert_eq!(over.len(), 1, "{over:#?}");
+    assert_eq!(over[0].scene_id.as_deref(), Some("wide-letters"));
+    assert_eq!(over[0].severity, Severity::Error);
+    assert!(over[0].message.contains("measured in Vimmer Demo Thin"));
+    // Without the file (no public dir): the estimate gets both wrong.
+    let fs = run(&t, None);
+    let over = find(&fs, "text.overflow", None, None);
+    assert_eq!(over.len(), 1, "{over:#?}");
+    assert_eq!(over[0].scene_id.as_deref(), Some("narrow-letters"));
+    assert!(!over[0].message.contains("measured"));
 }

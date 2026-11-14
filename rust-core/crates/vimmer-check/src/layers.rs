@@ -19,10 +19,12 @@ use vimmer_dsl::{
 };
 
 use crate::assets::{UPSCALE_INFO, UPSCALE_WARN};
+use crate::fonts::Fonts;
 use crate::layout::{title_safe, SceneTextArea, SCENE_LETTER_SPACING_EM, SCENE_WORD_GAP_EM};
 use crate::text::{
-    capacity_chars, cps_limit, reading_chars, scene_text_lines, width, Lang, OPTIMISTIC,
+    capacity_chars_with, cps_limit, measured_note, reading_chars, scene_text_lines_with, Lang,
 };
+use crate::textbox::{text_role, Role};
 use crate::{is_url, scene_starts_ms, Finding, Severity, Suggestion};
 
 fn layer_path(scene: usize, layer: usize, field: &str) -> String {
@@ -30,9 +32,9 @@ fn layer_path(scene: usize, layer: usize, field: &str) -> String {
 }
 
 /// (left, top, width, height) of a box in px, before rotation.
-type Rect = (f64, f64, f64, f64);
+pub(crate) type Rect = (f64, f64, f64, f64);
 
-fn place(layer: &Layer, res: Resolution, height_px: f64) -> Rect {
+pub(crate) fn place(layer: &Layer, res: Resolution, height_px: f64) -> Rect {
     let (w, h) = (f64::from(res.width), f64::from(res.height));
     let bw = f64::from(layer.width) * w;
     let (mut left, mut top) = (f64::from(layer.x) * w, f64::from(layer.y) * h);
@@ -45,7 +47,7 @@ fn place(layer: &Layer, res: Resolution, height_px: f64) -> Rect {
 
 /// Where a text layer's words go: the line box and how many lines fit (`u32::MAX` without a
 /// fixed height).
-fn text_area(t: &TextLayer, layer: &Layer, res: Resolution) -> (SceneTextArea, f64) {
+pub(crate) fn text_area(t: &TextLayer, layer: &Layer, res: Resolution) -> (SceneTextArea, f64) {
     let h = f64::from(res.height);
     let font_px = f64::from(t.font_size) * h;
     let pad = t
@@ -75,7 +77,7 @@ fn text_area(t: &TextLayer, layer: &Layer, res: Resolution) -> (SceneTextArea, f
 }
 
 /// Every box the layer takes at its keyframes (or its one box without keyframes).
-fn poses(layer: &Layer, rect: Rect, res: Resolution) -> Vec<Rect> {
+pub(crate) fn poses(layer: &Layer, rect: Rect, res: Resolution) -> Vec<Rect> {
     if layer.keyframes.is_empty() {
         return vec![rect];
     }
@@ -105,6 +107,11 @@ fn on_screen(r: Rect, res: Resolution) -> bool {
 }
 
 pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
+    check_with(timeline, &Fonts::none())
+}
+
+/// [`check`] with the brand's measured fonts.
+pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
     let mut out = Vec::new();
     let res = timeline.resolution;
     let starts = scene_starts_ms(timeline);
@@ -117,8 +124,10 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
 
             if let LayerContent::Text(t) = &layer.content {
                 let (area, pad) = text_area(t, layer, res);
-                let nominal = scene_text_lines(&t.text, &area, 1.0);
-                let optimistic = scene_text_lines(&t.text, &area, OPTIMISTIC);
+                let role = text_role(t);
+                let nominal = scene_text_lines_with(&t.text, &area, 1.0, fonts, role);
+                let optimistic =
+                    scene_text_lines_with(&t.text, &area, fonts.optimistic(role), fonts, role);
                 if fixed_h.is_none() {
                     box_h = f64::from(nominal) * area.line_height_px + 2.0 * pad;
                 }
@@ -128,15 +137,21 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
                     } else {
                         Severity::Warning
                     };
-                    let cap =
-                        capacity_chars(&t.text, area.line_width, area.font_px, area.max_lines);
+                    let cap = capacity_chars_with(
+                        &t.text,
+                        area.line_width,
+                        area.font_px,
+                        area.max_lines,
+                        fonts,
+                        role,
+                    );
                     out.push(
                         Finding::new(
                             severity,
                             "text.overflow",
                             format!(
-                                "{name} needs about {nominal} lines at {:.0} px but its box fits {}; the text runs out of the box",
-                                area.font_px, area.max_lines
+                                "{name} needs about {nominal} lines at {:.0} px{} but its box fits {}; the text runs out of the box",
+                                area.font_px, measured_note(fonts, role), area.max_lines
                             ),
                             Suggestion::field(
                                 format!("shorten the text to about {cap} characters, make the box taller or the font smaller"),
@@ -155,7 +170,7 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
             }
 
             if let LayerContent::LowerThird(lt) = &layer.content {
-                let (needed, optimistic) = lower_third_height(lt, layer, res);
+                let (needed, optimistic) = lower_third_height(lt, layer, res, fonts);
                 match fixed_h {
                     Some(fixed) if needed > fixed + 0.5 => {
                         let severity = if optimistic > fixed + 0.5 {
@@ -194,7 +209,7 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
                     box_h = font_px * 1.2;
                 }
                 let box_w = f64::from(layer.width) * f64::from(res.width);
-                let (widest, text) = widest_count(c, layer, scene, timeline.fps, font_px);
+                let (widest, text) = widest_count(c, layer, scene, timeline.fps, font_px, fonts);
                 if widest > box_w + 0.5 {
                     let fit =
                         (f64::from(c.font_size) * box_w / widest * 0.95 * 1000.0).floor() / 1000.0;
@@ -218,7 +233,7 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
             }
 
             if let LayerContent::BarChart(ch) = &layer.content {
-                for f in chart_findings(&name, ch, layer, res, si, li) {
+                for f in chart_findings(&name, ch, layer, res, si, li, fonts) {
                     out.push(f.scene(&scene.id).at(at));
                 }
                 if let Some(f) = outside_safe_area(&name, layer, res, box_h, si, li) {
@@ -227,7 +242,7 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
             }
 
             if let LayerContent::ProgressRing(r) = &layer.content {
-                if let Some(f) = ring_label_overflow(&name, r, layer, res, si, li) {
+                if let Some(f) = ring_label_overflow(&name, r, layer, res, si, li, fonts) {
                     out.push(f.scene(&scene.id).at(at));
                 }
             }
@@ -304,16 +319,27 @@ fn area(font_px: f64, lh: f64, line_width: f64) -> SceneTextArea {
 }
 
 /// Lower-third layout, in em of the title font (`components/LayerKinds.tsx` `LowerThirdView`).
-const LT_BAR_EM: f64 = 0.16;
-const LT_PAD_V_EM: f64 = 0.38;
-const LT_PAD_H_EM: f64 = 0.7;
-const LT_TITLE_LH: f64 = 1.15;
-const LT_SUB_SCALE: f64 = 0.62;
-const LT_SUB_LH: f64 = 1.3;
-const LT_SUB_GAP_EM: f64 = 0.25;
+pub(crate) const LT_BAR_EM: f64 = 0.16;
+pub(crate) const LT_PAD_V_EM: f64 = 0.38;
+pub(crate) const LT_PAD_H_EM: f64 = 0.7;
+pub(crate) const LT_TITLE_LH: f64 = 1.15;
+pub(crate) const LT_SUB_SCALE: f64 = 0.62;
+pub(crate) const LT_SUB_LH: f64 = 1.3;
+pub(crate) const LT_SUB_GAP_EM: f64 = 0.25;
 
 /// Height in px a lower third needs for its text: (nominal, optimistic).
-fn lower_third_height(lt: &LowerThirdLayer, layer: &Layer, res: Resolution) -> (f64, f64) {
+pub(crate) fn lower_third_height(
+    lt: &LowerThirdLayer,
+    layer: &Layer,
+    res: Resolution,
+    fonts: &Fonts,
+) -> (f64, f64) {
+    // The title is set in the heading font when the brand has one, else in the body font.
+    let title_role = if fonts.measured(Role::Heading) {
+        Role::Heading
+    } else {
+        Role::Body
+    };
     let f = f64::from(lt.font_size) * f64::from(res.height);
     let line_width =
         f64::from(layer.width) * f64::from(res.width) - (LT_BAR_EM + 2.0 * LT_PAD_H_EM) * f;
@@ -321,14 +347,20 @@ fn lower_third_height(lt: &LowerThirdLayer, layer: &Layer, res: Resolution) -> (
     let sub = area(f * LT_SUB_SCALE, LT_SUB_LH, line_width);
     let at = |factor: f64| {
         let mut h = 2.0 * LT_PAD_V_EM * f
-            + f64::from(scene_text_lines(&lt.title, &title, factor)) * title.line_height_px;
+            + f64::from(scene_text_lines_with(
+                &lt.title, &title, factor, fonts, title_role,
+            )) * title.line_height_px;
         if let Some(s) = lt.subtitle.as_deref().filter(|s| !s.trim().is_empty()) {
             h += LT_SUB_GAP_EM * sub.font_px
-                + f64::from(scene_text_lines(s, &sub, factor)) * sub.line_height_px;
+                + f64::from(scene_text_lines_with(s, &sub, factor, fonts, Role::Body))
+                    * sub.line_height_px;
         }
         h
     };
-    (at(1.0), at(OPTIMISTIC))
+    let optimistic = fonts
+        .optimistic(title_role)
+        .max(fonts.optimistic(Role::Body));
+    (at(1.0), at(optimistic))
 }
 
 /// The widest text a counter shows on any frame (an elastic ease overshoots `to`), in px.
@@ -338,13 +370,14 @@ fn widest_count(
     scene: &Scene,
     fps: u32,
     font_px: f64,
+    fonts: &Fonts,
 ) -> (f64, String) {
     let n = count_frames(layer, c.duration_ms, scene.duration_ms, fps);
     let mut best = (0.0, String::new());
     for f in 0..n {
         let e = c.ease.apply(frame_progress(f, n));
         let text = c.format(c.from + (c.to - c.from) * e);
-        let w = width(&text, font_px, SCENE_LETTER_SPACING_EM);
+        let w = fonts.width(Role::Heading, &text, font_px, SCENE_LETTER_SPACING_EM);
         if w > best.0 {
             best = (w, text);
         }
@@ -366,6 +399,7 @@ fn chart_findings(
     res: Resolution,
     si: usize,
     li: usize,
+    fonts: &Fonts,
 ) -> Vec<Finding> {
     let mut out = Vec::new();
     let f = f64::from(ch.font_size) * f64::from(res.height);
@@ -378,7 +412,7 @@ fn chart_findings(
     } else {
         (w / n, w / n)
     };
-    let measure = |s: &str| width(s, f, SCENE_LETTER_SPACING_EM);
+    let measure = |s: &str| fonts.width(Role::Body, s, f, SCENE_LETTER_SPACING_EM);
     let widest = |texts: Vec<String>| {
         texts
             .into_iter()
@@ -452,6 +486,7 @@ fn ring_label_overflow(
     res: Resolution,
     si: usize,
     li: usize,
+    fonts: &Fonts,
 ) -> Option<Finding> {
     if !r.show_label {
         return None;
@@ -464,7 +499,7 @@ fn ring_label_overflow(
         // The widest percentage it can show: 100 % with its decimals.
         None => (r.label_text(1.0), d * RING_PERCENT_SCALE),
     };
-    let w = width(&text, font, SCENE_LETTER_SPACING_EM);
+    let w = fonts.width(Role::Body, &text, font, SCENE_LETTER_SPACING_EM);
     if w <= hole * 0.92 {
         return None;
     }
