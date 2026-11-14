@@ -1,6 +1,8 @@
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { cjkLang, sceneCutFrames, subtitleAt, type WordState } from "../subtitles/words";
-import type { SubtitleCue, VideoTimeline, WordTiming } from "../types/timeline";
+import { BUILTIN, brandColor, fontStack, withAlpha } from "../brand";
+import type { Brand, SubtitleCue, VideoTimeline, WordTiming } from "../types/timeline";
+import { useBrand } from "./Brand";
 
 // Word-by-word colors: the spoken word stands out, words still to come are dimmed.
 const WORD_STYLE: Record<WordState, React.CSSProperties> = {
@@ -9,12 +11,29 @@ const WORD_STYLE: Record<WordState, React.CSSProperties> = {
   upcoming: { color: "rgba(250, 250, 250, 0.55)" },
 };
 
+// The same with brand colors: spoken words in the text color, the current word in the accent,
+// upcoming ones in the text color at 55 %. Without brand colors, WORD_STYLE as it always was.
+const wordStyles = (brand: Brand | null): Record<WordState, React.CSSProperties> => {
+  const text = brand?.colors?.text;
+  const accent = brand?.colors?.accent;
+  if (!text && !accent) return WORD_STYLE;
+  return {
+    spoken: text ? { color: text } : WORD_STYLE.spoken,
+    current: accent ? { color: accent, textShadow: `0 0 18px ${withAlpha(accent, 0.45)}` } : WORD_STYLE.current,
+    upcoming: text ? { color: withAlpha(text, 0.55) } : WORD_STYLE.upcoming,
+  };
+};
+
 // Plain inline spans, so spaces between English words and line breaking between CJK
 // characters work exactly as they do for unsplit text.
-const Words: React.FC<{ words: WordTiming[]; states: WordState[] }> = ({ words, states }) => (
+const Words: React.FC<{ words: WordTiming[]; states: WordState[]; styles: Record<WordState, React.CSSProperties> }> = ({
+  words,
+  states,
+  styles,
+}) => (
   <>
     {words.map((word, i) => (
-      <span key={i} style={WORD_STYLE[states[i]]}>
+      <span key={i} style={styles[states[i]]}>
         {word.text}
       </span>
     ))}
@@ -39,6 +58,7 @@ type Props = {
 export const Subtitles: React.FC<Props> = ({ cues, sceneStarts, frameOffset = 0 }) => {
   const { fps, width, height, props } = useVideoConfig();
   const frame = useCurrentFrame() + frameOffset;
+  const brand = useBrand();
   const scenes = (props as Partial<VideoTimeline>).scenes;
   const cuts = (sceneStarts ?? (Array.isArray(scenes) ? sceneCutFrames(scenes, fps) : [])).map((c) => c + frameOffset);
 
@@ -62,10 +82,10 @@ export const Subtitles: React.FC<Props> = ({ cues, sceneStarts, frameOffset = 0 
           maxWidth: "86%",
           padding: `${Math.round(fontSize * 0.3)}px ${Math.round(fontSize * 0.6)}px`,
           borderRadius: fontSize * 0.4,
-          backgroundColor: "rgba(9, 9, 11, 0.72)",
+          backgroundColor: brandColor(brand, "subtitle_background", BUILTIN.subtitleBackground),
           border: "1px solid rgba(255, 255, 255, 0.08)",
-          color: "#fafafa",
-          fontFamily: "Inter, 'Geist', system-ui, sans-serif",
+          color: brandColor(brand, "text", BUILTIN.text),
+          fontFamily: fontStack(brand, "body"),
           fontSize,
           fontWeight: 500,
           lineHeight: 1.3,
@@ -74,7 +94,7 @@ export const Subtitles: React.FC<Props> = ({ cues, sceneStarts, frameOffset = 0 
           overflowWrap: "break-word",
         }}
       >
-        {states ? <Words words={active.words ?? []} states={states} /> : active.text}
+        {states ? <Words words={active.words ?? []} states={states} styles={wordStyles(brand)} /> : active.text}
       </div>
     </AbsoluteFill>
   );

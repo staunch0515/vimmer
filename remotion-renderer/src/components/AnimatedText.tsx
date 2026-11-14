@@ -1,4 +1,7 @@
 import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
+import { BUILTIN, brandColor, fontStack, highlightColors } from "../brand";
+import type { Brand } from "../types/timeline";
+import { useBrand } from "./Brand";
 
 type Props = {
   text: string;
@@ -25,7 +28,9 @@ export const AnimatedWords: React.FC<{
   highlightSet: Set<string>;
   frame: number;
   animate?: boolean;
-}> = ({ words, highlightSet, frame, animate = true }) => (
+}> = ({ words, highlightSet, frame, animate = true }) => {
+  const brand = useBrand();
+  return (
   <>
     {words.map((word, i) => {
       const start = i * STAGGER_FRAMES;
@@ -59,7 +64,7 @@ export const AnimatedWords: React.FC<{
             opacity,
             transform: `translateY(${rise}px)`,
             marginRight: "0.25em",
-            ...(isHighlight ? highlightStyle(glow) : {}),
+            ...(isHighlight ? highlightStyle(glow, brand) : {}),
           }}
         >
           {word}
@@ -67,13 +72,11 @@ export const AnimatedWords: React.FC<{
       );
     })}
   </>
-);
+  );
+};
 
-// The accent treatment of a highlighted word at glow 0..1.
-export const highlightStyle = (glow: number): React.CSSProperties => ({
-  color: "#a5b4fc",
-  textShadow: `0 0 ${24 * glow}px rgba(99, 102, 241, ${0.6 * glow})`,
-});
+// The accent treatment of a highlighted word at glow 0..1 (the brand accent when there is one).
+export const highlightStyle = (glow: number, brand: Brand | null = null): React.CSSProperties => highlightColors(brand, glow);
 
 export const highlightKeys = (highlights: readonly string[]): Set<string> => new Set(highlights.map(normalize));
 export const splitWords = (text: string): string[] => text.split(/\s+/).filter(Boolean);
@@ -82,6 +85,7 @@ export const splitWords = (text: string): string[] => text.split(/\s+/).filter(B
 // padding keeps content inside the safe area on phones.
 export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = false }) => {
   const frame = useCurrentFrame();
+  const brand = useBrand();
   const highlightSet = highlightKeys(highlights);
   const words = splitWords(text);
 
@@ -98,12 +102,12 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = fals
         style={{
           maxWidth: "88%",
           textAlign: "center",
-          fontFamily: "Inter, 'Geist', system-ui, sans-serif",
+          fontFamily: fontStack(brand, "heading"),
           fontSize: 92,
           fontWeight: 600,
           lineHeight: 1.2,
           letterSpacing: "-0.02em",
-          color: "#fafafa",
+          color: brandColor(brand, "text", BUILTIN.text),
           textShadow: "0 4px 32px rgba(0, 0, 0, 0.6)",
           overflowWrap: "break-word",
           textWrap: "balance",

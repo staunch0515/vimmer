@@ -373,3 +373,51 @@ test("trim, speed and stretch map scene frames to file times", () => {
   // Known file length: loops.
   assert.equal(clipTimeAt({ src: "a.mp4", fit_time: "loop" }, 70, 120, 30, 2000).clipFrame, 10);
 });
+
+// ---- Brand kit (src/brand.ts) -------------------------------------------------------------------
+
+import { readFileSync } from "node:fs";
+import { BASE_FONT_STACK, BUILTIN, brandColor, fontStack, highlightColors, logoBox, logoShownOn, withAlpha } from "../src/brand.ts";
+import type { Brand } from "../src/types/timeline.ts";
+
+test("without a brand every default is the original hardcoded value", () => {
+  assert.equal(fontStack(null, "heading"), "Inter, 'Geist', system-ui, sans-serif");
+  assert.equal(fontStack({ colors: {} }, "body"), BASE_FONT_STACK);
+  assert.deepEqual(highlightColors(null, 0.5), { color: "#a5b4fc", textShadow: "0 0 12px rgba(99, 102, 241, 0.3)" });
+  assert.equal(brandColor(undefined, "background", BUILTIN.background), "#09090b");
+  assert.equal(brandColor(null, "subtitle_background", BUILTIN.subtitleBackground), "rgba(9, 9, 11, 0.72)");
+  assert.equal(logoBox(null, 1920, 1080), null);
+});
+
+test("the built-in colors match the Rust DEFAULT_* constants", () => {
+  const rust = readFileSync(new URL("../../rust-core/crates/vimmer-dsl/src/brand.rs", import.meta.url), "utf8");
+  const def = (name: string) => new RegExp(`pub const DEFAULT_${name}: &str = "([^"]+)"`).exec(rust)?.[1];
+  assert.equal(def("TEXT"), BUILTIN.text);
+  assert.equal(def("LOWER_THIRD_SUBTITLE"), BUILTIN.lowerThirdSubtitle);
+  assert.equal(def("CHART_LABEL"), BUILTIN.chartLabel);
+  assert.equal(def("ACCENT"), BUILTIN.accent);
+  assert.equal(def("PRIMARY"), BUILTIN.primary);
+  assert.equal(def("BACKGROUND"), BUILTIN.background);
+  // rgba(9, 9, 11, 0.72) is #09090bb8 (0xb8 / 255 = 0.7216).
+  assert.equal(def("SUBTITLE_BACKGROUND"), "#09090bb8");
+});
+
+test("brand colors, fonts and the logo box", () => {
+  const brand: Brand = {
+    colors: { accent: "#ff8800", text: "#111" },
+    fonts: { heading: { family: "Demo Heading", src: "assets/fonts/x.ttf" } },
+    logo: { src: "assets/logo.png", corner: "bottom_left", size: 0.1, margin: 0.05, hide_on: ["intro"] },
+  };
+  assert.equal(fontStack(brand, "heading"), `"Demo Heading", ${BASE_FONT_STACK}`);
+  assert.equal(fontStack(brand, "body"), BASE_FONT_STACK);
+  assert.equal(brandColor(brand, "text", BUILTIN.text), "#111");
+  assert.equal(brandColor(brand, "primary", BUILTIN.primary), BUILTIN.primary);
+  assert.deepEqual(highlightColors(brand, 1), { color: "#ff8800", textShadow: "0 0 24px rgba(255, 136, 0, 0.6)" });
+  assert.equal(withAlpha("#11223380", 0.5), "rgba(17, 34, 51, 0.251)");
+  assert.equal(withAlpha("red", 0.5), "red");
+  assert.deepEqual(logoBox(brand, 1920, 1080), { height: 108, opacity: 1, left: 96, bottom: 54 });
+  assert.deepEqual(logoBox({ logo: { src: "l.png" } }, 1080, 1920), { height: 153.6, opacity: 1, right: 54, top: 96 });
+  assert.equal(logoShownOn(brand, "intro"), false);
+  assert.equal(logoShownOn(brand, "body"), true);
+  assert.equal(logoShownOn({}, "body"), false);
+});
