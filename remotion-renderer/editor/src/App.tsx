@@ -13,13 +13,27 @@ import { RenderPanel } from "./components/RenderPanel";
 import {
   applyProgress,
   cancelRender,
+  checkBeforeRender,
   listenRender,
+  loadRenderDefaults,
   pickRenderOutput,
   renderSupported,
   revealInFinder,
   startRender,
   type RenderView,
 } from "./render";
+import {
+  FALLBACK_DEFAULTS,
+  checkKey,
+  findingSelection,
+  hasOptions,
+  loadOptions,
+  saveOptions,
+  type CheckFinding,
+  type CheckView,
+  type RenderDefaults,
+  type RenderOptions,
+} from "./renderOptions";
 import { inTauri } from "./project";
 import { assetUrlFor, loadAssetRoot } from "./media";
 import { resolveAsset } from "../../src/assets";
@@ -46,6 +60,14 @@ const newTimeline = (): VideoTimeline => ({
   subtitles: [],
 });
 
+const storage = (): Storage | null => {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+};
+
 const draft = readDraft();
 const startTimeline: VideoTimeline = draft ?? parseTimeline(JSON.stringify(sample));
 
@@ -66,6 +88,9 @@ export const App = () => {
   const [saved, setSaved] = useState<string>(draft ? "" : serialize(startTimeline));
   const [error, setError] = useState<string | null>(null);
   const [render, setRender] = useState<RenderView>({ status: "idle" });
+  const [renderOptions, setRenderOptions] = useState<RenderOptions>(() => loadOptions(storage(), null));
+  const [renderDefaults, setRenderDefaults] = useState<RenderDefaults>(FALLBACK_DEFAULTS);
+  const [check, setCheck] = useState<CheckView>({ status: "idle" });
   const [assetRoot, setAssetRoot] = useState<string | null>(null);
   const [beats, setBeats] = useState<DetectedBeats | null>(null);
   const [beatStatus, setBeatStatus] = useState<BeatStatus>({ busy: false, error: null });
@@ -136,6 +161,41 @@ export const App = () => {
     void guardClose(() => dirtyRef.current, "You have unsaved changes. Close anyway?").then((f) => (off = f));
     return () => off?.();
   }, []);
+
+  // Render options are remembered per project file. A file without remembered options (a new
+  // "Save as" target, a project opened for the first time) keeps the current choices.
+  const renderOptionsRef = useRef(renderOptions);
+  renderOptionsRef.current = renderOptions;
+  useEffect(() => {
+    const store = storage();
+    if (hasOptions(store, path)) setRenderOptions(loadOptions(store, path));
+    else saveOptions(store, path, renderOptionsRef.current);
+  }, [path]);
+  const changeRenderOptions = (o: RenderOptions) => {
+    setRenderOptions(o);
+    saveOptions(storage(), path, o);
+  };
+  useEffect(() => void loadRenderDefaults().then(setRenderDefaults), []);
+
+  // While the render panel is open, the check follows the timeline and the chosen engine.
+  const renderEngine = renderOptions.tts ?? renderDefaults.tts;
+  const wantedCheck = render.status === "setup" ? checkKey(text, renderEngine) : null;
+  const [checkRun, setCheckRun] = useState(0);
+  useEffect(() => {
+    if (!wantedCheck || !inTauri()) return;
+    const key = wantedCheck;
+    const handle = window.setTimeout(() => {
+      setCheck({ status: "running", key });
+      checkBeforeRender(text, renderEngine).then(
+        (report) => setCheck((c) => (c.status === "running" && c.key === key ? { status: "done", key, report } : c)),
+        (e) => setCheck((c) => (c.status === "running" && c.key === key ? { status: "failed", key, error: String(e) } : c)),
+      );
+    }, 250);
+    return () => window.clearTimeout(handle);
+    // `text` and `renderEngine` are part of `wantedCheck`.
+  }, [wantedCheck, checkRun]);
+  const currentCheck: CheckView =
+    check.status !== "idle" && check.key === wantedCheck ? check : { status: "running", key: wantedCheck ?? "" };
 
   useEffect(() => {
     if (!inTauri()) return;
@@ -264,15 +324,26 @@ export const App = () => {
       setError(`Fix ${problems.length} issue${problems.length > 1 ? "s" : ""} before rendering.`);
       return;
     }
+    setError(null);
+    setRender({ status: "setup" });
+  };
+
+  // From the render panel, after the options and the check.
+  const doStartRender = async () => {
     const output = await pickRenderOutput(`${baseName(path).replace(/\.json$/i, "") || "video"}.mp4`);
     if (!output) return;
-    setError(null);
     setRender({ status: "running", stage: "Starting" });
     try {
-      await startRender(text, output);
+      await startRender(text, output, renderOptions, renderDefaults);
     } catch (e) {
       setRender({ status: "failed", error: String(e) });
     }
+  };
+
+  const onFinding = (f: CheckFinding) => {
+    const selection = findingSelection(f, timeline);
+    if (selection) select(selection);
+    if (f.time_ms !== undefined) seek(Math.round((f.time_ms / 1000) * fps));
   };
 
   const addSubtitleAtPlayhead = () => {
@@ -302,6 +373,16 @@ export const App = () => {
       />
       <RenderPanel
         view={render}
+        options={renderOptions}
+        defaults={renderDefaults}
+        onOptions={changeRenderOptions}
+        check={currentCheck}
+        onRecheck={() => {
+          setCheck({ status: "idle" });
+          setCheckRun((n) => n + 1);
+        }}
+        onFinding={onFinding}
+        onRender={() => void doStartRender()}
         onCancel={() => void cancelRender()}
         onReveal={(p) => void revealInFinder(p).catch((e) => setError(String(e)))}
         onDismiss={() => setRender({ status: "idle" })}

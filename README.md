@@ -823,9 +823,41 @@ Add `--debug` to `npm run build` for a faster, unoptimized bundle.
 The window loads the editor's `dist/` build; `index.html` keeps its font stylesheet
 non-blocking so the app still renders offline.
 
-**Render** (toolbar) renders the timeline to an MP4 chosen in a save dialog. A card in the
-corner shows the stage and a progress bar, with Cancel while it runs and Show in Finder
-when it finishes. Rendering runs the same pipeline as the CLI, in the app's cache folder.
+**Render** (toolbar) opens the render panel in the corner. It holds the CLI's render options
+and runs the quality check before anything renders:
+
+| Panel option | CLI flag | Default |
+| --- | --- | --- |
+| Voice engine: say / Kokoro | `--tts` | `$VIMMER_TTS`, else `say` |
+| Auto-subtitles: Off / On / All | `--auto-subtitles` | Off |
+| Word-by-word subtitle timing | `--word-subtitles` | on |
+| Advanced: chunk length (s) | `--chunk-ms` | 30 |
+| Advanced: render jobs, image jobs | `--render-jobs`, `--preprocess-jobs` | 2, 4 |
+| Advanced: recognition language | `--whisper-language` | guessed per scene |
+
+Auto-subtitles **Off** keeps only the timeline's own cues (they still get word timing), **On**
+adds cues for narration that is not already shown on screen as text, and **All** subtitles every
+narrated scene (captions). The panel and the CLI build the scheduler config with the same
+function (`vimmer_scheduler::RenderOptions::config`), so the same choices render the same way.
+Not in the panel: `--whisper-cli`, `--whisper-model`, `--kokoro-python` and `--kokoro-models`
+are machine settings, so the app takes them from `$VIMMER_WHISPER_CLI`, `$VIMMER_WHISPER_MODEL`,
+`$VIMMER_KOKORO_PYTHON` and `$VIMMER_KOKORO_MODELS` (also read from the login shell when the app
+starts from Finder, like `$VIMMER_TTS`). `--work-dir` and `--remotion-dir` are the app's own;
+`--subtitles` and `--brand` replace parts of the timeline, which the editor edits directly.
+
+The choices are remembered per project file in the app's local storage (key
+`vimmer-render-options:<path>`), not in the timeline: they describe this machine's render (is
+Kokoro installed, how many cores), while the timeline JSON is what the CLI and other tools read.
+
+**Pre-render check.** While the panel is open it runs the `vimmer check` rules (the
+`vimmer-check` crate, as `vimmer check --tts <engine>`) on the timeline as edited, again after
+each edit or engine change. Each finding shows its severity, code, message, fix and JSON
+pointer; clicking one selects the scene, layer, keyframe, cue or music it points at and moves
+the playhead to it. Errors turn **Render…** into **Render anyway**; warnings and info do not
+block. The check does not synthesize narration (`--synth`) and does not check a rendered file.
+
+**Render…** asks for the MP4 path. The card then shows the stage and a progress bar, with Cancel
+while it runs and Show in Finder when it finishes. Rendering runs the same pipeline as the CLI, in the app's cache folder.
 Cancelling kills the Remotion and ffmpeg processes. Only one render runs at a time. The
 Remotion project is found next to the repository, so the app must run from the source
 tree for now.
