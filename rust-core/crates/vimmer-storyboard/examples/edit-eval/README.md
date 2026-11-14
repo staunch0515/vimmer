@@ -62,4 +62,5 @@ Runs in `results/`, in order:
   the demo plays now). Sonnet named the real track it expected in three explanations
   (Another August, Bright Eyes, OverDrive). `sample-music` is counted as failed: it still
   expects `refused` / `clarify` from before the music library, and now adds
-  `{"pick": {"mood": "upbeat"}}`, which is the right edit.
+  `{"pick": {"mood": "upbeat"}}`, which is the right edit. Since then `sample-music` is in the
+  `mood` group and expects that edit (checked against this run's patch without a new call).
