@@ -5,6 +5,7 @@ pub mod audio;
 pub mod beatsync;
 pub mod control;
 pub mod duck;
+pub mod localize;
 pub mod narrate;
 pub mod options;
 pub mod plan;
