@@ -196,6 +196,41 @@ pub struct LlmHelper {
     pub python: PathBuf,
     /// Holds the helper script, prompt template and schema, written from the embedded copies.
     pub dir: PathBuf,
+    /// Extra environment variables for the helper process only. Empty (the default, and what
+    /// the CLI uses): the helper inherits this process's environment and nothing else. The
+    /// desktop app, whose own environment has no API key when started from Finder, passes the
+    /// key here.
+    pub env: HelperEnv,
+}
+
+/// Environment variables given to the helper process. `Debug` shows the names only, so a value
+/// (an API key) cannot reach a log through a debug print.
+#[derive(Clone, Default)]
+pub struct HelperEnv(Vec<(String, String)>);
+
+impl HelperEnv {
+    pub fn set(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        let name = name.into();
+        self.0.retain(|(n, _)| *n != name);
+        self.0.push((name, value.into()));
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn names(&self) -> Vec<&str> {
+        self.0.iter().map(|(n, _)| n.as_str()).collect()
+    }
+    fn apply(&self, cmd: &mut Command) {
+        for (name, value) in &self.0 {
+            cmd.env(name, value);
+        }
+    }
+}
+
+impl fmt::Debug for HelperEnv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.names()).finish()
+    }
 }
 
 impl LlmHelper {
@@ -225,6 +260,7 @@ impl LlmHelper {
         Ok(Self {
             python,
             dir: default_helper_dir(),
+            env: HelperEnv::default(),
         })
     }
 
@@ -283,6 +319,7 @@ impl LlmHelper {
         if let Some(path) = record {
             cmd.arg("--record").arg(path);
         }
+        self.env.apply(&mut cmd);
         cmd
     }
 
@@ -298,6 +335,7 @@ impl LlmHelper {
         if let Some(path) = record {
             cmd.arg("--record").arg(path);
         }
+        self.env.apply(&mut cmd);
         cmd
     }
 
@@ -311,6 +349,7 @@ impl LlmHelper {
         if let Some(path) = record {
             cmd.arg("--record").arg(path);
         }
+        self.env.apply(&mut cmd);
         cmd
     }
 }
