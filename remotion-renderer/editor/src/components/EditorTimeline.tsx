@@ -244,9 +244,9 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
                 className={selection.kind === "music" ? "block music active" : "block music"}
                 style={{ left: 0, width: Math.max(4, (totalMs / 1000) * pps - 2) }}
                 onPointerDown={() => onSelect({ kind: "music" })}
-                title={timeline.music.source}
+                title={timeline.music.source ?? `music by mood: ${timeline.music.pick?.mood ?? ""}`}
               >
-                <span className="block-title">♪ {timeline.music.source || "music"}</span>
+                <span className="block-title">♪ {timeline.music.source || (timeline.music.pick ? `mood: ${timeline.music.pick.mood}` : "music")}</span>
               </div>
             )}
           </Track>

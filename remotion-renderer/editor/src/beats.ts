@@ -54,7 +54,7 @@ export const beatMarks = (music: Music | null | undefined, detected: DetectedBea
   let downbeat = 0;
   let fileMs: number;
   if (music.beats && music.beats.bpm > 0) {
-    fileMs = detected?.source === music.source ? detected.duration_ms : Number.POSITIVE_INFINITY;
+    fileMs = detected && detected.source === music.source ? detected.duration_ms : Number.POSITIVE_INFINITY;
     const period = 60_000 / music.beats.bpm;
     beats = [];
     for (let t = music.beats.offset_ms ?? 0; t < Math.min(fileMs, totalMs + period); t += period) beats.push(t);

@@ -26,7 +26,7 @@ pub use layer::{
     MAX_LAYER_TEXT_CHARS, MAX_RING_LABEL_CHARS, MAX_TYPING_CPS, MAX_VIDEO_LAYERS, MIN_CLIP_SPEED,
 };
 pub use library::{
-    pick_seed, resolve_music_pick, LibraryError, LibraryTrack, MusicLibrary, PickChoice,
+    list_json, pick_json, pick_seed, resolve_music_pick, track_json, wanted_pick, LibraryError, LibraryTrack, MusicLibrary, PickChoice,
     FAR_ENERGY, LIBRARY_DIR, LIBRARY_INDEX,
 };
 pub use model::{

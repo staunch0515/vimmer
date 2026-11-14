@@ -291,8 +291,11 @@ export type Duck = {
 };
 
 // Background music: loops under the whole video. Mixed in by the Rust core after rendering.
+// Exactly one of `source` (a file) and `pick` (a library track chosen by mood; the Rust core
+// turns it into `source` before rendering, see public/assets/music/library) is given.
 export type Music = {
-  source: string;
+  source?: string;
+  pick?: MusicPick | null;
   volume: number;
   fade_in_ms: number;
   fade_out_ms: number;
@@ -302,6 +305,14 @@ export type Music = {
   // Snap scene cuts to the music's beats at render time (after narration). The preview shows
   // the cuts where the durations put them.
   beat_sync?: BeatSync | null;
+};
+
+// Choose a track from the music library: one whose moods include `mood`, the closest to
+// `energy` (0 calm .. 1 intense) when given, never one of `exclude` (track ids).
+export type MusicPick = {
+  mood: string;
+  energy?: number;
+  exclude?: string[];
 };
 
 export type BeatGrid = {

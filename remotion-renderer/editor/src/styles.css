@@ -389,3 +389,13 @@ textarea { resize: vertical; width: 100%; }
   position: absolute; left: 8px; right: 8px; bottom: 56px; padding: 6px 10px; border-radius: 6px;
   background: rgba(127, 29, 29, 0.85); color: #fecaca; font-size: 12px; pointer-events: none;
 }
+
+/* Music: File / By mood switch and the track a mood picked. */
+.segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; align-self: flex-start; }
+.segmented .seg { background: transparent; color: var(--text-2); border: 0; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+.segmented .seg + .seg { border-left: 1px solid var(--border-strong); }
+.segmented .seg.active { background: var(--accent-soft); color: var(--text); }
+.picked-track { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--elevated); }
+.picked-track .picked-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.picked-track .btn { align-self: flex-start; }
+.link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }

@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use serde_json::{json, Value};
-use vimmer_dsl::{pick_seed, LibraryTrack, MusicLibrary, VideoTimeline};
+use serde_json::json;
+use vimmer_dsl::{list_json, pick_json, wanted_pick, MusicLibrary, VideoTimeline};
 
 /// The music library: list the tracks, or show which one a timeline's `music.pick` gets.
 #[derive(Debug, Parser)]
@@ -96,65 +96,34 @@ fn load(cli: &MusicCli) -> Result<(MusicLibrary, Vec<String>), String> {
     MusicLibrary::load(&public_dir(cli)).map_err(|e| e.to_string())
 }
 
-fn track_json(t: &LibraryTrack) -> Value {
-    json!({
-        "id": t.id,
-        "title": t.title,
-        "source": t.source(),
-        "moods": t.moods,
-        "energy": (f64::from(t.energy) * 100.0).round() / 100.0,
-        "bpm": t.bpm,
-        "duration_ms": t.duration_ms,
-        "loopable": t.loopable,
-        "license": t.license,
-    })
-}
-
 fn list(cli: &MusicCli, mood: Option<&str>) -> Result<(), String> {
     let (lib, missing) = load(cli)?;
-    let wanted = mood.map(|m| m.trim().to_lowercase());
-    let tracks: Vec<&LibraryTrack> = lib
-        .tracks
-        .iter()
-        .filter(|t| {
-            wanted
-                .as_ref()
-                .is_none_or(|m| t.moods.iter().any(|x| x.trim().eq_ignore_ascii_case(m)))
-        })
-        .collect();
-    if let (Some(m), true) = (&wanted, tracks.is_empty()) {
-        return Err(format!(
-            "no track has the mood `{m}`; available moods: {}",
-            lib.moods().join(", ")
-        ));
-    }
+    let out = list_json(&lib, &missing, mood).map_err(|e| e.to_string())?;
     if cli.json {
-        println!(
-            "{}",
-            json!({
-                "ok": true,
-                "moods": lib.moods(),
-                "main_moods": lib.main_moods(),
-                "tracks": tracks.iter().map(|t| track_json(t)).collect::<Vec<_>>(),
-                "missing": missing,
-            })
-        );
+        println!("{out}");
         return Ok(());
     }
     println!(
         "{:<14} {:<16} {:>6} {:>5} {:>7}  moods",
         "id", "title", "energy", "bpm", "length"
     );
-    for t in tracks {
+    for t in out["tracks"].as_array().into_iter().flatten() {
+        let moods: Vec<&str> = t["moods"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m.as_str())
+            .collect();
         println!(
             "{:<14} {:<16} {:>6.2} {:>5} {:>7}  {}",
-            t.id,
-            t.title,
-            t.energy,
-            t.bpm.map_or("-".into(), |b| format!("{b}")),
-            t.duration_ms
-                .map_or("-".into(), |d| format!("{:.1} s", d as f64 / 1000.0)),
-            t.moods.join(", ")
+            t["id"].as_str().unwrap_or(""),
+            t["title"].as_str().unwrap_or(""),
+            t["energy"].as_f64().unwrap_or(0.0),
+            t["bpm"].as_f64().map_or("-".into(), |b| format!("{b}")),
+            t["duration_ms"]
+                .as_f64()
+                .map_or("-".into(), |d| format!("{:.1} s", d / 1000.0)),
+            moods.join(", ")
         );
     }
     println!("moods: {}", lib.moods().join(", "));
@@ -179,53 +148,26 @@ fn pick(
     };
     let timeline: VideoTimeline =
         serde_json::from_str(&raw).map_err(|e| format!("cannot parse the timeline: {e}"))?;
-    let wanted = match mood {
-        Some(m) => vimmer_dsl::MusicPick {
-            mood: m.into(),
-            energy,
-            exclude: timeline
-                .music
-                .as_ref()
-                .and_then(|m| m.pick.as_ref())
-                .map(|p| p.exclude.clone())
-                .unwrap_or_default(),
-        },
-        None => timeline
-            .music
-            .as_ref()
-            .and_then(|m| m.pick.clone())
-            .ok_or("the timeline's music has no `pick` (give --mood to try one)")?,
-    };
+    let wanted = wanted_pick(&timeline, mood, energy)
+        .ok_or("the timeline's music has no `pick` (give --mood to try one)")?;
     let (lib, missing) = load(cli)?;
-    let choice = lib
-        .pick(&wanted, pick_seed(&timeline))
-        .map_err(|e| e.to_string())?;
-    let video_ms = timeline.total_duration_ms();
+    let out = pick_json(&timeline, &lib, &missing, &wanted).map_err(|e| e.to_string())?;
     if cli.json {
-        println!(
-            "{}",
-            json!({
-                "ok": true,
-                "mood": wanted.mood,
-                "energy": wanted.energy,
-                "track": track_json(&choice.track),
-                "reason": choice.reason,
-                "candidates": choice.candidates.iter().map(|(id, d)| json!({"id": id, "energy_distance": d})).collect::<Vec<_>>(),
-                "video_ms": video_ms,
-                "missing": missing,
-            })
-        );
+        println!("{out}");
         return Ok(());
     }
     println!(
         "{} ({}): {}",
-        choice.track.id,
-        choice.track.source(),
-        choice.reason
+        out["track"]["id"].as_str().unwrap_or(""),
+        out["track"]["source"].as_str().unwrap_or(""),
+        out["reason"].as_str().unwrap_or("")
     );
-    let others: Vec<&str> = choice.candidates[1..]
-        .iter()
-        .map(|c| c.0.as_str())
+    let others: Vec<&str> = out["candidates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .skip(1)
+        .filter_map(|c| c["id"].as_str())
         .collect();
     if !others.is_empty() {
         println!("other tracks with this mood: {}", others.join(", "));

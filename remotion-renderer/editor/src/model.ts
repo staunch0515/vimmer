@@ -47,7 +47,12 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
   const total = totalMs(t);
   if (total > MAX_DURATION_MS) problems.push(`Timeline is ${(total / 1000).toFixed(1)} s; the limit is 200 s.`);
   if (t.music) {
-    if (!t.music.source.trim()) problems.push("Background music has no file.");
+    const hasFile = !!t.music.source?.trim();
+    const pick = t.music.pick;
+    if (!hasFile && !pick) problems.push("Background music has no file or mood.");
+    if (t.music.source !== undefined && pick) problems.push("Background music has both a file and a mood; keep one.");
+    if (pick && !pick.mood.trim()) problems.push("Choose a mood for the music.");
+    if (pick?.energy !== undefined && !(pick.energy >= 0 && pick.energy <= 1)) problems.push("Music energy must be between 0 and 1.");
     if (t.music.volume < 0 || t.music.volume > 1) problems.push("Music volume must be between 0 and 1.");
     if (t.music.fade_in_ms + t.music.fade_out_ms > total) problems.push("Music fades are longer than the video.");
     const b = t.music.beats;

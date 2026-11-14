@@ -358,6 +358,95 @@ pub fn resolve_music_pick(
     Ok(Some(choice))
 }
 
+/// A track as `vimmer music --json` and the editor show it.
+pub fn track_json(t: &LibraryTrack) -> serde_json::Value {
+    serde_json::json!({
+        "id": t.id,
+        "title": t.title,
+        "source": t.source(),
+        "moods": t.moods,
+        "energy": (f64::from(t.energy) * 100.0).round() / 100.0,
+        "bpm": t.bpm,
+        "beat_offset_ms": t.beat_offset_ms,
+        "duration_ms": t.duration_ms,
+        "loopable": t.loopable,
+        "license": t.license,
+    })
+}
+
+/// `vimmer music list --json`: the moods and the tracks (only those with `mood`, when given).
+pub fn list_json(
+    library: &MusicLibrary,
+    missing: &[String],
+    mood: Option<&str>,
+) -> Result<serde_json::Value, LibraryError> {
+    let wanted = mood.map(|m| m.trim().to_lowercase());
+    let tracks: Vec<serde_json::Value> = library
+        .tracks
+        .iter()
+        .filter(|t| wanted.as_deref().is_none_or(|m| t.has_mood(m)))
+        .map(track_json)
+        .collect();
+    if let (Some(m), true) = (wanted, tracks.is_empty()) {
+        return Err(LibraryError::UnknownMood {
+            mood: m,
+            available: library.moods(),
+        });
+    }
+    Ok(serde_json::json!({
+        "ok": true,
+        "moods": library.moods(),
+        "main_moods": library.main_moods(),
+        "tracks": tracks,
+        "missing": missing,
+    }))
+}
+
+/// The pick to try: the timeline's own `music.pick`, or `mood` (and `energy`) when given,
+/// keeping the timeline's `exclude`.
+pub fn wanted_pick(
+    t: &VideoTimeline,
+    mood: Option<&str>,
+    energy: Option<f32>,
+) -> Option<MusicPick> {
+    let own = t.music.as_ref().and_then(|m| m.pick.clone());
+    match mood {
+        Some(m) => Some(MusicPick {
+            mood: m.into(),
+            energy,
+            exclude: own.map(|p| p.exclude).unwrap_or_default(),
+        }),
+        None => own,
+    }
+}
+
+/// `vimmer music pick --json`: which track `pick` gets for this timeline, and why.
+pub fn pick_json(
+    t: &VideoTimeline,
+    library: &MusicLibrary,
+    missing: &[String],
+    pick: &MusicPick,
+) -> Result<serde_json::Value, LibraryError> {
+    let choice = library.pick(pick, pick_seed(t))?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "mood": pick.mood,
+        "energy": pick.energy.map(|e| (f64::from(e) * 100.0).round() / 100.0),
+        "track": track_json(&choice.track),
+        "reason": choice.reason,
+        "candidates": choice
+            .candidates
+            .iter()
+            .map(|(id, d)| serde_json::json!({
+                "id": id,
+                "energy_distance": d.map(|d| (f64::from(d) * 100.0).round() / 100.0),
+            }))
+            .collect::<Vec<_>>(),
+        "video_ms": t.total_duration_ms(),
+        "missing": missing,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
