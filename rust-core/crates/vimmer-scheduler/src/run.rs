@@ -33,6 +33,8 @@ pub enum SchedulerError {
     MusicMissing(String),
     #[error("mixing audio failed: {0}")]
     Mix(String),
+    #[error("{what}: {message}")]
+    Video { what: String, message: String },
     #[error("scene `{scene}` layer `{layer}`: file not found: {path}")]
     LayerAssetMissing {
         scene: String,
@@ -112,6 +114,8 @@ pub struct RunReport {
     pub output: PathBuf,
     pub chunks: usize,
     pub normalized_images: usize,
+    /// Video clip files (pictures and sounds) encoded by this render; cached ones are not counted.
+    pub encoded_videos: usize,
     pub warnings: Vec<String>,
 }
 
@@ -168,6 +172,8 @@ pub async fn render_timeline_with(
         }
     }
 
+    crate::video::check_scene_videos(&timeline, &cfg)?;
+
     // Narration can stretch scenes, so the timeline is validated again afterwards.
     let narrated = narrate_scenes(
         &mut timeline,
@@ -201,12 +207,19 @@ pub async fn render_timeline_with(
         name: "Preparing images".into(),
     });
     let normalized_images = preprocess_images(&mut timeline, &cfg, &ctx).await?;
+    // After narration, which can lengthen scenes: clips are fitted to their final length.
+    let (encoded_videos, clip_sounds) =
+        crate::video::preprocess_videos(&mut timeline, &cfg, &ctx, &mut warnings).await?;
 
     ctx.emit(Progress::Stage {
         name: "Checking audio".into(),
     });
-    let placements = crate::audio::place_scene_audio(&timeline);
-    let clip_ms = check_audio(&timeline, &placements, &cfg, probe, &mut warnings, &ctx).await?;
+    let mut placements = crate::audio::place_scene_audio(&timeline);
+    let mut clip_ms = check_audio(&timeline, &placements, &cfg, probe, &mut warnings, &ctx).await?;
+    // Video clip sounds go after the scene audio, so a timeline without them mixes as before.
+    let (sound_placements, sound_ms) = crate::audio::place_clip_sounds(&timeline, &clip_sounds);
+    placements.extend(sound_placements);
+    clip_ms.extend(sound_ms);
 
     let chunks = plan_chunks(&timeline, cfg.chunk_ms);
     ctx.emit(Progress::Stage {
@@ -249,6 +262,7 @@ pub async fn render_timeline_with(
         output: cfg.output.clone(),
         chunks: chunks.len(),
         normalized_images,
+        encoded_videos,
         warnings,
     })
 }
@@ -519,9 +533,13 @@ mod tests {
         assert!(cfg.remotion_dir.is_absolute());
         assert!(cfg.public_dir.is_absolute());
         assert!(cfg.public_dir.ends_with("remotion-renderer/public"));
-        let abs = SchedulerConfig::new(PathBuf::from("/w"), PathBuf::from("/o.mp4"), PathBuf::from("/r"))
-            .absolutized()
-            .unwrap();
+        let abs = SchedulerConfig::new(
+            PathBuf::from("/w"),
+            PathBuf::from("/o.mp4"),
+            PathBuf::from("/r"),
+        )
+        .absolutized()
+        .unwrap();
         assert_eq!(abs.work_dir, PathBuf::from("/w"));
     }
 }
