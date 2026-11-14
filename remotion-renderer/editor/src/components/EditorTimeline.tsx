@@ -4,8 +4,13 @@ import { timecode, type Selection } from "../model";
 import type { Action } from "../state";
 import type { BeatMark } from "../beats";
 import { keyframeRange, layerSpan } from "../layerKeyframes";
+import { ResizeHandle, usePersistedSize } from "./layout/Split";
+import { clamp, restore } from "./layout/layout";
 
+// The track-label column: resizable, remembered like the studio's dividers.
 const LABEL_W = 116;
+const LABEL_MIN = 64;
+const LABEL_MAX = 280;
 const SNAP_PX = 8;
 const TRACK_H = 46;
 const MIN_DURATION_MS = 100;
@@ -45,6 +50,16 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
   const [guide, setGuide] = useState<number | null>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
   const fps = timeline.fps;
+  const [labelStored, saveLabel] = usePersistedSize("timeline-labels", LABEL_W);
+  const [labelLive, setLabelLive] = useState<number | null>(null);
+  const labelLiveRef = useRef<number | null>(null);
+  const setLabel = (w: number | null) => {
+    labelLiveRef.current = w;
+    setLabelLive(w);
+  };
+  const labelStart = useRef(LABEL_W);
+  const labelW = labelLive ?? clamp(Math.round(labelStored.size), LABEL_MIN, LABEL_MAX);
+  const keepLabel = (w: number) => saveLabel({ size: clamp(Math.round(w), LABEL_MIN, LABEL_MAX), basis: null, collapsed: false });
 
   const starts = useMemo(() => {
     let acc = 0;
@@ -151,7 +166,7 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
         </label>
       </div>
       <div className="timeline-scroll" onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-        <div className="timeline-canvas" style={{ width: contentW + LABEL_W }}>
+        <div className="timeline-canvas" style={{ width: contentW + labelW, ["--track-label-w" as string]: `${labelW}px` }}>
           <div className="ruler-row">
             <div className="track-label ruler-label" />
             <div className="ruler" ref={rulerRef} style={{ width: contentW }} onPointerDown={onRulerDown}>
@@ -298,12 +313,38 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
             )}
           </Track>
 
-          <div className="playhead" style={{ left: LABEL_W + playheadPx }} aria-hidden>
+          <div className="playhead" style={{ left: labelW + playheadPx }} aria-hidden>
             <span className="playhead-cap" />
           </div>
-          {guide !== null && <div className="snap-guide" style={{ left: LABEL_W + (guide / 1000) * pps }} aria-hidden />}
+          {guide !== null && <div className="snap-guide" style={{ left: labelW + (guide / 1000) * pps }} aria-hidden />}
         </div>
       </div>
+      {/* Outside the scroll area: the label column is sticky, so the line stays put. */}
+        <ResizeHandle
+        className="label-handle"
+        style={{ left: labelW - 1 }}
+        axis="x"
+        sign={1}
+        value={labelW}
+        min={LABEL_MIN}
+        max={LABEL_MAX}
+        label="Resize track labels"
+        onDragStart={() => (labelStart.current = labelW)}
+        onDrag={(d) => setLabel(clamp(Math.round(labelStart.current + d), LABEL_MIN, LABEL_MAX))}
+        onDragEnd={() => {
+          if (labelLiveRef.current !== null) keepLabel(labelLiveRef.current);
+          setLabel(null);
+        }}
+        onKey={(r) => {
+          if (r.kind === "delta") keepLabel(labelW + r.delta);
+          else if (r.kind === "min") keepLabel(LABEL_MIN);
+          else if (r.kind === "max") keepLabel(LABEL_MAX);
+        }}
+        onReset={() => {
+          setLabel(null);
+          saveLabel(restore(LABEL_W));
+        }}
+      />
     </section>
   );
 };

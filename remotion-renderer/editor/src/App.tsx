@@ -12,6 +12,7 @@ import { Preview } from "./components/Preview";
 import { Inspector, type InspectorTab } from "./components/Inspector";
 import { EditorTimeline } from "./components/EditorTimeline";
 import { RenderPanel } from "./components/RenderPanel";
+import { StudioLayout } from "./components/layout/StudioLayout";
 import {
   applyProgress,
   cancelRender,
@@ -452,7 +453,8 @@ export const App = () => {
           <span>{problems.slice(0, 2).join("  ·  ")}{problems.length > 2 ? "  …" : ""}</span>
         </div>
       )}
-      <main className="workspace">
+      <StudioLayout
+        center={
         <section className="stage">
           <Preview
             timeline={previewTimeline}
@@ -476,6 +478,8 @@ export const App = () => {
             <span className="dim">Space play · ⌘S save · ⌘Z undo · ⇧⌘Z redo</span>
           </div>
         </section>
+        }
+        right={
         <div ref={fieldsRef} style={{ display: "contents" }}>
         <Inspector
           timeline={timeline}
@@ -497,7 +501,8 @@ export const App = () => {
           audioUrl={(path) => resolveAsset(path, assetRoot ? assetUrlFor(assetRoot) : null)}
         />
         </div>
-      </main>
+        }
+        bottom={
       <EditorTimeline
         timeline={timeline}
         selection={state.selection}
@@ -506,6 +511,8 @@ export const App = () => {
         onSelect={select}
         dispatch={dispatch}
         beatMarks={marks}
+      />
+        }
       />
     </div>
   );
