@@ -5,7 +5,7 @@
 //! titles in the heading font, text layers in the body font (or heading with `font: heading`),
 //! subtitles, lower-third subtitles and chart labels in the body font. When such a file is a
 //! TrueType/OpenType font in the public dir, text widths come from its `hmtx` advances (via its
-//! `cmap`), in em of `unitsPerEm`. Characters the font lacks fall back to the browser's next font,
+//! `cmap`, read with `ttf-parser`), in em of `unitsPerEm`. Characters the font lacks fall back to the browser's next font,
 //! estimated as before (`text::char_em`). Kerning is not applied (a few percent at most).
 //!
 //! Without a file (or with a .woff/.woff2 file, which is compressed), the estimate is used.
