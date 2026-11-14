@@ -1,0 +1,75 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "scenes": [
+    {
+      "id": "intro",
+      "duration_ms": 4000,
+      "text": "Music picked by mood",
+      "highlights": ["by mood"],
+      "image": "assets/sample.png",
+      "motion": "zoom_in",
+      "audio": null
+    },
+    {
+      "id": "talk",
+      "duration_ms": 5000,
+      "text": "No file name here: the timeline just asks for upbeat music, and the library chooses a track.",
+      "highlights": ["upbeat"],
+      "image": "assets/design.png",
+      "motion": "pan_left",
+      "audio": null,
+      "narration": {
+        "voice": "Samantha"
+      },
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 400
+      }
+    },
+    {
+      "id": "beat",
+      "duration_ms": 3900,
+      "text": "Cuts land on its beats",
+      "highlights": ["beats"],
+      "image": "assets/quizbuks-taker-cover-center.png",
+      "motion": "static",
+      "audio": null,
+      "transition_in": {
+        "kind": "slide_left",
+        "duration_ms": 300
+      }
+    },
+    {
+      "id": "outro",
+      "duration_ms": 6800,
+      "text": "Same video, same track, every time",
+      "highlights": ["every time"],
+      "image": "assets/sample.jpeg",
+      "motion": "zoom_out",
+      "audio": null,
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 400
+      }
+    }
+  ],
+  "subtitles": [],
+  "music": {
+    "pick": {
+      "mood": "upbeat"
+    },
+    "volume": 0.6,
+    "fade_in_ms": 300,
+    "fade_out_ms": 1500,
+    "beat_sync": {
+      "enabled": true,
+      "every": 1,
+      "max_shift_ms": 250,
+      "mode": "nearest"
+    }
+  }
+}
