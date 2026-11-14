@@ -1154,6 +1154,7 @@ mod tests {
 
     fn narrated(id: &str, ms: u64, text: &str) -> Scene {
         Scene {
+            sfx: vec![],
             template: None,
             id: id.into(),
             duration_ms: ms,

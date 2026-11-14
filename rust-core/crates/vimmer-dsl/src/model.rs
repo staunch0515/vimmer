@@ -208,6 +208,9 @@ pub struct Scene {
     /// scene's own layers before validation and rendering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<SceneTemplate>,
+    /// Short sounds mixed in at moments of this scene.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sfx: Vec<SoundEffect>,
 }
 
 impl Scene {
@@ -320,6 +323,169 @@ pub struct Music {
     /// Ducking under scene audio. Omitted = on with the defaults (and not written back out).
     #[serde(default, skip_serializing_if = "Duck::is_default")]
     pub duck: Duck,
+    /// The music's beat grid, given by hand. Absent: detected from the file when beat sync needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beats: Option<BeatGrid>,
+    /// Snap scene cuts to the music's beats. Absent: cuts stay where the durations put them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat_sync: Option<BeatSync>,
+}
+
+/// A hand-written beat grid for music whose beats detection gets wrong: a beat every
+/// `60000 / bpm` ms, the first at `offset_ms` from the start of the file. When the music loops,
+/// the grid starts again with the file.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BeatGrid {
+    pub bpm: f32,
+    #[serde(default)]
+    pub offset_ms: u64,
+}
+
+/// Which way a cut may move to reach a beat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapMode {
+    /// The closest beat, earlier or later.
+    #[default]
+    Nearest,
+    /// Only a beat at or after the cut: no scene ends sooner than written.
+    Later,
+}
+
+fn default_every() -> u32 {
+    1
+}
+
+fn default_max_shift_ms() -> u64 {
+    250
+}
+
+/// Moves scene cuts onto beats of the music after narration has fixed the scene lengths.
+/// A cut moves at most `max_shift_ms`, and never so far that a scene gets shorter than its
+/// narration, clip, layers or sound effects need; a cut that cannot reach a beat stays put.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BeatSync {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Beats per step: 1 = any beat, 2 = every other beat, 4 = bar starts (from the downbeat).
+    #[serde(default = "default_every")]
+    pub every: u32,
+    #[serde(default = "default_max_shift_ms")]
+    pub max_shift_ms: u64,
+    #[serde(default)]
+    pub mode: SnapMode,
+}
+
+impl Default for BeatSync {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            every: default_every(),
+            max_shift_ms: default_max_shift_ms(),
+            mode: SnapMode::Nearest,
+        }
+    }
+}
+
+impl Music {
+    /// The beat sync settings when beat sync is on.
+    pub fn beat_sync_on(&self) -> Option<&BeatSync> {
+        self.beat_sync.as_ref().filter(|b| b.enabled)
+    }
+}
+
+/// When a layer's sound effect plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayerEvent {
+    /// When the layer appears (its `start_ms`).
+    Enter,
+    /// When it starts to leave: the start of its exit animation, or its `end_ms` without one.
+    Exit,
+}
+
+/// Plays a sound effect when a layer enters or exits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SfxTrigger {
+    pub layer: String,
+    pub event: LayerEvent,
+}
+
+fn default_sfx_volume() -> f32 {
+    0.8
+}
+
+/// A short sound mixed into the soundtrack at one moment of its scene: at `at_ms` from the scene
+/// start, or when a layer enters or exits (`on`). Exactly one of the two is given. It plays to
+/// its end, past the end of the scene if it is long.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SoundEffect {
+    /// Audio file relative to the public dir (e.g. `assets/sfx/whoosh.wav`).
+    pub src: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<SfxTrigger>,
+    /// Linear gain 0..1.
+    #[serde(default = "default_sfx_volume")]
+    pub volume: f32,
+    /// Lower the music under this effect the way narration does (off: the effect plays over it).
+    #[serde(default)]
+    pub duck_music: bool,
+}
+
+impl SoundEffect {
+    /// The frame of `scene` (from its start) the effect plays on, computed the way the renderer
+    /// times layers (`layerFrames` and the exit animation in `motion/layers.ts`): an enter on the
+    /// layer's first frame, an exit on the first frame of its exit animation (or on its end frame).
+    /// Never later than the scene's last frame: a time just before the scene end that rounds onto
+    /// the cut still plays in its scene.
+    pub fn frame_in(&self, scene: &Scene, fps: u32) -> Option<u64> {
+        let frames = |ms: u64| (ms * u64::from(fps) + 500) / 1000;
+        let scene_frames = u64::from(scene.duration_frames(fps));
+        let frame = if let Some(at) = self.at_ms {
+            frames(at)
+        } else {
+            let on = self.on.as_ref()?;
+            let layer = scene.layers.iter().find(|l| l.id == on.layer)?;
+            let start = frames(layer.start_ms);
+            match on.event {
+                LayerEvent::Enter => start,
+                LayerEvent::Exit => {
+                    let end = layer
+                        .end_ms
+                        .map_or(scene_frames, |e| frames(e).min(scene_frames));
+                    match &layer.exit {
+                        Some(exit) => end
+                            .saturating_sub(frames(exit.duration_ms).max(1))
+                            .max(start),
+                        None => end,
+                    }
+                }
+            }
+        };
+        Some(frame.min(scene_frames.saturating_sub(1)))
+    }
+
+    /// When the effect plays, in ms from the start of `scene`. `None` when its layer does not
+    /// exist (validation reports that).
+    pub fn time_in(&self, scene: &Scene) -> Option<u64> {
+        if let Some(at) = self.at_ms {
+            return Some(at);
+        }
+        let on = self.on.as_ref()?;
+        let layer = scene.layers.iter().find(|l| l.id == on.layer)?;
+        Some(match on.event {
+            LayerEvent::Enter => layer.start_ms,
+            LayerEvent::Exit => {
+                let end = layer.end_ms_in(scene.duration_ms);
+                match &layer.exit {
+                    Some(exit) => end.saturating_sub(exit.duration_ms).max(layer.start_ms),
+                    None => end,
+                }
+            }
+        })
+    }
 }
 
 /// Root document: the full timeline handed from the Rust core to Remotion.
@@ -521,6 +687,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s.video.as_ref().unwrap().speed, 2.0);
+    }
+
+    #[test]
+    fn timelines_without_beats_or_sfx_write_no_new_keys() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fixtures");
+        for name in [
+            "sample-timeline.json",
+            "music-ducking.json",
+            "video-clips-demo.json",
+            "brand-templates-demo.json",
+        ] {
+            let raw = std::fs::read_to_string(format!("{dir}/{name}")).unwrap();
+            let t: VideoTimeline = serde_json::from_str(&raw).unwrap();
+            let out = serde_json::to_string(&t).unwrap();
+            for key in ["\"sfx\"", "\"beats\"", "\"beat_sync\""] {
+                assert!(!out.contains(key), "{name}: {key}");
+            }
+        }
+        let raw = std::fs::read_to_string(format!("{dir}/beats-sfx-demo.json")).unwrap();
+        let t: VideoTimeline = serde_json::from_str(&raw).unwrap();
+        let back: VideoTimeline =
+            serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+        assert_eq!(back, t);
+        assert_eq!(t.scenes.iter().map(|s| s.sfx.len()).sum::<usize>(), 9);
     }
 
     #[test]

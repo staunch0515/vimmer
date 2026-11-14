@@ -328,6 +328,8 @@ fn rendered_file_checks() {
     t.scenes[0].duration_ms = 3000;
     t.subtitles.clear();
     t.music = Some(vimmer_dsl::Music {
+        beats: None,
+        beat_sync: None,
         source: "m.wav".into(),
         volume: 0.3,
         fade_in_ms: 0,
@@ -618,4 +620,137 @@ fn anim_layers_demo_fixtures_have_no_errors_or_warnings() {
         let bad: Vec<_> = fs.iter().filter(|f| f.severity > Severity::Info).collect();
         assert!(bad.is_empty(), "{name}: {bad:#?}");
     }
+}
+
+fn timeline_json(v: Value) -> VideoTimeline {
+    serde_json::from_value(v).unwrap()
+}
+
+#[test]
+fn sound_effects_missing_cut_and_stacked() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = temp_dir("sfx");
+    wav(&dir, "assets/a.wav", "'0.9*sin(2*PI*440*t)'", 0.5);
+    wav(&dir, "assets/b.wav", "'0.9*sin(2*PI*660*t)'", 0.5);
+    let t = timeline_json(serde_json::json!({
+        "fps": 30, "resolution": {"width": 1920, "height": 1080}, "subtitles": [],
+        "scenes": [
+            {"id": "s0", "duration_ms": 2000, "text": "one", "sfx": [
+                {"src": "assets/a.wav", "at_ms": 100},
+                {"src": "assets/b.wav", "at_ms": 200, "volume": 0.9},
+                {"src": "assets/c.wav", "at_ms": 300}
+            ]},
+            {"id": "s1", "duration_ms": 2000, "text": "two", "sfx": [
+                {"src": "assets/a.wav", "at_ms": 1900, "volume": 0.2}
+            ]}
+        ]
+    }));
+    let fs = run(&t, Some(&dir));
+    let missing = one(&fs, "sfx.missing", Some("s0"), None);
+    assert_eq!(missing.time_ms, Some(300));
+    assert_eq!(
+        missing.suggestion.path.as_deref(),
+        Some("/scenes/0/sfx/2/src")
+    );
+    let clip = one(&fs, "sfx.clipping", Some("s0"), None);
+    assert_eq!(clip.time_ms, Some(200));
+    assert_eq!(
+        clip.suggestion.path.as_deref(),
+        Some("/scenes/0/sfx/1/volume")
+    );
+    // Peaks 0.9 x 0.8 (default volume) + 0.9 x 0.9: the fix leaves 0.28 for the second one.
+    let fixed = apply(&t, clip);
+    let v = fixed.scenes[0].sfx[1].volume;
+    assert!((0.29..=0.31).contains(&v), "{v}");
+    assert!(find(&run(&fixed, Some(&dir)), "sfx.clipping", None, None).is_empty());
+    let late = one(&fs, "sfx.past_video_end", Some("s1"), None);
+    assert!(
+        late.message.contains("last 400 ms are cut"),
+        "{}",
+        late.message
+    );
+    // Beat sync is off: no beat findings.
+    assert!(fs.iter().all(|f| !f.code.starts_with("beats.")));
+}
+
+#[test]
+fn beat_sync_confidence_and_unsnapped_cuts() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = temp_dir("beats");
+    // 120 BPM kicks (a beat every 500 ms from 0) and a beatless chord.
+    wav(
+        &dir,
+        "assets/kick.wav",
+        "'0.8*sin(2*PI*(50*mod(t,0.5)+2.1*(1-exp(-mod(t,0.5)/0.03))))*exp(-mod(t,0.5)/0.12)'",
+        8.0,
+    );
+    wav(
+        &dir,
+        "assets/pad.wav",
+        "'0.2*sin(2*PI*220*t)+0.2*sin(2*PI*277.18*t)+0.2*sin(2*PI*329.63*t)'",
+        8.0,
+    );
+    let t = |music: &str, max_shift: u64| {
+        timeline_json(serde_json::json!({
+            "fps": 30, "resolution": {"width": 1920, "height": 1080}, "subtitles": [],
+            "music": {"source": music, "volume": 0.3, "fade_in_ms": 0, "fade_out_ms": 0,
+                      "beat_sync": {"max_shift_ms": max_shift}},
+            "scenes": [
+                {"id": "a", "duration_ms": 2050, "text": "one"},
+                {"id": "b", "duration_ms": 1700, "text": "two"},
+                {"id": "c", "duration_ms": 2000, "text": "three"}
+            ]
+        }))
+    };
+    // Cut 1 at 2067 ms (frame 62) snaps to 2000; cut 2 at 3767 ms (frame 113) is 233 ms from
+    // the nearest beat.
+    let fs = run(&t("assets/kick.wav", 100), Some(&dir));
+    let stuck = one(&fs, "beats.unsnapped", Some("c"), None);
+    assert!(
+        stuck.message.contains("no beat within 100 ms"),
+        "{}",
+        stuck.message
+    );
+    assert_eq!(stuck.time_ms, Some(3_767));
+    assert!(one(&fs, "beats.summary", None, None)
+        .message
+        .contains("1 of 2 cuts on a beat"));
+    assert!(find(&fs, "beats.low_confidence", None, None).is_empty());
+    let fs = run(&t("assets/kick.wav", 250), Some(&dir));
+    assert!(
+        find(&fs, "beats.unsnapped", None, None).is_empty(),
+        "{fs:#?}"
+    );
+    assert!(
+        dir.join("generated/beats").read_dir().unwrap().count() >= 1,
+        "cached like a render"
+    );
+
+    let fs = run(&t("assets/pad.wav", 250), Some(&dir));
+    let low = one(&fs, "beats.low_confidence", None, None);
+    assert_eq!(low.suggestion.path.as_deref(), Some("/music/beats"));
+    assert!(find(&fs, "beats.summary", None, None).is_empty());
+}
+
+#[test]
+fn beats_sfx_demo_fixture_has_no_errors() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures/beats-sfx-demo.json");
+    let t: VideoTimeline = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let public = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer/public");
+    let fs = run(&t, Some(&public));
+    let bad: Vec<_> = fs
+        .iter()
+        .filter(|f| f.severity >= Severity::Warning)
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+    assert!(one(&fs, "beats.summary", None, None)
+        .message
+        .contains("5 of 5 cuts on a beat"));
 }

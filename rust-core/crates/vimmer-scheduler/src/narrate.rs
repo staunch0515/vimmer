@@ -18,7 +18,7 @@ use crate::control::{Progress, RenderContext};
 use crate::run::{SchedulerConfig, SchedulerError};
 
 /// Pause after speech before a scene may end, so a sentence is not clipped.
-const TAIL_MS: u64 = 300;
+pub(crate) const TAIL_MS: u64 = 300;
 
 /// Which narration engine to use, and where Kokoro lives.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -334,6 +334,7 @@ mod tests {
 
     fn scene(id: &str, ms: u64, text: Option<&str>, narration: bool) -> Scene {
         Scene {
+            sfx: vec![],
             template: None,
             id: id.into(),
             duration_ms: ms,

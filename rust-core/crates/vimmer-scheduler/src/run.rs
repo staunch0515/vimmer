@@ -37,6 +37,12 @@ pub enum SchedulerError {
     Video { what: String, message: String },
     #[error("brand {what}: file not found: {path}")]
     BrandAssetMissing { what: String, path: String },
+    #[error("scene `{scene}` sound effect {index}: file not found: {path}")]
+    SfxMissing {
+        scene: String,
+        index: usize,
+        path: String,
+    },
     #[error("scene `{scene}` layer `{layer}`: file not found: {path}")]
     LayerAssetMissing {
         scene: String,
@@ -119,6 +125,8 @@ pub struct RunReport {
     /// Video clip files (pictures and sounds) encoded by this render; cached ones are not counted.
     pub encoded_videos: usize,
     pub warnings: Vec<String>,
+    /// What the render did that is worth a line in the log (beat sync results).
+    pub notes: Vec<String>,
 }
 
 /// Renders a whole timeline to one MP4, without progress reporting or cancellation.
@@ -189,6 +197,7 @@ pub async fn render_timeline_with(
     }
 
     crate::video::check_scene_videos(&timeline, &cfg)?;
+    check_sfx_files(&timeline, &cfg.public_dir)?;
 
     // Narration can stretch scenes, so the timeline is validated again afterwards.
     let narrated = narrate_scenes(
@@ -202,6 +211,17 @@ pub async fn render_timeline_with(
     .await?;
     if narrated > 0 {
         validate(&timeline).map_err(SchedulerError::Invalid)?;
+    }
+
+    // Scene lengths are final now: move the cuts onto the music's beats before anything reads
+    // scene start times (word subtitles, clip fitting, audio placement, chunks).
+    let mut notes = Vec::new();
+    if let Some(report) =
+        crate::beatsync::apply_beat_sync(&mut timeline, &cfg, probe.clone(), &ctx, &mut warnings)
+            .await?
+    {
+        notes.push(report.summary(timeline.fps));
+        notes.extend(report.lines(timeline.fps));
     }
 
     // Recognize the narration again to time subtitles word by word. Without an engine this
@@ -231,11 +251,35 @@ pub async fn render_timeline_with(
         name: "Checking audio".into(),
     });
     let mut placements = crate::audio::place_scene_audio(&timeline);
-    let mut clip_ms = check_audio(&timeline, &placements, &cfg, probe, &mut warnings, &ctx).await?;
+    let mut clip_ms = check_audio(
+        &timeline,
+        &placements,
+        &cfg,
+        probe.clone(),
+        &mut warnings,
+        &ctx,
+    )
+    .await?;
     // Video clip sounds go after the scene audio, so a timeline without them mixes as before.
     let (sound_placements, sound_ms) = crate::audio::place_clip_sounds(&timeline, &clip_sounds);
     placements.extend(sound_placements);
     clip_ms.extend(sound_ms);
+    // Sound effects last; only those with `duck_music` count toward ducking.
+    let sfx = crate::audio::place_sfx(&timeline);
+    let has_sfx = !sfx.is_empty();
+    for (p, ducks) in sfx {
+        let ms = if ducks {
+            let path = cfg.public_dir.join(&p.source);
+            let probe = probe.clone();
+            tokio::task::spawn_blocking(move || probe.duration_ms(&path))
+                .await
+                .map_err(|e| SchedulerError::Join(e.to_string()))??
+        } else {
+            0
+        };
+        placements.push(p);
+        clip_ms.push(ms);
+    }
 
     let chunks = plan_chunks(&timeline, cfg.chunk_ms);
     ctx.emit(Progress::Stage {
@@ -260,6 +304,7 @@ pub async fn render_timeline_with(
         &timeline,
         &placements,
         &clip_ms,
+        has_sfx,
         &joined,
         &cfg.output,
         &cfg,
@@ -280,6 +325,7 @@ pub async fn render_timeline_with(
         normalized_images,
         encoded_videos,
         warnings,
+        notes,
     })
 }
 
@@ -299,6 +345,26 @@ pub(crate) fn check_brand_assets(
                 what: what.to_string(),
                 path: path.display().to_string(),
             });
+        }
+    }
+    Ok(())
+}
+
+/// Sound effect files are mixed after the render, so a missing one is reported before it.
+pub(crate) fn check_sfx_files(
+    timeline: &VideoTimeline,
+    public_dir: &Path,
+) -> Result<(), SchedulerError> {
+    for scene in &timeline.scenes {
+        for (index, fx) in scene.sfx.iter().enumerate() {
+            let path = public_dir.join(&fx.src);
+            if !path.is_file() {
+                return Err(SchedulerError::SfxMissing {
+                    scene: scene.id.clone(),
+                    index,
+                    path: path.display().to_string(),
+                });
+            }
         }
     }
     Ok(())
