@@ -37,6 +37,8 @@ type Props = {
   pickError: string | null;
   /** URL for a public-relative file (auditioning a music track). */
   audioUrl: (path: string) => string;
+  /** Moves the playhead to a timeline time in ms. */
+  onSeekMs?: (ms: number) => void;
 };
 
 const MOTIONS: Scene["motion"][] = ["static", "zoom_in", "zoom_out", "pan_left", "pan_right"];
@@ -76,7 +78,7 @@ export const Inspector = (props: Props) => {
   );
 };
 
-const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
+const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs }: Props) => {
   if (selection.kind !== "scene" && selection.kind !== "keyframe" && selection.kind !== "layer") {
     return <Empty title="No scene selected" hint="Click a scene block on the timeline to edit it." />;
   }
@@ -85,6 +87,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
   if (!scene) return <Empty title="Scene not found" hint="It may have been deleted." />;
   const patch = (p: Partial<Scene>) => dispatch({ type: "patchScene", index, patch: p });
   const isLast = index === timeline.scenes.length - 1;
+  const sceneStartMs = timeline.scenes.slice(0, index).reduce((a, s) => a + s.duration_ms, 0);
 
   return (
     <div className="form">
@@ -156,6 +159,10 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
         scene={scene}
         sceneIndex={index}
         selectedIndex={selection.kind === "layer" ? selection.index : -1}
+        selectedKeyframe={selection.kind === "layer" ? selection.keyframe : undefined}
+        playheadMs={playheadMs}
+        sceneStartMs={sceneStartMs}
+        onSeekMs={onSeekMs}
         dispatch={dispatch}
       />
       <div className="section-title">Transition in</div>
@@ -204,7 +211,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
         scene={scene}
         sceneIndex={index}
         selectedIndex={selection.kind === "keyframe" ? selection.index : -1}
-        sceneStartMs={timeline.scenes.slice(0, index).reduce((a, s) => a + s.duration_ms, 0)}
+        sceneStartMs={sceneStartMs}
         playheadMs={playheadMs}
         dispatch={dispatch}
       />

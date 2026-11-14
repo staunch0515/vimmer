@@ -86,7 +86,8 @@ export type Selection =
   | { kind: "scene"; index: number }
   | { kind: "subtitle"; index: number }
   | { kind: "keyframe"; sceneIndex: number; index: number }
-  | { kind: "layer"; sceneIndex: number; index: number }
+  // `keyframe`: one of the layer's keyframes is selected too (its index in layer.keyframes).
+  | { kind: "layer"; sceneIndex: number; index: number; keyframe?: number }
   | { kind: "music" }
   | { kind: "none" };
 

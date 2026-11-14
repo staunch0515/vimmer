@@ -3,7 +3,8 @@ import type { PlayerRef } from "@remotion/player";
 import sample from "../../../fixtures/sample-timeline.json";
 import type { VideoTimeline } from "../../src/types/timeline";
 import { checkTimeline, emptyScene, frameCount, frameToMs, timecode, totalMs, ALLOWED_RESOLUTIONS, type Selection } from "./model";
-import { reducer, type EditorState } from "./state";
+import { reducer, type Action, type EditorState } from "./state";
+import { mergeKey, mergesInput } from "./history";
 import { baseName, confirmDiscard, guardClose, parseTimeline, pickToOpen, saveTimeline, serialize, setWindowTitle } from "./project";
 import { Toolbar } from "./components/Toolbar";
 import { Preview } from "./components/Preview";
@@ -300,6 +301,43 @@ export const App = () => {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Edits made while typing in an Inspector field (or dragging one of its sliders) merge into one
+  // undo step per field, until it loses focus or a second passes without input (history.ts).
+  // A native capture listener sees the input event before React's onChange runs the edit.
+  const fieldsRef = useRef<HTMLDivElement>(null);
+  const typingIn = useRef<HTMLElement | null>(null);
+  const fieldIds = useRef({ next: 1, ids: new WeakMap<Element, number>() });
+  useEffect(() => {
+    const root = fieldsRef.current;
+    if (!root) return;
+    const onInput = (e: Event) => {
+      const el = e.target as HTMLElement;
+      if (!mergesInput(el.tagName, el.getAttribute("type"), el.isContentEditable)) return;
+      typingIn.current = el;
+      queueMicrotask(() => {
+        if (typingIn.current === el) typingIn.current = null;
+      });
+    };
+    const onBlur = () => dispatch({ type: "endMerge" });
+    root.addEventListener("input", onInput, true);
+    root.addEventListener("focusout", onBlur, true);
+    return () => {
+      root.removeEventListener("input", onInput, true);
+      root.removeEventListener("focusout", onBlur, true);
+    };
+  }, []);
+  const fieldDispatch = (action: Action) => {
+    const el = typingIn.current;
+    if (!el || action.type === "select" || action.type === "undo" || action.type === "redo" || action.type === "load") {
+      dispatch(action);
+      return;
+    }
+    const ids = fieldIds.current;
+    const id = ids.ids.get(el) ?? ids.next++;
+    ids.ids.set(el, id);
+    dispatch({ type: "coalesce", key: mergeKey(id, action), at: performance.now(), action });
+  };
+
   const select = (selection: Selection) => {
     dispatch({ type: "select", selection });
     // In the assistant tab, picking a scene only sets the assistant's context.
@@ -421,13 +459,15 @@ export const App = () => {
             <span className="dim">Space play · ⌘S save · ⌘Z undo</span>
           </div>
         </section>
+        <div ref={fieldsRef} style={{ display: "contents" }}>
         <Inspector
           timeline={timeline}
           selection={state.selection}
           tab={tab}
           setTab={setTab}
           playheadMs={frameToMs(frame, fps)}
-          dispatch={dispatch}
+          dispatch={fieldDispatch}
+          onSeekMs={(ms) => seek(Math.round((ms * fps) / 1000))}
           onSelect={select}
           onAddSubtitle={addSubtitleAtPlayhead}
           beats={beats}
@@ -439,6 +479,7 @@ export const App = () => {
           pickError={pickError}
           audioUrl={(path) => resolveAsset(path, assetRoot ? assetUrlFor(assetRoot) : null)}
         />
+        </div>
       </main>
       <EditorTimeline
         timeline={timeline}

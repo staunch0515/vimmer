@@ -428,3 +428,12 @@ textarea { resize: vertical; width: 100%; }
 .picked-track .picked-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .picked-track .btn { align-self: flex-start; }
 .link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
+
+/* The selected layer's row: its time in the scene and its keyframes. */
+.track-hint { position: absolute; left: 10px; top: 7px; font-size: 11px; white-space: nowrap; }
+.layer-span {
+  position: absolute; top: 9px; height: 12px; border-radius: 6px;
+  background: rgba(99, 102, 241, 0.22); border: 1px solid rgba(99, 102, 241, 0.45);
+}
+.kf-marker.layer { background: #a5b4fc; }
+.kf-marker.layer.active { background: #fff; }
