@@ -597,6 +597,9 @@ enum Kind {
     Words,
     Word,
     Music,
+    /// `music.pick` and its `exclude` list (track ids).
+    MusicPick,
+    PickExclude,
     Duck,
     /// `music.beats` (a hand-set grid) and `music.beat_sync`.
     BeatGrid,
@@ -713,6 +716,7 @@ impl Kind {
             Word => &[("text", Leaf), ("start_ms", Leaf), ("end_ms", Leaf)],
             Music => &[
                 ("source", Leaf),
+                ("pick", MusicPick),
                 ("volume", Leaf),
                 ("fade_in_ms", Leaf),
                 ("fade_out_ms", Leaf),
@@ -720,6 +724,7 @@ impl Kind {
                 ("beats", BeatGrid),
                 ("beat_sync", BeatSync),
             ],
+            MusicPick => &[("mood", Leaf), ("energy", Leaf), ("exclude", PickExclude)],
             BeatGrid => &[("bpm", Leaf), ("offset_ms", Leaf)],
             BeatSync => &[
                 ("enabled", Leaf),
@@ -746,7 +751,7 @@ impl Kind {
             Kind::Bars => Some(Kind::Bar),
             Kind::Subtitles => Some(Kind::Cue),
             Kind::Words => Some(Kind::Word),
-            Kind::HideOn | Kind::ParamList => Some(Kind::Leaf),
+            Kind::HideOn | Kind::ParamList | Kind::PickExclude => Some(Kind::Leaf),
             Kind::SfxList => Some(Kind::Sfx),
             _ => None,
         }
@@ -775,6 +780,8 @@ impl Kind {
             Kind::Words => "a word list",
             Kind::Word => "a word timing",
             Kind::Music => "the music settings",
+            Kind::MusicPick => "the music pick (mood, energy, exclude)",
+            Kind::PickExclude => "the music pick's exclude list",
             Kind::Duck => "the music ducking settings",
             Kind::BeatGrid => "the music's hand-set beat grid",
             Kind::BeatSync => "the beat sync settings",
@@ -1612,6 +1619,15 @@ pub fn apply_ops(
         }
     }
 
+    let new_pick = after.music.as_ref().and_then(|m| m.pick.as_ref());
+    if new_pick.is_some() && new_pick != before.music.as_ref().and_then(|m| m.pick.as_ref()) {
+        match music_pick_check(&after, check.public_dir.as_deref()) {
+            Ok(Some(note)) => warnings.push(note),
+            Ok(None) => {}
+            Err(e) => problems.push(problem(None, format!("music.pick: {e}"))),
+        }
+    }
+
     if !problems.is_empty() {
         return Err(Rejection {
             stage: Stage::Validation,
@@ -1865,8 +1881,8 @@ fn asset_refs(t: &VideoTimeline) -> Vec<(String, String)> {
             out.push((format!("scene `{}` sfx {k} src", s.id), fx.src.clone()));
         }
     }
-    if let Some(m) = &t.music {
-        out.push(("music.source".into(), m.source.clone()));
+    if let Some(source) = t.music.as_ref().and_then(|m| m.source.as_ref()) {
+        out.push(("music.source".into(), source.clone()));
     }
     if let Some(b) = &t.brand {
         for (what, src) in b.assets() {
@@ -1874,6 +1890,28 @@ fn asset_refs(t: &VideoTimeline) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+/// A changed `music.pick` must name a mood the library has (checked when the public dir is
+/// known). Returns which track it now resolves to, as a note.
+fn music_pick_check(
+    t: &VideoTimeline,
+    public_dir: Option<&Path>,
+) -> Result<Option<String>, String> {
+    let Some(dir) = public_dir else {
+        return Ok(None);
+    };
+    let (library, _) = vimmer_dsl::MusicLibrary::load(dir).map_err(|e| e.to_string())?;
+    let mut resolved = t.clone();
+    let choice =
+        vimmer_dsl::resolve_music_pick(&mut resolved, &library).map_err(|e| e.to_string())?;
+    Ok(choice.map(|c| {
+        format!(
+            "music: the render will play `{}` ({})",
+            c.track.id,
+            c.track.source()
+        )
+    }))
 }
 
 fn voices(t: &VideoTimeline) -> Vec<&str> {
@@ -2178,12 +2216,17 @@ pub fn summarize(before: &VideoTimeline, after: &VideoTimeline) -> Vec<String> {
                         m.duck.depth_db, m.duck.attack_ms, m.duck.release_ms
                     )
                 };
+                let what = match &m.pick {
+                    Some(p) => format!(
+                        "mood `{}`{}",
+                        p.mood,
+                        p.energy.map_or(String::new(), |e| format!(" energy {e}"))
+                    ),
+                    None => format!("\"{}\"", clip(m.source_path(), 40)),
+                };
                 format!(
-                    "\"{}\" volume {} fades {}/{} ms, {duck}",
-                    clip(&m.source, 40),
-                    m.volume,
-                    m.fade_in_ms,
-                    m.fade_out_ms
+                    "{what} volume {} fades {}/{} ms, {duck}",
+                    m.volume, m.fade_in_ms, m.fade_out_ms
                 )
             }
         };

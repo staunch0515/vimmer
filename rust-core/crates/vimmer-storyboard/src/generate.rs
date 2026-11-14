@@ -20,7 +20,7 @@ use vimmer_media::transcribe::find_executable;
 use vimmer_media::{run_limited, Limits, MediaError};
 
 use crate::convert::{convert, Conversion};
-use crate::model::{Language, Orientation, Storyboard};
+use crate::model::{Language, Orientation, Storyboard, StoryboardMusic};
 
 /// Environment variable holding the Anthropic API key (read by the helper only).
 pub const ENV_API_KEY: &str = "ANTHROPIC_API_KEY";
@@ -63,6 +63,9 @@ pub struct GenerateOptions {
     pub timeout: Duration,
     /// When set, each raw API reply is saved here as `reply-<attempt>.json`.
     pub record_dir: Option<PathBuf>,
+    /// Moods of the music library Claude may choose one from for the whole video (becomes
+    /// `music.pick`). Empty: no music.
+    pub music_moods: Vec<String>,
 }
 
 impl GenerateOptions {
@@ -78,6 +81,7 @@ impl GenerateOptions {
             max_retries: DEFAULT_MAX_RETRIES,
             timeout: DEFAULT_TIMEOUT,
             record_dir: None,
+            music_moods: Vec::new(),
         }
     }
 }
@@ -342,6 +346,8 @@ struct HelperRequest<'a> {
     max_tokens: Option<u32>,
     timeout_secs: u64,
     history: &'a [Turn],
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    music_moods: &'a [String],
 }
 
 #[derive(Serialize)]
@@ -374,11 +380,22 @@ struct HelperError {
 }
 
 /// Checks a reply: it must parse as a storyboard, match the request and pass [`convert`].
-/// The error text is what Claude gets back for a correction.
+/// The error text is what Claude gets back for a correction. No music may be chosen.
 pub fn validate_reply(
     raw: &str,
     language: Language,
     orientation: Orientation,
+) -> Result<(Storyboard, Conversion), String> {
+    validate_reply_with_moods(raw, language, orientation, &[])
+}
+
+/// [`validate_reply`] when the request offered these music moods: `music` may then be one of
+/// them (as `{"mood": .., "energy": ..}`), never a file.
+pub fn validate_reply_with_moods(
+    raw: &str,
+    language: Language,
+    orientation: Orientation,
+    moods: &[String],
 ) -> Result<(Storyboard, Conversion), String> {
     let sb: Storyboard =
         serde_json::from_str(raw).map_err(|e| format!("invalid storyboard JSON: {e}"))?;
@@ -395,8 +412,30 @@ pub fn validate_reply(
             orientation_code(orientation)
         ));
     }
-    if sb.music.is_some() {
-        problems.push("field `music`: no music is available; remove the field".into());
+    match &sb.music {
+        None => {}
+        Some(_) if moods.is_empty() => {
+            problems.push("field `music`: no music is available; remove the field".into());
+        }
+        Some(StoryboardMusic::File(_)) => problems.push(format!(
+            "field `music`: give a mood, not a file: {{\"mood\": one of {}}}",
+            moods.join(", ")
+        )),
+        Some(StoryboardMusic::Mood(m)) => {
+            let mood = m.mood.trim().to_lowercase();
+            if !moods.contains(&mood) {
+                problems.push(format!(
+                    "field `music`: mood `{}` is not available; use one of {}",
+                    m.mood,
+                    moods.join(", ")
+                ));
+            }
+            if let Some(e) = m.energy {
+                if !(0.0..=1.0).contains(&e) {
+                    problems.push(format!("field `music`: energy {e} must be between 0 and 1"));
+                }
+            }
+        }
     }
     if sb.voice.is_some() {
         problems.push("field `voice`: do not set a voice; remove the field".into());
@@ -506,6 +545,7 @@ pub fn generate_with_key_check(
             max_tokens: opts.max_tokens,
             timeout_secs: opts.timeout.as_secs().max(1),
             history: &history,
+            music_moods: &opts.music_moods,
         };
         let request_file =
             work_dir.join(format!("llm-request-{}-{number}.json", std::process::id()));
@@ -539,14 +579,16 @@ pub fn generate_with_key_check(
                     usage,
                 ))
             }
-            Err(MediaError::TimedOut { secs }) => return Err(fail(
-                FailureKind::TimedOut,
-                format!(
+            Err(MediaError::TimedOut { secs }) => {
+                return Err(fail(
+                    FailureKind::TimedOut,
+                    format!(
                     "Claude did not answer within {secs} s (attempt {number}; raise --llm-timeout)"
                 ),
-                &attempts,
-                usage,
-            )),
+                    &attempts,
+                    usage,
+                ))
+            }
             Err(e) => {
                 return Err(fail(
                     FailureKind::Helper,
@@ -606,7 +648,7 @@ pub fn generate_with_key_check(
             return Err(fail(kind, message, &attempts, usage));
         }
         let raw = reply.storyboard_json.unwrap_or_default();
-        match validate_reply(&raw, opts.language, opts.orientation) {
+        match validate_reply_with_moods(&raw, opts.language, opts.orientation, &opts.music_moods) {
             Ok((storyboard, conversion)) => {
                 attempts.push(attempt);
                 return Ok(Generated {

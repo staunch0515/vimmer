@@ -101,6 +101,36 @@ class PromptAndSchema(unittest.TestCase):
         no_target = gs.build_system_prompt(template, "zh", "landscape", None)
         self.assertIn("whatever suits the source text", no_target)
 
+    def test_offered_moods_go_into_prompt_and_schema(self):
+        with open(gs.DEFAULT_PROMPT_FILE, encoding="utf-8") as f:
+            template = f.read()
+        no_music = gs.build_system_prompt(template, "en", "landscape", None)
+        self.assertIn("Do not set `music`", no_music)
+        system = gs.build_system_prompt(template, "en", "landscape", None, ["calm", "upbeat"])
+        self.assertNotIn("{{", system)
+        self.assertIn("`calm`, `upbeat`", system)
+        self.assertIn('"music": {"mood": "..."}', system)
+        self.assertNotIn("Do not set `music`", system)
+        base = {"properties": {"language": {}, "orientation": {}}, "required": []}
+        self.assertNotIn("music", gs.build_schema(base, "en", "landscape")["properties"])
+        music = gs.build_schema(base, "en", "landscape", ["calm", "upbeat"])["properties"]["music"]
+        self.assertEqual(music["properties"]["mood"]["enum"], ["calm", "upbeat"])
+        self.assertEqual(music["required"], ["mood"])
+        self.assertFalse(music["additionalProperties"])
+        self.assertNotIn("music", base["properties"])
+
+    def test_request_moods_reach_the_api_call(self):
+        req = {"text": "x", "language": "en", "orientation": "landscape", "model": "m",
+               "effort": "low", "music_moods": ["epic"]}
+        with open(gs.DEFAULT_PROMPT_FILE, encoding="utf-8") as f:
+            system = gs.build_system_prompt(f.read(), "en", "landscape", None, req["music_moods"])
+        with open(gs.DEFAULT_SCHEMA_FILE, encoding="utf-8") as f:
+            schema = gs.build_schema(json.load(f), "en", "landscape", req["music_moods"])
+        params = gs.request_params(req, system, schema)
+        fmt = params["output_config"]["format"]["schema"]
+        self.assertEqual(fmt["properties"]["music"]["properties"]["mood"]["enum"], ["epic"])
+        self.assertIn("`epic`", params["system"])
+
     def test_schema_pins_language_and_orientation_without_touching_the_base(self):
         with open(gs.DEFAULT_SCHEMA_FILE, encoding="utf-8") as f:
             base = json.load(f)

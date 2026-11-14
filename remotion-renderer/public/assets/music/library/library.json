@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "tracks": [
+    {
+      "id": "calm-drift",
+      "file": "calm-drift.m4a",
+      "title": "Calm Drift",
+      "moods": ["calm", "reflective", "ambient"],
+      "energy": 0.15,
+      "bpm": 75,
+      "beat_offset_ms": 0,
+      "duration_ms": 51200,
+      "loopable": true,
+      "license": "synthesized, public domain / CC0 by this project",
+      "how_made": "scripts/make-music-library.sh: breathing Cmaj7-Am7-Fmaj7-G6 pad with a low root, soft eighth-note arpeggio with a dotted-eighth echo; ffmpeg aevalsrc only"
+    },
+    {
+      "id": "warm-hearth",
+      "file": "warm-hearth.m4a",
+      "title": "Warm Hearth",
+      "moods": ["warm", "calm", "hopeful"],
+      "energy": 0.35,
+      "bpm": 80,
+      "beat_offset_ms": 0,
+      "duration_ms": 48000,
+      "loopable": true,
+      "license": "synthesized, public domain / CC0 by this project",
+      "how_made": "scripts/make-music-library.sh: electric-piano F-Dm-Bb-C on 1, 2-and, 3, 4-and over a soft pad, half-note bass, soft kick, rim and shaker; ffmpeg aevalsrc only"
+    },
+    {
+      "id": "tense-pulse",
+      "file": "tense-pulse.m4a",
+      "title": "Tense Pulse",
+      "moods": ["tense", "suspense", "dark"],
+      "energy": 0.55,
+      "bpm": 90,
+      "beat_offset_ms": 0,
+      "duration_ms": 42667,
+      "loopable": true,
+      "license": "synthesized, public domain / CC0 by this project",
+      "how_made": "scripts/make-music-library.sh: low A/E drone, tremolo strings Am-F-Dm-E, muted sixteenth pulse on A, heartbeat kick on every beat, ticking clock; ffmpeg aevalsrc only"
+    },
+    {
+      "id": "playful-hop",
+      "file": "playful-hop.m4a",
+      "title": "Playful Hop",
+      "moods": ["playful", "upbeat", "happy"],
+      "energy": 0.65,
+      "bpm": 128,
+      "beat_offset_ms": 0,
+      "duration_ms": 45000,
+      "loopable": true,
+      "license": "synthesized, public domain / CC0 by this project",
+      "how_made": "scripts/make-music-library.sh: marimba-like eighth-note melody over C-Am-F-G, staccato bass, kick on 1 and 3, clap on 2 and 4, hats and woodblock; ffmpeg aevalsrc only"
+    },
+    {
+      "id": "upbeat-sunny",
+      "file": "upbeat-sunny.m4a",
+      "title": "Upbeat Sunny",
+      "moods": ["upbeat", "happy", "energetic"],
+      "energy": 0.75,
+      "bpm": 120,
+      "beat_offset_ms": 0,
+      "duration_ms": 48000,
+      "loopable": true,
+      "license": "synthesized, public domain / CC0 by this project",
+      "how_made": "scripts/make-music-library.sh: C-G-Am-F chords pumping on every beat (sidechain-style), off-beat bass, plucked hook with echo, four-on-the-floor kick, claps, off-beat hats; ffmpeg aevalsrc only"
+    },
+    {
+      "id": "epic-rise",
+      "file": "epic-rise.m4a",
+      "title": "Epic Rise",
+      "moods": ["epic", "inspiring", "dramatic"],
+      "energy": 0.9,
+      "bpm": 100,
+      "beat_offset_ms": 0,
+      "duration_ms": 48000,
+      "loopable": true,
+      "license": "synthesized, public domain / CC0 by this project",
+      "how_made": "scripts/make-music-library.sh: brass-like Dm-Bb-F-C chords swelling through each 4-bar phrase with a rising string octave, taiko-like drums, snare roll into each phrase, crash; ffmpeg aevalsrc only"
+    }
+  ]
+}

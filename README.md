@@ -466,7 +466,7 @@ cargo run -p vimmer-storyboard -- crates/vimmer-storyboard/examples/en-coffee.st
 | `orientation` | no (`landscape`) | `landscape` = 1920×1080, `portrait` = 1080×1920. |
 | `narration` | no (`true`) | When true, each scene's `text` is read aloud at render time. |
 | `voice` | no | Overrides the speech voice (macOS `say`). Default: chosen by language. |
-| `music` | no | Background track, relative to `remotion-renderer/public/`. Fades: in = min(500 ms, total/4), out = min(1500 ms, total/4). |
+| `music` | no | Background track, relative to `remotion-renderer/public/`, or a mood: `{"mood": "calm", "energy": 0.3}` (becomes `music.pick`, see [Music library](#music-library)). Fades: in = min(500 ms, total/4), out = min(1500 ms, total/4). |
 | `scenes` | yes | At least one scene. |
 
 ### Scene fields
@@ -584,7 +584,9 @@ cargo run --release -p vimmer-cli -- generate story.txt --lang en --no-render > 
 How it works: the helper fills `prompts/storyboard.md` (no assets offered) as the system prompt
 and asks for JSON with `output_config.format` using `schema/storyboard.schema.json` — the fields
 of `model.rs` minus `image`, `music` and `voice`, with `language` / `orientation` pinned to the
-request. It uses adaptive thinking, streams the reply, and on Opus / Sonnet 5.5 opts into the
+request. Unless `--no-music`, the request also lists the music library's main moods: the prompt
+asks for one mood for the whole video and the schema gets a `music` object whose `mood` is one
+of them (energy optional); a file path is refused. It uses adaptive thinking, streams the reply, and on Opus / Sonnet 5.5 opts into the
 server-side refusal fallback (`fallbacks: "default"`); Claude Haiku 5.5 has none. Rust then runs
 `convert()` on the reply; an error (with scene number and field) goes back to Claude as the next
 turn, at most `--max-retries` times. Usage of every attempt, including fallback hops, is added up.
@@ -834,6 +836,63 @@ optional fades in and out, in milliseconds. The track loops until the video ends
 
 Music that runs past the end is cut. The editor preview plays the same loop and fades (but
 not the ducking below).
+
+## Music library
+
+Instead of a file, the music can name a mood, and the render picks a track from the library in
+`remotion-renderer/public/assets/music/library/` (`library.json` plus the files):
+
+```json
+"music": { "pick": { "mood": "upbeat", "energy": 0.7, "exclude": ["playful-hop"] }, "volume": 0.4 }
+```
+
+`music` has exactly one of `source` and `pick`. `energy` (0 quiet .. 1 intense) and `exclude`
+(track ids) are optional. Timelines with a `source` are untouched by all of this.
+
+How a track is chosen (`vimmer_dsl::library`), before narration and beat sync:
+
+1. only tracks whose `moods` contain the mood (any tag, not only the first) and that are not
+   excluded;
+2. with `energy`, the closest tracks, the distance counted in steps of 0.1;
+3. among equal tracks, a hash of the scene ids and the first scene's text with each track id
+   (rendezvous hashing). The same video always gets the same track; different videos spread
+   over the equal tracks (40 test timelines asking for `calm`: 18 `calm-drift`, 22
+   `warm-hearth`); editing later scenes never changes the music.
+
+An unknown mood stops the render with the list of moods there are. The render prints the choice
+and the reason (`music: assets/music/library/... - mood `upbeat`: ...`). With beat sync on and
+no `music.beats`, the track's `bpm` from the library becomes the beat grid, so cuts snap without
+beat detection.
+
+```bash
+# The tracks and moods (--mood calm to filter, --json for tools)
+rust-core/target/release/vimmer music list
+# Which track a timeline gets and why, without rendering (--mood / --energy to try others)
+rust-core/target/release/vimmer music pick fixtures/mood-music-demo.json
+# Rebuild the six placeholder tracks (ffmpeg only, about 6 minutes)
+remotion-renderer/scripts/make-music-library.sh
+```
+
+The bundled tracks are **synthesized placeholders** (`calm-drift`, `warm-hearth`, `tense-pulse`,
+`playful-hop`, `upbeat-sunny`, `epic-rise`; CC0, -18 LUFS, seamless loops). Real tracks replace
+or join them without code changes: drop the file in the folder and add an entry to
+`library.json` (see [its README](remotion-renderer/public/assets/music/library/README.md)).
+
+Where moods show up:
+- `vimmer generate` offers the library's main moods to Claude, which may answer
+  `"music": {"mood": "calm", "energy": 0.3}` for the whole video; `--no-music` turns that off.
+- The editing assistant knows `music.pick` and the library ("换一首轻快点的音乐" sets
+  `pick.mood` to `upbeat`; "another track" excludes the one playing now).
+- Studio's Music tab: **File** or **By mood** (mood list, optional energy slider), the track the
+  render will play with the reason, **Audition**, and **Another track**. The preview plays the
+  chosen track. Switching back to File keeps that track as the file.
+- `vimmer check` reports the choice (`music.picked`) and warns when no track with the mood is
+  near the energy (`music.energy_far`), when a non-looping track is shorter than the video
+  (`music.too_short`), or when `library.json` lists a missing file
+  (`music.library_file_missing`).
+
+Demo: `fixtures/mood-music-demo.json` (~20 s, `pick: {mood: "upbeat"}`, beat sync, one narrated
+scene so the ducking is audible).
 
 ## Audio (soundtrack, sync and ducking)
 
@@ -1278,6 +1337,9 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | `subtitle.overlap` | error / warning | cues overlap; the renderer shows one cue at a time, so the later one is partly hidden (error when it is hidden completely) |
 | `subtitle.outside_timeline` | error | a cue starts or ends after the video |
 | `subtitle.word_outside_cue`, `subtitle.words_out_of_order` | error | `words` outside their cue or overlapping; the fix drops the word timing |
+| `music.picked` | info | which library track `music.pick` resolves to, and why; the rest of the check uses that file |
+| `music.pick_failed`, `music.library` | error | no track has the mood (lists the moods), every match is excluded, or `library.json` is unreadable |
+| `music.energy_far`, `music.too_short`, `music.library_file_missing` | warning | the chosen track is more than 0.25 from the energy target; a non-looping track shorter than the video; a library entry without its file (never picked) |
 | `rendered.*` | error / warning | with `--rendered`: no video stream, frame size or duration (±200 ms) not matching the timeline, no audio stream although there is narration, audio or music; clipping in the mix (error), sample peak ≥ -0.1 dBFS, integrated loudness below -30 or above -9 LUFS |
 
 **How text is measured.** Without a brand font the renderer loads no web font, so text is set in Inter if installed,

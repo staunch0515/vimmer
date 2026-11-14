@@ -30,9 +30,10 @@ pub struct Storyboard {
     #[serde(default)]
     pub orientation: Orientation,
     pub language: Language,
-    /// Background music path, relative to `remotion-renderer/public/`.
+    /// Background music: a path relative to `remotion-renderer/public/`, or a mood to pick a
+    /// track from the music library by (`{"mood": "calm", "energy": 0.3}`).
     #[serde(default)]
-    pub music: Option<String>,
+    pub music: Option<StoryboardMusic>,
     /// Synthesize each scene's `text` as narration at render time (default true).
     #[serde(default = "default_true")]
     pub narration: bool,
@@ -40,6 +41,24 @@ pub struct Storyboard {
     #[serde(default)]
     pub voice: Option<String>,
     pub scenes: Vec<SceneSpec>,
+}
+
+/// `music` in a storyboard: a file, or a mood.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum StoryboardMusic {
+    File(String),
+    Mood(MoodMusic),
+}
+
+/// Music chosen from the library by mood (becomes the timeline's `music.pick`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MoodMusic {
+    pub mood: String,
+    /// 0 (calm) .. 1 (intense).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy: Option<f32>,
 }
 
 /// One storyboard scene. `camera` and `transition` are free strings so that unknown

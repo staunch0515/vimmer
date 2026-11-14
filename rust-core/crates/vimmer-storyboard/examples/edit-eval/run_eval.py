@@ -78,6 +78,8 @@ def check(before, after, pointer, op, value=None):
         return value in actual
     if op == "includes":
         return isinstance(actual, str) and value in actual
+    if op == "in":
+        return actual in value
     raise ValueError(f"unknown check op {op}")
 
 

@@ -17,7 +17,7 @@ pub use convert::{
     Warning, DEFAULT_TRANSITION_MS,
 };
 pub use estimate::{estimate_duration_ms, MIN_ESTIMATED_MS};
-pub use model::{Language, Orientation, SceneSpec, Storyboard};
+pub use model::{Language, MoodMusic, Orientation, SceneSpec, Storyboard, StoryboardMusic};
 
 #[cfg(test)]
 mod edit_claude_tests;

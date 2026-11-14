@@ -13,6 +13,7 @@ mod beats_cmd;
 mod check_cmd;
 mod edit_cmd;
 mod expand_cmd;
+mod music_cmd;
 
 use clap::{Args, Parser, ValueEnum};
 use serde_json::json;
@@ -104,6 +105,10 @@ struct GenerateCli {
     /// ~/.local/share/vimmer/llm-venv/bin/python).
     #[arg(long)]
     llm_python: Option<PathBuf>,
+    /// No background music. Without this flag Claude chooses a mood from the music library
+    /// (remotion-renderer/public/assets/music/library) and the render picks a track for it.
+    #[arg(long)]
+    no_music: bool,
     #[command(flatten)]
     illustrate: IllustrateArgs,
     #[command(flatten)]
@@ -274,6 +279,8 @@ async fn main() -> ExitCode {
         return expand_cmd::main(args);
     } else if args.get(1).is_some_and(|a| a == "beats") {
         return beats_cmd::main(args);
+    } else if args.get(1).is_some_and(|a| a == "music") {
+        return music_cmd::main(args);
     } else {
         run(Cli::parse_from(args)).await
     };
@@ -369,6 +376,13 @@ async fn run_generate(cli: GenerateCli) -> Result<(), Box<dyn std::error::Error>
     opts.max_retries = cli.max_retries;
     opts.timeout = Duration::from_secs(cli.llm_timeout.max(1));
     opts.record_dir = cli.save_dir.clone();
+    if !cli.no_music {
+        let public_dir = cli.render.remotion_dir.join("public");
+        match vimmer_dsl::MusicLibrary::load(&public_dir) {
+            Ok((library, _)) => opts.music_moods = library.main_moods(),
+            Err(e) => eprintln!("warning: no background music: {e}"),
+        }
+    }
 
     let (limits, watcher) = ctrl_c_limits();
     let llm_work = cli.render.work_dir.join("llm");
@@ -411,6 +425,14 @@ async fn run_generate(cli: GenerateCli) -> Result<(), Box<dyn std::error::Error>
         if generated.retries() == 1 { "y" } else { "ies" }
     );
     eprintln!("usage: {}", generated.usage);
+    if let Some(pick) = timeline.music.as_ref().and_then(|m| m.pick.as_ref()) {
+        eprintln!(
+            "music: mood `{}`{} (the track is picked at render time; see `vimmer music pick`)",
+            pick.mood,
+            pick.energy
+                .map_or(String::new(), |e| format!(", energy {e:.2}"))
+        );
+    }
 
     let illustrations = if cli.illustrate.illustrate {
         let report = run_illustrations(

@@ -113,6 +113,12 @@ struct HelperRequest<'a> {
     max_tokens: Option<u32>,
     timeout_secs: u64,
     history: &'a [Turn],
+    /// The music library's tracks (`id`, `moods`, `energy`), for `music.pick`.
+    #[serde(skip_serializing_if = "<[Value]>::is_empty")]
+    music_tracks: &'a [Value],
+    /// The library track the timeline's `music.pick` plays now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    music_now: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -326,6 +332,33 @@ pub fn propose_edit_with_key_check(
         .as_deref()
         .map(list_assets)
         .unwrap_or_default();
+    let library = opts
+        .public_dir
+        .as_deref()
+        .and_then(|dir| vimmer_dsl::MusicLibrary::load(dir).ok())
+        .map(|(lib, _)| lib);
+    let music_now: Option<String> = library.as_ref().and_then(|lib| {
+        let mut t: vimmer_dsl::VideoTimeline = serde_json::from_value(timeline.clone()).ok()?;
+        vimmer_dsl::resolve_music_pick(&mut t, lib)
+            .ok()
+            .flatten()
+            .map(|c| c.track.id)
+    });
+    let music_tracks: Vec<Value> = library
+        .as_ref()
+        .map(|lib| {
+            lib.tracks
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "id": t.id,
+                        "moods": t.moods,
+                        "energy": (f64::from(t.energy) * 100.0).round() / 100.0,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let mut history: Vec<Turn> = Vec::new();
     let call_limits = limits.with_timeout(opts.timeout);
@@ -340,6 +373,8 @@ pub fn propose_edit_with_key_check(
             max_tokens: opts.max_tokens,
             timeout_secs: opts.timeout.as_secs().max(1),
             history: &history,
+            music_tracks: &music_tracks,
+            music_now: music_now.as_deref(),
         };
         let request_file =
             work_dir.join(format!("edit-request-{}-{number}.json", std::process::id()));

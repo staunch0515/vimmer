@@ -41,16 +41,23 @@ fn examples_convert_validate_and_match_checked_in_timelines() {
         assert!(conv.warnings.is_empty(), "{name}: {:?}", conv.warnings);
         validate(&conv.timeline).unwrap();
         let expected: VideoTimeline = serde_json::from_str(expected).unwrap();
-        assert_eq!(conv.timeline, expected, "{name}: regenerate examples/*.timeline.json");
+        assert_eq!(
+            conv.timeline, expected,
+            "{name}: regenerate examples/*.timeline.json"
+        );
         assert!(conv.timeline.total_duration_ms() <= 200_000);
     }
 }
 
 #[test]
 fn examples_only_reference_existing_public_assets() {
-    let public = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer/public");
+    let public =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer/public");
     for (name, storyboard, _) in EXAMPLES {
-        assert!(missing_assets(&sb(storyboard), &public).is_empty(), "{name}");
+        assert!(
+            missing_assets(&sb(storyboard), &public).is_empty(),
+            "{name}"
+        );
     }
 }
 
@@ -61,7 +68,10 @@ fn orientation_maps_to_resolution() {
     let mut portrait = base(r#"{"text":"hi there"}"#);
     portrait.orientation = Orientation::Portrait;
     let p = convert(&portrait).unwrap();
-    assert_eq!((p.timeline.resolution.width, p.timeline.resolution.height), (1080, 1920));
+    assert_eq!(
+        (p.timeline.resolution.width, p.timeline.resolution.height),
+        (1080, 1920)
+    );
 }
 
 #[test]
@@ -85,7 +95,10 @@ fn camera_mapping() {
 
 #[test]
 fn ken_burns_becomes_keyframes_spanning_the_scene() {
-    let c = convert(&base(r#"{"text":"x","camera":"ken_burns","duration_ms":3000}"#)).unwrap();
+    let c = convert(&base(
+        r#"{"text":"x","camera":"ken_burns","duration_ms":3000}"#,
+    ))
+    .unwrap();
     let kf = &c.timeline.scenes[0].keyframes;
     assert_eq!(kf.len(), 2);
     assert_eq!((kf[0].at_ms, kf[1].at_ms), (0, 3000));
@@ -114,7 +127,9 @@ fn transition_mapping() {
         assert!(c.timeline.scenes[0].transition_in.is_none());
     }
     for none in ["none", "cut"] {
-        let s = base(&format!(r#"{{"text":"a"}},{{"text":"b","transition":"{none}"}}"#));
+        let s = base(&format!(
+            r#"{{"text":"a"}},{{"text":"b","transition":"{none}"}}"#
+        ));
         let c = convert(&s).unwrap();
         assert!(c.timeline.scenes[1].transition_in.is_none());
         assert!(c.warnings.is_empty());
@@ -132,7 +147,9 @@ fn first_scene_transition_is_dropped_with_warning() {
 
 #[test]
 fn transition_longer_than_scene_is_clamped() {
-    let s = base(r#"{"text":"a"},{"text":"b","duration_ms":800,"transition":"fade","transition_ms":5000}"#);
+    let s = base(
+        r#"{"text":"a"},{"text":"b","duration_ms":800,"transition":"fade","transition_ms":5000}"#,
+    );
     let c = convert(&s).unwrap();
     assert_eq!(c.timeline.scenes[1].transition_in.unwrap().duration_ms, 800);
     assert!(c.warnings[0].to_string().contains("scene 2"));
@@ -151,7 +168,9 @@ fn unknown_camera_and_transition_fall_back_with_warnings() {
 
 #[test]
 fn explicit_duration_wins_and_missing_duration_is_estimated() {
-    let s = base(r#"{"text":"one two three four five","duration_ms":7777},{"text":"one two three four five"}"#);
+    let s = base(
+        r#"{"text":"one two three four five","duration_ms":7777},{"text":"one two three four five"}"#,
+    );
     let c = convert(&s).unwrap();
     assert_eq!(c.timeline.scenes[0].duration_ms, 7777);
     assert_eq!(c.timeline.scenes[1].duration_ms, 400 * 5 + 600);
@@ -172,7 +191,9 @@ fn narration_and_voice() {
     assert!(c.timeline.scenes[0].narration.is_some());
     let mut quiet = base(r#"{"text":"a"}"#);
     quiet.narration = false;
-    assert!(convert(&quiet).unwrap().timeline.scenes[0].narration.is_none());
+    assert!(convert(&quiet).unwrap().timeline.scenes[0]
+        .narration
+        .is_none());
     // Japanese with kana: no voice, so say and Kokoro both pick their Japanese default.
     let (_, ja, _) = EXAMPLES[2];
     let scenes = convert(&sb(ja)).unwrap().timeline.scenes;
@@ -204,18 +225,24 @@ fn kanji_only_japanese_keeps_a_japanese_say_voice() {
 #[test]
 fn music_is_mapped() {
     let mut s = base(r#"{"text":"a","duration_ms":10000}"#);
-    s.music = Some("assets/bgm.mp3".into());
+    s.music = Some(StoryboardMusic::File("assets/bgm.mp3".into()));
     let m = convert(&s).unwrap().timeline.music.unwrap();
-    assert_eq!(m.source, "assets/bgm.mp3");
+    assert_eq!(m.source.as_deref(), Some("assets/bgm.mp3"));
 }
 
 #[test]
 fn errors_name_scene_and_field() {
     assert!(err(&base(r#"{"text":"ok"},{"text":"  "}"#)).contains("scene 2: field `text`"));
     assert!(err(&base(r#"{"text":"ok","duration_ms":0}"#)).contains("scene 1: field `duration_ms`"));
-    assert!(err(&base(r#"{"text":"ok","image":"../secret.png"}"#)).contains("scene 1: field `image`"));
-    assert!(err(&base(r#"{"text":"ok"},{"text":"ok","image":"/etc/x.png"}"#)).contains("scene 2: field `image`"));
-    assert!(err(&base(r#"{"text":"ok","duration_ms":999999}"#)).contains("scene 1: field `duration_ms`"));
+    assert!(
+        err(&base(r#"{"text":"ok","image":"../secret.png"}"#)).contains("scene 1: field `image`")
+    );
+    assert!(
+        err(&base(r#"{"text":"ok"},{"text":"ok","image":"/etc/x.png"}"#))
+            .contains("scene 2: field `image`")
+    );
+    assert!(err(&base(r#"{"text":"ok","duration_ms":999999}"#))
+        .contains("scene 1: field `duration_ms`"));
 }
 
 #[test]
@@ -225,8 +252,11 @@ fn empty_inputs_are_errors() {
     let untitled = sb(r#"{"title":" ","language":"zh","scenes":[{"text":"a"}]}"#);
     assert_eq!(convert(&untitled).unwrap_err(), StoryboardError::EmptyTitle);
     let mut bad_music = base(r#"{"text":"a"}"#);
-    bad_music.music = Some("https://x.test/a.mp3".into());
-    assert!(matches!(convert(&bad_music), Err(StoryboardError::Music(_))));
+    bad_music.music = Some(StoryboardMusic::File("https://x.test/a.mp3".into()));
+    assert!(matches!(
+        convert(&bad_music),
+        Err(StoryboardError::Music(_))
+    ));
 }
 
 #[test]
@@ -242,10 +272,9 @@ fn total_over_limit_is_an_error() {
 
 #[test]
 fn unknown_fields_and_values_fail_to_parse() {
-    assert!(serde_json::from_str::<Storyboard>(
-        r#"{"title":"t","language":"fr","scenes":[]}"#
-    )
-    .is_err());
+    assert!(
+        serde_json::from_str::<Storyboard>(r#"{"title":"t","language":"fr","scenes":[]}"#).is_err()
+    );
     assert!(serde_json::from_str::<Storyboard>(
         r#"{"title":"t","language":"en","scenes":[{"text":"a","duraton_ms":1}]}"#
     )
@@ -255,5 +284,8 @@ fn unknown_fields_and_values_fail_to_parse() {
 #[test]
 fn storyboard_to_timeline_wrapper_matches_convert() {
     let s = base(r#"{"text":"a"}"#);
-    assert_eq!(storyboard_to_timeline(&s).unwrap(), convert(&s).unwrap().timeline);
+    assert_eq!(
+        storyboard_to_timeline(&s).unwrap(),
+        convert(&s).unwrap().timeline
+    );
 }

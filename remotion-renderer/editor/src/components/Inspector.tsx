@@ -14,6 +14,8 @@ import { LayerPanel } from "./LayerPanel";
 import { BrandEditor, TemplateParams } from "./BrandPanel";
 import { BeatSyncFields, SfxList, type BeatStatus } from "./SoundPanel";
 import type { DetectedBeats } from "../beats";
+import { MoodMusicFields, MusicModeSwitch } from "./MusicPanel";
+import type { MusicLibrary, PickedTrack } from "../music";
 
 export type InspectorTab = "scene" | "subtitles" | "music" | "brand" | "assistant";
 
@@ -29,6 +31,12 @@ type Props = {
   beats: DetectedBeats | null;
   beatStatus: BeatStatus;
   onDetectBeats: () => void;
+  musicLibrary: MusicLibrary | { error: string } | null;
+  onLoadMusicLibrary: () => void;
+  pickedTrack: PickedTrack | null;
+  pickError: string | null;
+  /** URL for a public-relative file (auditioning a music track). */
+  audioUrl: (path: string) => string;
 };
 
 const MOTIONS: Scene["motion"][] = ["static", "zoom_in", "zoom_out", "pan_left", "pan_right"];
@@ -366,8 +374,15 @@ export const MediaInput = ({
   );
 };
 
-const MusicEditor = ({ timeline, dispatch, beats, beatStatus, onDetectBeats }: Props) => {
+const MusicEditor = (props: Props) => {
+  const { timeline, dispatch, beats, beatStatus, onDetectBeats, musicLibrary, onLoadMusicLibrary, pickedTrack, pickError, audioUrl } = props;
   const music = timeline.music;
+  useEffect(() => {
+    if (!musicLibrary) onLoadMusicLibrary();
+  }, [musicLibrary, onLoadMusicLibrary]);
+  const library = musicLibrary && !("error" in musicLibrary) ? musicLibrary : null;
+  const libraryError = musicLibrary && "error" in musicLibrary ? musicLibrary.error : null;
+  const firstMood = library?.main_moods.includes("calm") ? "calm" : library?.main_moods[0] ?? "calm";
   if (!music) {
     return (
       <div className="form">
@@ -380,16 +395,39 @@ const MusicEditor = ({ timeline, dispatch, beats, beatStatus, onDetectBeats }: P
             onChange={(source) => source && dispatch({ type: "setMusic", music: { source, volume: 0.3, fade_in_ms: 0, fade_out_ms: 0 } })}
           />
         </Field>
+        <button
+          className="btn small"
+          data-music-add-mood
+          onClick={() => dispatch({ type: "setMusic", music: { pick: { mood: firstMood }, volume: 0.3, fade_in_ms: 0, fade_out_ms: 0 } })}
+        >
+          Or pick music by mood…
+        </button>
+        {libraryError && <span className="field-error">{libraryError}</span>}
       </div>
     );
   }
   const patch = (p: Partial<typeof music>) => dispatch({ type: "patchMusic", patch: p });
+  // Beat sync works on the file the render will play (the chosen track for a pick).
+  const playing = music.pick ? (pickedTrack ? { ...music, pick: undefined, source: pickedTrack.track.source } : null) : music;
   return (
     <div className="form">
       <div className="section-title">Background music</div>
-      <Field label="File" hint="Path relative to public/">
-        <MediaInput kind="audio" value={music.source} placeholder="assets/music.mp3" onChange={(v) => patch({ source: v })} />
-      </Field>
+      <MusicModeSwitch music={music} patch={patch} firstMood={firstMood} pickedTrack={pickedTrack} />
+      {music.pick ? (
+        <MoodMusicFields
+          pick={music.pick}
+          patch={patch}
+          library={library}
+          libraryError={libraryError}
+          pickedTrack={pickedTrack}
+          pickError={pickError}
+          audioUrl={audioUrl}
+        />
+      ) : (
+        <Field label="File" hint="Path relative to public/">
+          <MediaInput kind="audio" value={music.source ?? ""} placeholder="assets/music.mp3" onChange={(v) => patch({ source: v })} />
+        </Field>
+      )}
       <Field label="Volume" suffix={`${Math.round(music.volume * 100)} %`}>
         <input
           type="range"
@@ -408,7 +446,7 @@ const MusicEditor = ({ timeline, dispatch, beats, beatStatus, onDetectBeats }: P
           <input type="number" min={0} step={100} value={music.fade_out_ms} onChange={(e) => patch({ fade_out_ms: Math.max(0, Number(e.target.value) || 0) })} />
         </Field>
       </div>
-      <BeatSyncFields music={music} patch={patch} detected={beats} status={beatStatus} onDetect={onDetectBeats} />
+      {playing && <BeatSyncFields music={playing} patch={patch} detected={beats} status={beatStatus} onDetect={onDetectBeats} />}
       <button className="btn danger small" onClick={() => dispatch({ type: "setMusic", music: null })}>Remove music</button>
     </div>
   );

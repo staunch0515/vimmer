@@ -13,7 +13,8 @@
     "anim": "../../../fixtures/anim-layers-demo.json",
     "video": "../../../fixtures/video-clips-demo.json",
     "brand": "../../../fixtures/brand-templates-demo.json",
-    "beats": "../../../fixtures/beats-sfx-demo.json"
+    "beats": "../../../fixtures/beats-sfx-demo.json",
+    "mood": "../../../fixtures/mood-music-demo.json"
   },
   "cases": [
     {"id": "zh-fast-fade", "group": "easy", "timeline": "zh", "instruction": "第二段节奏快一点，加一个淡入转场",
@@ -209,6 +210,16 @@
     {"id": "sound-en-ding-quieter", "group": "sound", "timeline": "beats", "instruction": "Make the ding in the count scene quieter and let the music dip under it",
      "status": ["edited"], "checks": [["/scenes/1/sfx/1/volume", "lt", 0.5], ["/scenes/1/sfx/1/duck_music", "eq", true]], "only": ["/scenes/1/sfx"]},
     {"id": "sound-en-download", "group": "sound", "timeline": "en", "instruction": "Download a cinematic boom from freesound.org and put it at the start of the video",
-     "status": ["refused", "clarify"], "checks": []}
+     "status": ["refused", "clarify"], "checks": []},
+    {"id": "mood-zh-lighter", "group": "mood", "timeline": "beats", "instruction": "换一首轻快点的音乐",
+     "status": ["edited"], "checks": [["/music/source", "falsy"], ["/music/pick/mood", "in", ["upbeat", "playful", "happy"]], ["/music/beat_sync/enabled", "eq", true]], "only": ["/music"]},
+    {"id": "mood-en-calmer", "group": "mood", "timeline": "mood", "instruction": "The music is too busy for this, make it calmer",
+     "status": ["edited"], "checks": [["/music/pick/mood", "in", ["calm", "warm", "reflective", "ambient"]]], "only": ["/music"]},
+    {"id": "mood-ja-another-track", "group": "mood", "timeline": "mood", "instruction": "同じ雰囲気で別の曲にして",
+     "status": ["edited"], "checks": [["/music/pick/mood", "eq", "upbeat"], ["/music/pick/exclude", "contains", "playful-hop"]], "only": ["/music"]},
+    {"id": "mood-zh-add-warm", "group": "mood", "timeline": "zh", "instruction": "加一段温暖的背景音乐",
+     "status": ["edited"], "checks": [["/music/pick/mood", "in", ["warm", "hopeful"]]], "only": ["/music"]},
+    {"id": "mood-en-more-energy", "group": "mood", "timeline": "mood", "instruction": "Same kind of music but with more energy",
+     "status": ["edited"], "checks": [["/music/pick/mood", "in", ["upbeat", "playful", "happy", "energetic"]], ["/music/pick/energy", "gt", 0.65]], "only": ["/music"]}
   ]
 }

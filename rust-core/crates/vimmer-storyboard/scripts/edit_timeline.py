@@ -146,6 +146,16 @@ def build_user_message(req):
         out.extend(f"- {a}" for a in assets)
     else:
         out.append("Asset files available: only the paths already used in the timeline.")
+    tracks = req.get("music_tracks") or []
+    if tracks:
+        out.append(
+            "Music library (for music.pick; mood must be one of these tags, energy 0 calm .. 1 intense):"
+        )
+        out.extend(
+            f"- {t['id']}: moods {', '.join(t['moods'])}; energy {t['energy']}" for t in tracks
+        )
+    if req.get("music_now"):
+        out.append(f"The music pick plays the track {req['music_now']} now.")
     out += [
         "",
         "<timeline>",

@@ -309,10 +309,16 @@ impl Duck {
 }
 
 /// Background music for the whole video. Loops until the timeline ends, with optional fades.
+/// Exactly one of `source` (a file) and `pick` (a track chosen from the music library by mood,
+/// see [`crate::library`]) is given; the render turns a `pick` into a `source` first.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Music {
     /// Path relative to the renderer's public dir.
-    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Choose a track from the music library instead of naming a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pick: Option<MusicPick>,
     /// Linear gain from 0.0 (silent) to 1.0 (full level).
     #[serde(default = "default_music_volume")]
     pub volume: f32,
@@ -387,7 +393,25 @@ impl Default for BeatSync {
     }
 }
 
+/// Which library track to use: one whose `moods` include `mood`, the closest to `energy` (0 calm
+/// .. 1 intense) when given, never one of `exclude` (track ids). Among equally good tracks the
+/// choice depends on the timeline (see [`crate::library::pick_seed`]), so different videos with
+/// the same mood get different tracks, and the same video always gets the same one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MusicPick {
+    pub mood: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy: Option<f32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+}
+
 impl Music {
+    /// The music file (relative to the public dir); empty while the music is still a `pick`.
+    pub fn source_path(&self) -> &str {
+        self.source.as_deref().unwrap_or("")
+    }
+
     /// The beat sync settings when beat sync is on.
     pub fn beat_sync_on(&self) -> Option<&BeatSync> {
         self.beat_sync.as_ref().filter(|b| b.enabled)
@@ -639,6 +663,37 @@ mod tests {
             }
         );
         assert_eq!(serde_json::to_string(&music).unwrap(), json);
+    }
+
+    #[test]
+    fn music_pick_round_trips_without_a_source_key() {
+        let json =
+            r#"{"pick":{"mood":"calm","energy":0.3},"volume":0.3,"fade_in_ms":0,"fade_out_ms":0}"#;
+        let music: Music = serde_json::from_str(json).unwrap();
+        assert_eq!(music.source, None);
+        assert_eq!(music.pick.as_ref().unwrap().mood, "calm");
+        assert!(music.pick.as_ref().unwrap().exclude.is_empty());
+        assert_eq!(serde_json::to_string(&music).unwrap(), json);
+    }
+
+    #[test]
+    fn timelines_with_music_files_serialize_as_before() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fixtures");
+        // Exactly what the DSL wrote before `source` became optional.
+        for (name, expected) in [
+            (
+                "music-ducking.json",
+                r#"{"source":"assets/pad-loop.m4a","volume":0.6,"fade_in_ms":500,"fade_out_ms":1000}"#,
+            ),
+            (
+                "beats-sfx-demo.json",
+                r#"{"source":"assets/music/beat-120bpm.m4a","volume":0.5,"fade_in_ms":0,"fade_out_ms":800,"beat_sync":{"enabled":true,"every":1,"max_shift_ms":250,"mode":"nearest"}}"#,
+            ),
+        ] {
+            let raw = std::fs::read_to_string(format!("{dir}/{name}")).unwrap();
+            let t: VideoTimeline = serde_json::from_str(&raw).unwrap();
+            assert_eq!(serde_json::to_string(&t.music).unwrap(), expected, "{name}");
+        }
     }
 
     #[test]

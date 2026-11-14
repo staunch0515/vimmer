@@ -112,6 +112,24 @@ class EditHelperTest(unittest.TestCase):
         self.assertIn("<instruction>\n第二段节奏快一点\n</instruction>", user)
         self.assertIn('"id": "scene-01"', user)
 
+    def test_music_library_and_current_track_are_listed(self):
+        req = {
+            "timeline": {"resolution": {"width": 1920, "height": 1080}, "scenes": [],
+                         "music": {"pick": {"mood": "calm"}}},
+            "instruction": "换一首轻快点的音乐",
+            "music_tracks": [
+                {"id": "calm-drift", "moods": ["calm", "ambient"], "energy": 0.15},
+                {"id": "upbeat-sunny", "moods": ["upbeat"], "energy": 0.75},
+            ],
+            "music_now": "calm-drift",
+        }
+        user = et.build_user_message(req)
+        self.assertIn("Music library (for music.pick", user)
+        self.assertIn("- calm-drift: moods calm, ambient; energy 0.15", user)
+        self.assertIn("The music pick plays the track calm-drift now.", user)
+        del req["music_tracks"], req["music_now"]
+        self.assertNotIn("Music library", et.build_user_message(req))
+
     def test_scene_table_lists_layers_by_index(self):
         t = timeline()
         t["scenes"][1]["layers"] = [

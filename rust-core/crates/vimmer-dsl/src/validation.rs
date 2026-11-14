@@ -63,6 +63,10 @@ pub enum ValidationError {
     EmptyWord { cue: usize, word: usize },
     #[error("music has an empty source")]
     EmptyMusicSource,
+    #[error("music needs exactly one of `source` (a file) and `pick` (a mood)")]
+    MusicSourceOrPick,
+    #[error("music pick: {0}")]
+    BadMusicPick(String),
     #[error("music volume {0} must be between 0 and 1")]
     BadMusicVolume(f32),
     #[error("music fades ({fade_in_ms} ms in, {fade_out_ms} ms out) are longer than the timeline")]
@@ -916,8 +920,30 @@ fn validate_expanded(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError
     }
 
     if let Some(music) = &timeline.music {
-        if music.source.trim().is_empty() {
-            errors.push(ValidationError::EmptyMusicSource);
+        match (&music.source, &music.pick) {
+            (Some(source), None) => {
+                if source.trim().is_empty() {
+                    errors.push(ValidationError::EmptyMusicSource);
+                }
+            }
+            (None, Some(pick)) => {
+                if pick.mood.trim().is_empty() {
+                    errors.push(ValidationError::BadMusicPick("mood is empty".into()));
+                }
+                if let Some(e) = pick.energy {
+                    if !in_range(e, 0.0, 1.0) {
+                        errors.push(ValidationError::BadMusicPick(format!(
+                            "energy {e} must be between 0 and 1"
+                        )));
+                    }
+                }
+                if pick.exclude.iter().any(|x| x.trim().is_empty()) {
+                    errors.push(ValidationError::BadMusicPick(
+                        "exclude has an empty track id".into(),
+                    ));
+                }
+            }
+            _ => errors.push(ValidationError::MusicSourceOrPick),
         }
         if !(0.0..=1.0).contains(&music.volume) {
             errors.push(ValidationError::BadMusicVolume(music.volume));
@@ -1275,7 +1301,8 @@ mod tests {
         t.music = Some(Music {
             beats: None,
             beat_sync: None,
-            source: " ".into(),
+            source: Some(" ".into()),
+            pick: None,
             volume: 1.5,
             fade_in_ms: 4_000,
             fade_out_ms: 4_000,
@@ -1291,7 +1318,8 @@ mod tests {
         t.music = Some(Music {
             beats: None,
             beat_sync: None,
-            source: "assets/m.mp3".into(),
+            source: Some("assets/m.mp3".into()),
+            pick: None,
             volume: 0.3,
             fade_in_ms: 500,
             fade_out_ms: 500,
@@ -1301,13 +1329,46 @@ mod tests {
     }
 
     #[test]
+    fn music_needs_exactly_one_of_source_and_pick() {
+        use crate::model::{Music, MusicPick};
+        let mut t = timeline(vec![scene("a", 5_000)]);
+        let base: Music =
+            serde_json::from_value(serde_json::json!({"pick": {"mood": "calm"}})).unwrap();
+        t.music = Some(base.clone());
+        assert!(validate(&t).is_ok());
+        let mut both = base.clone();
+        both.source = Some("m.m4a".into());
+        t.music = Some(both);
+        assert_eq!(
+            validate(&t).unwrap_err(),
+            vec![ValidationError::MusicSourceOrPick]
+        );
+        let mut neither = base.clone();
+        neither.pick = None;
+        t.music = Some(neither);
+        assert_eq!(
+            validate(&t).unwrap_err(),
+            vec![ValidationError::MusicSourceOrPick]
+        );
+        let mut bad = base;
+        bad.pick = Some(MusicPick {
+            mood: " ".into(),
+            energy: Some(1.5),
+            exclude: vec!["".into()],
+        });
+        t.music = Some(bad);
+        assert_eq!(validate(&t).unwrap_err().len(), 3);
+    }
+
+    #[test]
     fn checks_duck_ranges() {
         use crate::model::{Duck, Music};
         let mut t = timeline(vec![scene("a", 5_000)]);
         let music = |duck: Duck| Music {
             beats: None,
             beat_sync: None,
-            source: "assets/m.mp3".into(),
+            source: Some("assets/m.mp3".into()),
+            pick: None,
             volume: 0.3,
             fade_in_ms: 0,
             fade_out_ms: 0,

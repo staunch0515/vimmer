@@ -919,6 +919,90 @@ fn music_duck_unknown_keys_and_bad_ranges_are_rejected() {
     assert_eq!(e.stage, Stage::Validation, "{e}");
 }
 
+// --- music by mood -------------------------------------------------------------------------------
+
+fn repo_public_dir() -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../remotion-renderer/public"
+    ))
+}
+
+fn ok_in_repo(doc: &Value, patch: Value) -> Result<EditOutcome, Rejection> {
+    apply_edit(
+        doc,
+        &patch,
+        &EditCheck {
+            public_dir: Some(repo_public_dir()),
+        },
+    )
+}
+
+#[test]
+fn music_file_can_become_a_mood_pick_and_the_mood_can_change() {
+    let out = ok_in_repo(
+        &with_music(),
+        json!([{"op": "remove", "path": "/music/source"},
+               {"op": "add", "path": "/music/pick", "value": {"mood": "upbeat", "energy": 0.8}}]),
+    )
+    .unwrap();
+    assert_eq!(out.timeline["music"]["pick"]["mood"], "upbeat");
+    assert!(
+        out.summary
+            .iter()
+            .any(|l| l.contains("mood `upbeat` energy 0.8")),
+        "{:?}",
+        out.summary
+    );
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.contains("the render will play `upbeat-sunny`")),
+        "{:?}",
+        out.warnings
+    );
+    let out = ok_in_repo(
+        &out.timeline,
+        json!([{"op": "replace", "path": "/music/pick/mood", "value": "calm"},
+               {"op": "add", "path": "/music/pick/exclude", "value": ["calm-drift"]}]),
+    )
+    .unwrap();
+    assert!(
+        out.warnings.iter().any(|w| w.contains("`warm-hearth`")),
+        "{:?}",
+        out.warnings
+    );
+}
+
+#[test]
+fn music_pick_needs_a_known_mood_known_keys_and_no_source() {
+    let mut doc = small();
+    doc["music"] = json!({"pick": {"mood": "calm"}, "volume": 0.3});
+    let e = ok_in_repo(
+        &doc,
+        json!([{"op": "replace", "path": "/music/pick/mood", "value": "sad"}]),
+    )
+    .unwrap_err();
+    assert_eq!(e.stage, Stage::Validation, "{e}");
+    assert!(text(&e).contains("available moods: ambient, calm"), "{e}");
+    let e = err(
+        &doc,
+        json!([{"op": "add", "path": "/music/pick/track", "value": "x"}]),
+    );
+    assert_eq!(e.stage, Stage::Guard, "{e}");
+    // A file and a pick together is not a timeline.
+    let e = err(
+        &doc,
+        json!([{"op": "add", "path": "/music/source", "value": "assets/pad-loop.m4a"}]),
+    );
+    assert!(text(&e).contains("exactly one of `source`"), "{e}");
+    // Without a public dir, the mood is not checked against a library.
+    ok(
+        &doc,
+        json!([{"op": "replace", "path": "/music/pick/mood", "value": "sad"}]),
+    );
+}
+
 // --- layers -------------------------------------------------------------------------------------
 
 fn with_layers() -> Value {

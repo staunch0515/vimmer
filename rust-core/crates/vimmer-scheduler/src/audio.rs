@@ -311,7 +311,7 @@ pub async fn mux_soundtrack(
     }
     if let Some(music) = &timeline.music {
         cmd.args(["-stream_loop", "-1", "-i"])
-            .arg(cfg.public_dir.join(&music.source));
+            .arg(cfg.public_dir.join(music.source_path()));
     }
     cmd.args(["-filter_complex", &graph, "-map", "0:v", "-map", "[a]"])
         .args(["-c:v", "copy", "-c:a", "aac", "-b:a", AUDIO_BITRATE])
@@ -373,7 +373,8 @@ mod tests {
         Music {
             beats: None,
             beat_sync: None,
-            source: "assets/m.m4a".into(),
+            source: Some("assets/m.m4a".into()),
+            pick: None,
             volume: 0.5,
             fade_in_ms: 500,
             fade_out_ms: 1_000,

@@ -164,6 +164,48 @@ const runBeats = (bin: string, file: string, cacheDir: string): Promise<{ code: 
     child.stdin.end();
   });
 
+const MUSIC_ENDPOINT = "/__vimmer/music";
+
+/** Runs `vimmer music ...` (no network, no key) with optional stdin. */
+const runMusic = (bin: string, args: string[], stdin: string): Promise<{ code: number | null; stdout: string; stderr: string }> =>
+  new Promise((ok) => {
+    const child = spawn(bin, ["music", ...args], { stdio: "pipe" });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => child.kill("SIGTERM"), 20_000);
+    child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      ok({ code: -1, stdout, stderr: String(e) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      ok({ code, stdout, stderr });
+    });
+    child.stdin.end(stdin);
+  });
+
+/** `vimmer music` arguments for a request body, or an error. */
+export const musicArgs = (body: unknown, publicDir: string): { args: string[]; stdin: string } | string => {
+  if (!body || typeof body !== "object") return "body must be an object";
+  const b = body as { action?: unknown; timelineJson?: unknown; mood?: unknown; energy?: unknown };
+  const common = ["--json", "--public-dir", publicDir];
+  if (b.action === "list") return { args: ["list", ...common], stdin: "" };
+  if (b.action !== "pick") return "action must be list or pick";
+  if (typeof b.timelineJson !== "string") return "timelineJson must be a string";
+  const args = ["pick", "-", ...common];
+  if (b.mood !== undefined && b.mood !== null) {
+    if (typeof b.mood !== "string" || !/^[\p{L}\p{N} _-]{1,40}$/u.test(b.mood)) return "mood must be a short word";
+    args.push(`--mood=${b.mood}`);
+  }
+  if (b.energy !== undefined && b.energy !== null) {
+    if (typeof b.energy !== "number" || !(b.energy >= 0 && b.energy <= 1)) return "energy must be between 0 and 1";
+    args.push(`--energy=${b.energy}`);
+  }
+  return { args, stdin: b.timelineJson };
+};
+
 /** A public-relative path that stays inside the public dir, or null. */
 const publicFile = (publicDir: string, source: unknown): string | null => {
   if (typeof source !== "string" || !source || source.startsWith("/") || source.includes("\\")) return null;
@@ -220,6 +262,30 @@ export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
           return send(res, 200, JSON.parse(line));
         } catch {
           return send(res, 200, { ok: false, error: `vimmer beats failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}` });
+        }
+      })();
+    });
+    // Music by mood: the library's moods and tracks, and which track a pick gets.
+    server.middlewares.use(MUSIC_ENDPOINT, (req: IncomingMessage, res: ServerResponse) => {
+      void (async () => {
+        if (req.method !== "POST") return send(res, 405, { ok: false, error: "POST only" });
+        if (!isLocalRequest(req)) return send(res, 403, { ok: false, error: "local requests only" });
+        let body: unknown;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch (e) {
+          return send(res, 400, { ok: false, error: `bad request: ${String(e)}` });
+        }
+        const call = musicArgs(body, publicDir);
+        if (typeof call === "string") return send(res, 400, { ok: false, error: call });
+        const bin = findVimmer(repo);
+        if (!bin) return send(res, 200, { ok: false, error: "Build the CLI to pick music by mood: cd rust-core && cargo build -p vimmer-cli" });
+        const out = await runMusic(bin, call.args, call.stdin);
+        const line = out.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
+        try {
+          return send(res, 200, JSON.parse(line));
+        } catch {
+          return send(res, 200, { ok: false, error: `vimmer music failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}` });
         }
       })();
     });

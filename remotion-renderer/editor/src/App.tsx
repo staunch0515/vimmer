@@ -21,8 +21,10 @@ import {
   type RenderView,
 } from "./render";
 import { inTauri } from "./project";
-import { loadAssetRoot } from "./media";
+import { assetUrlFor, loadAssetRoot } from "./media";
+import { resolveAsset } from "../../src/assets";
 import { beatMarks, detectBeats, type DetectedBeats } from "./beats";
+import { loadMusicLibrary, musicForBeats, pickKey, pickMusic, resolvedMusic, type MusicLibrary, type PickedTrack } from "./music";
 import type { BeatStatus } from "./components/SoundPanel";
 
 // Unsaved work is mirrored here so a crash or reload does not lose it. Cleared on save.
@@ -69,9 +71,36 @@ export const App = () => {
   const [beatStatus, setBeatStatus] = useState<BeatStatus>({ busy: false, error: null });
   const playerRef = useRef<PlayerRef>(null);
   const { timeline } = state;
-  const marks = useMemo(() => beatMarks(timeline.music, beats, totalMs(timeline)), [timeline, beats]);
+  // Music by mood: the library (loaded once) and the track the pick gets, asked again whenever
+  // what the choice depends on changes.
+  const [library, setLibrary] = useState<MusicLibrary | { error: string } | null>(null);
+  const [picked, setPicked] = useState<{ key: string; result: PickedTrack | { error: string } } | null>(null);
+  const currentPickKey = pickKey(timeline);
+  useEffect(() => {
+    if (!currentPickKey || library) return;
+    void loadMusicLibrary().then(setLibrary);
+  }, [currentPickKey, library]);
+  useEffect(() => {
+    if (!currentPickKey || picked?.key === currentPickKey) return;
+    const key = currentPickKey;
+    const handle = window.setTimeout(() => {
+      void pickMusic(timeline).then((result) => setPicked({ key, result }));
+    }, 150);
+    return () => window.clearTimeout(handle);
+  }, [currentPickKey, picked, timeline]);
+  const pickedTrack = picked && picked.key === currentPickKey && !("error" in picked.result) ? picked.result : null;
+  const pickError = picked && picked.key === currentPickKey && "error" in picked.result ? picked.result.error : null;
+  // The preview plays what the render will play: a pick becomes the chosen file.
+  const previewTimeline = useMemo(
+    () => (timeline.music?.pick ? { ...timeline, music: resolvedMusic(timeline.music, pickedTrack) } : timeline),
+    [timeline, pickedTrack],
+  );
+  const marks = useMemo(
+    () => beatMarks(musicForBeats(timeline.music, pickedTrack), beats, totalMs(timeline)),
+    [timeline, beats, pickedTrack],
+  );
   const onDetectBeats = () => {
-    const source = timeline.music?.source;
+    const source = previewTimeline.music?.source;
     if (!source) return;
     setBeatStatus({ busy: true, error: null });
     void detectBeats(source).then((r) => {
@@ -292,7 +321,7 @@ export const App = () => {
       <main className="workspace">
         <section className="stage">
           <Preview
-            timeline={timeline}
+            timeline={previewTimeline}
             assetRoot={assetRoot}
             playerRef={playerRef}
             onFrame={setFrame}
@@ -323,6 +352,11 @@ export const App = () => {
           beats={beats}
           beatStatus={beatStatus}
           onDetectBeats={onDetectBeats}
+          musicLibrary={library}
+          onLoadMusicLibrary={() => void loadMusicLibrary().then(setLibrary)}
+          pickedTrack={pickedTrack}
+          pickError={pickError}
+          audioUrl={(path) => resolveAsset(path, assetRoot ? assetUrlFor(assetRoot) : null)}
         />
       </main>
       <EditorTimeline

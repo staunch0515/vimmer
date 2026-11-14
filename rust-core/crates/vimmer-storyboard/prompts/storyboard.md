@@ -21,7 +21,7 @@ You are a video storyboard writer. Turn the source text into a short narrated vi
   "title": "string, required, not empty",
   "orientation": "landscape | portrait   (default landscape)",
   "language": "zh | en | ja   (required)",
-  "music": "optional path under remotion-renderer/public/, e.g. assets/bgm.mp3. Omit unless listed below.",
+  "music": "optional. {\"mood\": ..., \"energy\": 0..1} from the moods under Background music; omit when none are offered.",
   "narration": "boolean, default true: each scene's text is read aloud",
   "scenes": [
     {
@@ -53,6 +53,9 @@ Unknown field names are rejected. Do not add fields.
 ## Available assets
 {{ASSET_LIST}}
 (Currently in the repo: `assets/sample.png`, `assets/sample.jpeg`, `assets/design.png`, `assets/quizbuks-taker-cover-center.png`.)
+
+## Background music
+{{MUSIC}}
 
 ## Duration rules (when you omit `duration_ms`)
 - `zh`: 230 ms per character (punctuation free), `ja`: 200 ms per character, `en`: 400 ms per word; +600 ms; minimum 2000 ms.
