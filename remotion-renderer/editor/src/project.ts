@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import type { VideoTimeline } from "../../src/types/timeline";
+import { normalizeScene } from "./normalize";
 import { templateInfo } from "./templates";
 
 // Desktop (Tauri) and browser differ only in file access. Both paths live here,
@@ -24,9 +25,10 @@ export const parseTimeline = (text: string): VideoTimeline => {
   const parsed: unknown = JSON.parse(text);
   if (!isTimeline(parsed)) throw new Error("This file is not a timeline (missing fps, resolution or scenes).");
   // Template scenes may leave out their length (the template's default applies, as in the render).
-  const scenes = parsed.scenes.map((s) =>
-    s.template && !s.duration_ms ? { ...s, duration_ms: templateInfo(s.template.name)?.default_ms ?? 4000 } : s,
-  );
+  const scenes = parsed.scenes.map((raw) => {
+    const s = normalizeScene(raw);
+    return s.template && !s.duration_ms ? { ...s, duration_ms: templateInfo(s.template.name)?.default_ms ?? 4000 } : s;
+  });
   return { ...parsed, scenes, subtitles: parsed.subtitles ?? [] };
 };
 
