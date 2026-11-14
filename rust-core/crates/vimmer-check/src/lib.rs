@@ -16,6 +16,7 @@ pub mod layout;
 pub mod motion;
 pub mod rendered;
 pub mod report;
+pub mod sfx;
 pub mod text;
 pub mod timing;
 pub mod video;
@@ -274,6 +275,13 @@ fn check_expanded(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding>
             findings.extend(layers::check_assets(timeline, dir));
             findings.extend(audio::check_sources(timeline, dir, &opts.ffmpeg));
             findings.extend(video::check(timeline, dir, &opts.ffmpeg));
+            findings.extend(sfx::check(timeline, dir, &opts.ffmpeg));
+            findings.extend(sfx::check_beats(
+                timeline,
+                dir,
+                &opts.ffmpeg,
+                measured.as_deref(),
+            ));
         }
         None => findings.push(Finding::new(
             Severity::Warning,
