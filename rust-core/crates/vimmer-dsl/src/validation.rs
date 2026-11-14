@@ -130,6 +130,10 @@ pub enum ValidationError {
         layer: String,
         message: String,
     },
+    #[error("scene `{scene}` template: {message}")]
+    BadTemplate { scene: String, message: String },
+    #[error("brand: {0}")]
+    BadBrand(String),
 }
 
 fn validate_transition(scene: &Scene, index: usize, errors: &mut Vec<ValidationError>) {
@@ -310,6 +314,11 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
             ));
         }
     };
+    let opt_color = |what: &str, c: &Option<String>, out: &mut Vec<String>| {
+        if let Some(c) = c {
+            color(what, c, out);
+        }
+    };
     match &layer.content {
         LayerContent::Video(clip) => out.extend(clip_problems(clip)),
         LayerContent::Image(img) => {
@@ -352,7 +361,7 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
             if !in_range(t.line_height, 0.8, 3.0) {
                 out.push("line_height must be between 0.8 and 3".to_string());
             }
-            color("color", &t.color, &mut out);
+            opt_color("color", &t.color, &mut out);
             if let Some(bg) = &t.background {
                 color("background color", &bg.color, &mut out);
                 if !in_range(bg.padding, 0.0, 3.0) || !in_range(bg.radius, 0.0, 3.0) {
@@ -396,9 +405,9 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
                     lt.font_size
                 ));
             }
-            color("color", &lt.color, &mut out);
-            color("subtitle_color", &lt.subtitle_color, &mut out);
-            color("accent_color", &lt.accent_color, &mut out);
+            opt_color("color", &lt.color, &mut out);
+            opt_color("subtitle_color", &lt.subtitle_color, &mut out);
+            opt_color("accent_color", &lt.accent_color, &mut out);
             if let Some(c) = &lt.background_color {
                 color("background_color", c, &mut out);
             }
@@ -432,7 +441,7 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
                     c.weight
                 ));
             }
-            color("color", &c.color, &mut out);
+            opt_color("color", &c.color, &mut out);
         }
         LayerContent::BarChart(ch) => {
             if ch.bars.is_empty() || ch.bars.len() > MAX_BARS {
@@ -489,8 +498,8 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
             if ch.stagger_ms > 2_000 {
                 out.push(format!("stagger_ms must be 0..2000, got {}", ch.stagger_ms));
             }
-            color("color", &ch.color, &mut out);
-            color("label_color", &ch.label_color, &mut out);
+            opt_color("color", &ch.color, &mut out);
+            opt_color("label_color", &ch.label_color, &mut out);
         }
         LayerContent::ProgressRing(r) => {
             for (name, v) in [("value", r.value), ("from", r.from)] {
@@ -522,9 +531,9 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
                 }
             }
             out.extend(number_format_problems(r.decimals, "", "", None));
-            color("color", &r.color, &mut out);
+            opt_color("color", &r.color, &mut out);
             color("track_color", &r.track_color, &mut out);
-            color("label_color", &r.label_color, &mut out);
+            opt_color("label_color", &r.label_color, &mut out);
         }
         LayerContent::Shape(sh) => {
             if let Some(c) = &sh.fill {
@@ -695,7 +704,48 @@ fn validate_words(cue: &SubtitleCue, index: usize, errors: &mut Vec<ValidationEr
 
 /// Checks a timeline against the DSL rules. Returns every violation found,
 /// not just the first, so callers can report them all at once.
+///
+/// Template scenes are checked as they will be rendered: a copy of the timeline is expanded
+/// (see [`crate::template`]) and the copy is validated. Bad template params are reported as
+/// [`ValidationError::BadTemplate`] (the rest of the timeline is then not checked).
 pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
+    let mut errors: Vec<ValidationError> = timeline
+        .brand
+        .as_ref()
+        .map(|b| {
+            b.problems()
+                .into_iter()
+                .map(ValidationError::BadBrand)
+                .collect()
+        })
+        .unwrap_or_default();
+    let result = if timeline.scenes.iter().any(|s| s.template.is_some()) {
+        let mut expanded = timeline.clone();
+        match crate::template::expand_templates(&mut expanded) {
+            Ok(()) => validate_expanded(&expanded),
+            Err(es) => Err(es
+                .into_iter()
+                .map(|e| ValidationError::BadTemplate {
+                    scene: e.scene,
+                    message: e.message,
+                })
+                .collect()),
+        }
+    } else {
+        validate_expanded(timeline)
+    };
+    if let Err(more) = result {
+        errors.extend(more);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+/// [`validate`] of a timeline without template scenes and without the brand.
+fn validate_expanded(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
     let mut errors = Vec::new();
 
     if timeline.scenes.is_empty() {
@@ -812,6 +862,7 @@ mod tests {
 
     fn scene(id: &str, ms: u64) -> Scene {
         Scene {
+            template: None,
             id: id.into(),
             duration_ms: ms,
             text: Some("hello".into()),
@@ -829,6 +880,7 @@ mod tests {
 
     fn timeline(scenes: Vec<Scene>) -> VideoTimeline {
         VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,
@@ -850,6 +902,7 @@ mod tests {
         let mut bad = scene("dup", 0);
         bad.text = None;
         let t = VideoTimeline {
+            brand: None,
             fps: 24,
             resolution: Resolution {
                 width: 640,

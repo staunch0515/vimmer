@@ -1154,6 +1154,7 @@ mod tests {
 
     fn narrated(id: &str, ms: u64, text: &str) -> Scene {
         Scene {
+            template: None,
             id: id.into(),
             duration_ms: ms,
             text: Some(text.into()),
@@ -1175,6 +1176,7 @@ mod tests {
     #[tokio::test]
     async fn end_to_end_with_a_fixed_recognizer() {
         let mut t = VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,
@@ -1235,6 +1237,7 @@ mod tests {
     #[tokio::test]
     async fn a_cue_edited_after_timing_is_timed_again() {
         let mut t = VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,
@@ -1294,6 +1297,7 @@ mod tests {
     #[tokio::test]
     async fn missing_engine_warns_and_changes_nothing() {
         let mut t = VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,
@@ -1347,6 +1351,7 @@ mod tests {
     fn clip_end_never_passes_the_validated_timeline_length() {
         // 4920 ms and 4650 ms round up to 148 and 140 frames: frame time 9600 ms, sum 9570 ms.
         let t = VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,
@@ -1418,6 +1423,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vimmer-batch-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut t = VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,
@@ -1495,6 +1501,7 @@ mod tests {
 
     fn three_languages() -> (VideoTimeline, Vec<NarrationClip>) {
         let t = VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,
@@ -1618,6 +1625,7 @@ mod tests {
     #[tokio::test]
     async fn default_config_leaves_a_timeline_without_cues_untouched() {
         let mut t = VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,

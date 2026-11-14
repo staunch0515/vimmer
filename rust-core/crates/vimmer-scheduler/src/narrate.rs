@@ -334,6 +334,7 @@ mod tests {
 
     fn scene(id: &str, ms: u64, text: Option<&str>, narration: bool) -> Scene {
         Scene {
+            template: None,
             id: id.into(),
             duration_ms: ms,
             text: text.map(String::from),
@@ -351,6 +352,7 @@ mod tests {
 
     fn timeline(scenes: Vec<Scene>) -> VideoTimeline {
         VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,

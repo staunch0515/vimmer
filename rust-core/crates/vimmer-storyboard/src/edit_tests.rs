@@ -850,7 +850,16 @@ fn all_examples_and_fixtures_load_and_accept_an_empty_patch() {
         .map(|n| root.join(format!("examples/{n}.timeline.json")))
         .collect();
     for entry in fs::read_dir(root.join("../../../fixtures")).unwrap() {
-        files.push(entry.unwrap().path());
+        let path = entry.unwrap().path();
+        // Brand files (`brand.*.json`) are not timelines.
+        if !path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("brand.")
+        {
+            files.push(path);
+        }
     }
     for f in files {
         let doc: Value = serde_json::from_str(&fs::read_to_string(&f).unwrap()).unwrap();
@@ -970,7 +979,8 @@ fn move_and_restyle_a_layer() {
         .expect("title line");
     assert!(line.contains("x 0.1 -> 0.2"), "{line}");
     assert!(line.contains("z none -> -2"), "{line}");
-    assert!(line.contains("color \"#fafafa\" -> \"#ff0000\""), "{line}");
+    // An unset color follows the brand (or the built-in #fafafa).
+    assert!(line.contains("color none -> \"#ff0000\""), "{line}");
     // Reordering the list is reported as such.
     let out = ok(
         &with_layers(),

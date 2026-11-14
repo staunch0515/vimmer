@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use crate::brand::Brand;
 use crate::layer::{Layer, VideoClip};
+use crate::template::SceneTemplate;
 
 /// Target frame rate for every render.
 pub const TARGET_FPS: u32 = 30;
@@ -171,6 +173,8 @@ pub struct Transition {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
     pub id: String,
+    /// Required, except on a template scene, where 0 or absent takes the template's default.
+    #[serde(default)]
     pub duration_ms: u64,
     #[serde(default)]
     pub text: Option<String>,
@@ -200,6 +204,10 @@ pub struct Scene {
     /// Extra graphics in this scene, in list order (see [`crate::layer`] for units and stacking).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Layer>,
+    /// A built-in template (see [`crate::template`]) that is expanded into layers under this
+    /// scene's own layers before validation and rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<SceneTemplate>,
 }
 
 impl Scene {
@@ -326,6 +334,10 @@ pub struct VideoTimeline {
     /// Background music across the whole timeline.
     #[serde(default)]
     pub music: Option<Music>,
+    /// Colors, fonts and logo shared by every scene (see [`crate::brand`]). Absent: the
+    /// built-in look.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brand: Option<Brand>,
 }
 
 impl VideoTimeline {

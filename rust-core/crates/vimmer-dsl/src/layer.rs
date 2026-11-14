@@ -23,6 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::brand::FontRole;
 use crate::model::{Easing, Keyframe};
 
 /// Most layers one scene may have.
@@ -201,10 +202,6 @@ fn default_font_size() -> f32 {
     0.06
 }
 
-fn default_text_color() -> String {
-    "#fafafa".into()
-}
-
 fn default_weight() -> u16 {
     600
 }
@@ -237,8 +234,12 @@ pub struct TextLayer {
     /// Fraction of the frame height.
     #[serde(default = "default_font_size")]
     pub font_size: f32,
-    #[serde(default = "default_text_color")]
-    pub color: String,
+    /// Absent: the brand's `text` color, else `#fafafa`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Which brand font: `body` (the default) or `heading`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<FontRole>,
     /// CSS font weight, 100..900 in steps of 100.
     #[serde(default = "default_weight")]
     pub weight: u16,
@@ -313,14 +314,6 @@ fn default_lower_third_size() -> f32 {
     0.045
 }
 
-fn default_subtitle_color() -> String {
-    "#d4d4d8".into()
-}
-
-fn default_accent_color() -> String {
-    "#6366f1".into()
-}
-
 fn default_lower_third_background() -> Option<String> {
     Some("#09090bd9".into())
 }
@@ -337,13 +330,15 @@ pub struct LowerThirdLayer {
     /// Title size as a fraction of the frame height; the subtitle is 0.62 of it.
     #[serde(default = "default_lower_third_size")]
     pub font_size: f32,
-    /// Title color.
-    #[serde(default = "default_text_color")]
-    pub color: String,
-    #[serde(default = "default_subtitle_color")]
-    pub subtitle_color: String,
-    #[serde(default = "default_accent_color")]
-    pub accent_color: String,
+    /// Title color. Absent: the brand's `text`, else `#fafafa`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Absent: the brand's `muted_text`, else `#d4d4d8`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle_color: Option<String>,
+    /// Absent: the brand's `primary`, else `#6366f1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_color: Option<String>,
     /// Box color; `null` draws no box.
     #[serde(default = "default_lower_third_background")]
     pub background_color: Option<String>,
@@ -449,8 +444,9 @@ pub struct CounterLayer {
     /// Fraction of the frame height.
     #[serde(default = "default_counter_size")]
     pub font_size: f32,
-    #[serde(default = "default_text_color")]
-    pub color: String,
+    /// Absent: the brand's `text`, else `#fafafa`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     #[serde(default = "default_counter_weight")]
     pub weight: u16,
     #[serde(default)]
@@ -500,10 +496,6 @@ pub fn frame_progress(frame: u64, n: u64) -> f64 {
 pub const MAX_BARS: usize = 12;
 /// Longest bar label, in characters.
 pub const MAX_BAR_LABEL_CHARS: usize = 40;
-
-fn default_label_color() -> String {
-    "#e4e4e7".into()
-}
 
 fn default_chart_font_size() -> f32 {
     0.032
@@ -559,12 +551,12 @@ pub struct BarChartLayer {
     /// The value of a full-length bar. Absent: the largest value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
-    /// Bar color.
-    #[serde(default = "default_accent_color")]
-    pub color: String,
-    /// Labels and values.
-    #[serde(default = "default_label_color")]
-    pub label_color: String,
+    /// Bar color. Absent: the brand's `primary`, else `#6366f1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Labels and values. Absent: the brand's `muted_text`, else `#e4e4e7`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_color: Option<String>,
     /// Labels and values, fraction of the frame height.
     #[serde(default = "default_chart_font_size")]
     pub font_size: f32,
@@ -617,8 +609,9 @@ pub struct ProgressRingLayer {
     pub duration_ms: Option<u64>,
     #[serde(default = "ease_out")]
     pub ease: Easing,
-    #[serde(default = "default_accent_color")]
-    pub color: String,
+    /// Absent: the brand's `primary`, else `#6366f1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     #[serde(default = "default_track_color")]
     pub track_color: String,
     #[serde(default = "default_ring_thickness")]
@@ -631,8 +624,9 @@ pub struct ProgressRingLayer {
     /// Decimals of the percentage.
     #[serde(default)]
     pub decimals: u8,
-    #[serde(default = "default_text_color")]
-    pub label_color: String,
+    /// Absent: the brand's `text`, else `#fafafa`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_color: Option<String>,
 }
 
 impl ProgressRingLayer {
@@ -947,7 +941,8 @@ mod tests {
             panic!("text")
         };
         assert_eq!(t.font_size, 0.06);
-        assert_eq!(t.color, "#fafafa");
+        assert_eq!(t.color, None);
+        assert_eq!(t.font, None);
         assert_eq!(t.weight, 600);
         assert_eq!(t.align, TextAlign::Center);
         let l: Layer = serde_json::from_str(

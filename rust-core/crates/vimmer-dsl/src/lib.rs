@@ -3,11 +3,14 @@
 //! The same JSON document is consumed by the Remotion renderer, so field names
 //! here are part of a cross-language contract (`snake_case`, no renames).
 
+pub mod brand;
 pub mod layer;
 pub mod model;
 pub mod srt;
+pub mod template;
 pub mod validation;
 
+pub use brand::{Brand, BrandColors, BrandFont, BrandFonts, Corner, FontRole, Logo};
 pub use layer::{
     clip_frame_at, clip_frames, clip_problems, count_frames, format_number, frame_progress,
     is_hex_color, typing_units, Anchor, BarChartLayer, ChartBar, ChartOrientation, CounterLayer,
@@ -23,4 +26,7 @@ pub use model::{
     MAX_FRAMES, TARGET_FPS,
 };
 pub use srt::{parse_srt, SrtError};
+pub use template::{
+    expand_scene, expand_templates, SceneTemplate, TemplateError, TemplateInfo, CATALOG,
+};
 pub use validation::{validate, ValidationError};
