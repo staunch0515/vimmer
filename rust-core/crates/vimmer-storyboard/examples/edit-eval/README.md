@@ -5,11 +5,13 @@
 cases. `--budget` (USD, default 10) stops starting new cases once a run has spent that much.
 Every run appends its spend to `results/spend.log`.
 
-- `cases.json`: 73 instructions in zh, en and ja, over `examples/*.timeline.json`, the
+- `cases.json`: 81 instructions in zh, en and ja, over `examples/*.timeline.json`, the
   `fixtures/*.json` and `timelines/zh-injected.timeline.json`. The last has a prompt injection
   in a scene's text. Groups: easy, multi (multi-scene and subtitles), ambiguous, impossible,
   hostile, layers (add / move / restyle / remove scene layers, on `fixtures/layers-demo.json` and
-  the example timelines), anim (the data and text animation layer kinds and springy easings).
+  the example timelines), anim (the data and text animation layer kinds and springy easings),
+  video (clip backgrounds and video layers: speed, loop, trim, mute, add, replace an image, an
+  absolute path; mostly on `fixtures/video-clips-demo.json`).
 - `run_eval.py`: runs each case through `vimmer edit --dry-run --json` (4 at a time). A case
   passes when:
   - the status is one of the expected ones;
@@ -38,3 +40,7 @@ Runs in `results/`, in order:
   patch was right; `anim-en-bouncy-star` fails the language rule in both runs (the explanation
   comes back in Chinese, likely because that timeline holds a Chinese text layer). A first run
   (`anim-r1`, $0.16, same 10/11) is in `spend.log` only.
+- `video-r1-sonnet-low`: the 8 `video-*` cases plus `ja-video` (`--only`): 9/9, $0.15. Video clips
+  became part of the model here, so `ja-video` ("put a video clip in the second scene") moved from
+  `impossible` (refused / clarify) to `video` (edited / clarify); Sonnet picked a clip from the
+  asset list and said which and why.

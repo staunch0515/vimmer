@@ -103,6 +103,8 @@ def scene_table(timeline):
             parts.append("narrated")
         if s.get("keyframes"):
             parts.append(f"keyframes={len(s['keyframes'])}")
+        if s.get("video"):
+            parts.append(f"video={(s['video'] or {}).get('src')}")
         if s.get("layers"):
             # Index, id and kind of each layer, so "the logo" maps to /scenes/i/layers/j.
             names = ",".join(

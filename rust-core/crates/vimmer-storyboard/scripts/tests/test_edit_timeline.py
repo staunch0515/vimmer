@@ -122,6 +122,14 @@ class EditHelperTest(unittest.TestCase):
         self.assertIn("layers=[0:logo(icon),1:note(text)]", lines[1])
         self.assertNotIn("layers=", lines[0])
 
+    def test_scene_table_names_a_background_video(self):
+        t = timeline()
+        t["scenes"][0]["image"] = None
+        t["scenes"][0]["video"] = {"src": "assets/clips/counter-6s.mp4", "speed": 2}
+        lines, _ = et.scene_table(t)
+        self.assertIn("video=assets/clips/counter-6s.mp4", lines[0])
+        self.assertNotIn("video=", lines[1])
+
     def test_system_prompt_is_identical_across_requests(self):
         a, b = FakeClient(message("{}")), FakeClient(message("{}"))
         run_main(request(), a)
