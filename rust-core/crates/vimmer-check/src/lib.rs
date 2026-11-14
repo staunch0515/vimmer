@@ -154,6 +154,9 @@ pub struct CheckOptions {
     /// estimating its length from the text.
     pub synth: bool,
     pub ffmpeg: PathBuf,
+    /// Narration engine the render will use, for the length estimate (the CLI: `--tts`, else
+    /// `$VIMMER_TTS`, else `say`).
+    pub tts: vimmer_media::TtsEngine,
 }
 
 impl Default for CheckOptions {
@@ -163,6 +166,7 @@ impl Default for CheckOptions {
             rendered: None,
             synth: false,
             ffmpeg: PathBuf::from("ffmpeg"),
+            tts: vimmer_media::TtsEngine::Say,
         }
     }
 }
@@ -275,7 +279,7 @@ fn check_expanded(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding>
     } else {
         None
     };
-    findings.extend(timing::narration(timeline, measured.as_deref()));
+    findings.extend(timing::narration(timeline, measured.as_deref(), opts.tts));
     findings.extend(brand::contrast(timeline));
     findings.extend(brand::check(timeline, opts.public_dir.as_deref()));
     match &opts.public_dir {

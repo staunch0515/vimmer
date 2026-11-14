@@ -8,20 +8,21 @@
 //!   the later cue is hidden. Warning; error when a cue is hidden completely.
 //! * A transition longer than the previous scene: warning (the held last frame shows longer than
 //!   that scene did). Longer than its own scene is a validation error.
-//! * Narration estimate, calibrated on the default `say` voices (fixtures/word-subtitles-demo.json:
-//!   Tingting 231 ms per character, Kyoko 161 ms per character, Samantha 239 ms per word): zh
-//!   230 ms per character, ja 165 ms per character (a run of ASCII letters or digits counts as
-//!   two), en 250 ms per word, plus the 300 ms tail the narration step adds. Other voices, Kokoro
-//!   and other texts differ by up to about ±20%, so a scene is flagged (warning) only when even a
-//!   20% faster voice would not fit, and as info when only the
-//!   plain estimate does not. `--synth` measures instead and reports exact numbers.
+//! * Narration estimate: the shared estimator ([`vimmer_media::estimate_speech_ms`]), fitted on
+//!   the default `say` and Kokoro voices per language (`vimmer-media/calibration/`), for the engine
+//!   the render will use ([`crate::CheckOptions::tts`]), plus the 300 ms tail the narration step
+//!   adds. On the calibration corpus it is within about 20% per sentence, and other voices differ
+//!   more, so a scene is flagged (warning) only when even a 20% faster voice would not fit, and
+//!   as info when only the plain estimate does not. `--synth` measures instead and reports exact
+//!   numbers.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use vimmer_dsl::{validate, ValidationError, VideoTimeline};
 use vimmer_media::{
-    default_voice_for, looks_like_kokoro_voice, AudioProbe, FfmpegProbe, SaySpeech, Speech, ENV_TTS,
+    default_voice_for, looks_like_kokoro_voice, AudioProbe, FfmpegProbe, SaySpeech, Speech,
+    SpeechLang, TtsEngine,
 };
 
 use crate::audio::TAIL_MS;
@@ -279,35 +280,10 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
     out
 }
 
-/// Estimated speech length in ms (without the tail), see the module docs.
-pub fn estimate_speech_ms(text: &str) -> u64 {
-    match Lang::of(text) {
-        Lang::En => {
-            250 * text
-                .split_whitespace()
-                .filter(|w| w.chars().any(char::is_alphanumeric))
-                .count() as u64
-        }
-        lang => {
-            let per = if lang == Lang::Zh { 230 } else { 165 };
-            let mut units = 0;
-            let mut ascii_run = false;
-            for c in text.chars() {
-                if c.is_ascii_alphanumeric() {
-                    if !ascii_run {
-                        units += 2;
-                        ascii_run = true;
-                    }
-                } else {
-                    ascii_run = false;
-                    if c.is_alphanumeric() {
-                        units += 1;
-                    }
-                }
-            }
-            per * units
-        }
-    }
+/// Estimated speech length in ms (without the tail) of `text` read by `engine`: the shared
+/// estimator [`vimmer_media::estimate_speech_ms`], in the language the engine reads it.
+pub fn estimate_speech_ms(text: &str, engine: TtsEngine) -> u64 {
+    vimmer_media::estimate_speech_ms(text, SpeechLang::of(text), engine)
 }
 
 /// Scenes whose narration is synthesized at render time.
@@ -320,7 +296,11 @@ fn narrated(timeline: &VideoTimeline) -> impl Iterator<Item = (usize, &vimmer_ds
 
 /// Narration longer than its scene. `measured[i]` is the synthesized length of scene `i`, when
 /// known.
-pub fn narration(timeline: &VideoTimeline, measured: Option<&[Option<u64>]>) -> Vec<Finding> {
+pub fn narration(
+    timeline: &VideoTimeline,
+    measured: Option<&[Option<u64>]>,
+    engine: TtsEngine,
+) -> Vec<Finding> {
     let mut out = Vec::new();
     let starts = scene_starts_ms(timeline);
     let has_cues = !timeline.subtitles.is_empty();
@@ -352,7 +332,7 @@ pub fn narration(timeline: &VideoTimeline, measured: Option<&[Option<u64>]>) -> 
             }
             continue;
         }
-        let speech = estimate_speech_ms(text);
+        let speech = estimate_speech_ms(text, engine);
         let nominal = speech + TAIL_MS;
         let optimistic = (speech as f64 * NARRATION_MARGIN) as u64 + TAIL_MS;
         if nominal <= scene.duration_ms {
@@ -364,9 +344,10 @@ pub fn narration(timeline: &VideoTimeline, measured: Option<&[Option<u64>]>) -> 
                 if optimistic > scene.duration_ms { Severity::Warning } else { Severity::Info },
                 "narration.too_long",
                 format!(
-                    "narration is estimated at about {nominal} ms for a {} ms scene ({}); the render would stretch the scene{}",
+                    "narration is estimated at about {nominal} ms for a {} ms scene ({}, {}); the render would stretch the scene{}",
                     scene.duration_ms,
                     Lang::of(text).code(),
+                    engine.as_str(),
                     shift_note(nominal - scene.duration_ms)
                 ),
                 Suggestion::set(
@@ -393,13 +374,11 @@ pub fn synthesize_narration(
     let Some(public) = &opts.public_dir else {
         return (measured, notes);
     };
-    if std::env::var(ENV_TTS).is_ok_and(|v| v.trim().eq_ignore_ascii_case("kokoro")) {
+    if opts.tts == TtsEngine::Kokoro {
         notes.push(Finding::new(
             Severity::Info,
             "narration.engine",
-            format!(
-                "{ENV_TTS}=kokoro, but --synth measures `say`; Kokoro narration lengths differ"
-            ),
+            "the render narrates with Kokoro, but --synth measures `say`; Kokoro narration lengths differ".to_string(),
             Suggestion::text("treat the measured lengths as approximate"),
         ));
     }
@@ -474,10 +453,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn estimates_use_the_calibrated_rates() {
-        assert_eq!(estimate_speech_ms("西安钟楼，始建于明代。"), 230 * 9);
-        assert_eq!(estimate_speech_ms("こんにちは、世界。"), 165 * 7);
-        assert_eq!(estimate_speech_ms("The quick brown fox"), 1000);
+    fn estimates_use_the_shared_estimator_in_the_language_of_the_text() {
+        for (text, lang) in [
+            ("西安钟楼，始建于明代。", SpeechLang::Zh),
+            ("こんにちは、世界。", SpeechLang::Ja),
+            ("The quick brown fox", SpeechLang::En),
+        ] {
+            for engine in [TtsEngine::Say, TtsEngine::Kokoro] {
+                assert_eq!(
+                    estimate_speech_ms(text, engine),
+                    vimmer_media::estimate_speech_ms(text, lang, engine)
+                );
+            }
+        }
+        // Kokoro reads short text more slowly than `say` (its lead-in is longer).
+        assert!(
+            estimate_speech_ms("你好。", TtsEngine::Kokoro)
+                > estimate_speech_ms("你好。", TtsEngine::Say)
+        );
     }
 
     #[test]
