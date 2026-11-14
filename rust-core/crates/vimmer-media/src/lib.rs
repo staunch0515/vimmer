@@ -3,6 +3,7 @@
 
 pub mod align;
 pub mod audio;
+pub mod beats;
 pub mod image_norm;
 pub mod kokoro;
 pub mod process;
@@ -13,6 +14,9 @@ pub mod video_norm;
 
 pub use align::{align_words, is_cjk, split_units, AlignedWord, RecognizedToken};
 pub use audio::{has_audio_stream, parse_ffmpeg_duration_ms, AudioProbe, FfmpegProbe};
+pub use beats::{
+    analyze, decode_mono, detect_beats, detect_beats_cached, BeatAnalysis, LOW_CONFIDENCE,
+};
 pub use image_norm::{letterbox, normalize_image};
 pub use kokoro::{
     batch_timeout, looks_like_kokoro_voice, resolve_kokoro_voice, KokoroItem, KokoroLang,
