@@ -37,11 +37,7 @@
       "highlights": ["beats"],
       "image": "assets/quizbuks-taker-cover-center.png",
       "motion": "static",
-      "audio": null,
-      "transition_in": {
-        "kind": "slide_left",
-        "duration_ms": 300
-      }
+      "audio": null
     },
     {
       "id": "outro",
@@ -50,11 +46,7 @@
       "highlights": ["every time"],
       "image": "assets/sample.jpeg",
       "motion": "zoom_out",
-      "audio": null,
-      "transition_in": {
-        "kind": "fade",
-        "duration_ms": 400
-      }
+      "audio": null
     }
   ],
   "subtitles": [],
