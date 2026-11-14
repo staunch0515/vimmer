@@ -45,6 +45,22 @@ export type Transition = {
   duration_ms: number;
 };
 
+// ---- Video clips. Mirrors `VideoClip` in rust-core/crates/vimmer-dsl/src/layer.rs (frame math in
+// motion/video.ts). Optional fields fall back to the Rust defaults.
+
+// Shorter than its scene or layer: hold the last frame, start again, or change speed to fit.
+export type FitTime = "freeze" | "loop" | "stretch";
+
+export type VideoClip = {
+  src: string; // .mp4 / .mov / .m4v / .webm under public/
+  trim_start_ms?: number; // default 0
+  trim_end_ms?: number | null; // default the end of the file
+  speed?: number; // 0.25..4, default 1; ignored with fit_time stretch
+  fit_time?: FitTime; // default freeze
+  fit?: "cover" | "contain"; // default cover
+  volume?: number; // 0..1, default 0 (muted); mixed into the soundtrack by the Rust core
+};
+
 export type Scene = {
   id: string;
   duration_ms: number;
@@ -52,6 +68,8 @@ export type Scene = {
   highlights: string[];
   image: string | null;
   motion: MotionType;
+  // A clip as the background, in the image's place (motion / keyframes move it). Not with `image`.
+  video?: VideoClip | null;
   audio: AudioMapping | null;
   narration?: Narration | null;
   transition_in?: Transition | null;
@@ -203,7 +221,11 @@ export type ProgressRingLayer = LayerCommon & {
   label_color?: string; // default #fafafa
 };
 
+// A video clip in a box (at most 4 per scene). Drawn muted; its sound is mixed by the Rust core.
+export type VideoLayer = LayerCommon & VideoClip & { kind: "video" };
+
 export type Layer =
+  | VideoLayer
   | ImageLayer
   | TextLayer
   | ShapeLayer

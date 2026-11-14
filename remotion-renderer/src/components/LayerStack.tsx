@@ -2,6 +2,7 @@ import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { applyEasing, sampleKeyframes } from "../motion/keyframes";
 import { layerFrames, layerStateAt, splitLayers } from "../motion/layers";
 import type { Layer } from "../types/timeline";
+import { ClipVideo } from "./ClipVideo";
 import {
   BarChartView,
   CounterView,
@@ -29,6 +30,9 @@ const LayerBox: React.FC<{ layer: Layer; sceneFrames: number }> = ({ layer, scen
   switch (layer.kind) {
     case "image":
       content = <ImageLayerView layer={layer} {...ctx} />;
+      break;
+    case "video":
+      content = <ClipVideo clip={layer} frame={local} span={ctx.span} />;
       break;
     case "text":
       content = <TextLayerView layer={layer} boxHeight={boxHeight} {...ctx} />;
