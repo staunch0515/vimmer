@@ -562,11 +562,14 @@ Run from `rust-core/` (or use the built `vimmer` binary anywhere; paths below ar
 # Text → MP4, with Kokoro narration and word-by-word subtitles
 cargo run --release -p vimmer-cli -- generate crates/vimmer-storyboard/examples/zh-xian.source.txt \
   --lang zh -o ../out/xian.mp4 --remotion-dir ../remotion-renderer \
-  --tts kokoro --auto-subtitles on --save-dir ../out/xian
+  --tts kokoro --auto-subtitles all --save-dir ../out/xian
 
 # Only the storyboard (no render); printed to stdout, or saved with --save-dir
 cargo run --release -p vimmer-cli -- generate story.txt --lang en --no-render > storyboard.json
 ```
+
+`--auto-subtitles on` subtitles only narration that isn't on screen, and a storyboard scene's
+narration always is, so these examples use `all`.
 
 - `--lang zh|en|ja` (required), `--orientation landscape|portrait`, `--target-seconds N`.
 - `--model` (default `claude-opus-5-5`), `--effort low|medium|high|xhigh|max` (default
@@ -636,11 +639,11 @@ Before it starts, Vimmer prints an estimate; at the end, the actual tokens and c
 # Text → storyboard → illustrations → MP4
 cargo run --release -p vimmer-cli -- generate crates/vimmer-storyboard/examples/zh-xian.source.txt \
   --lang zh -o ../out/xian.mp4 --remotion-dir ../remotion-renderer \
-  --tts kokoro --auto-subtitles on --illustrate --save-dir ../out/xian
+  --tts kokoro --auto-subtitles all --illustrate --save-dir ../out/xian
 
 # Illustrate a storyboard you already have (no new storyboard call); optionally render it
 cargo run --release -p vimmer-cli -- illustrate ../out/xian/storyboard.json \
-  --remotion-dir ../remotion-renderer -o ../out/xian-illustrated.mp4 --tts kokoro --auto-subtitles on
+  --remotion-dir ../remotion-renderer -o ../out/xian-illustrated.mp4 --tts kokoro --auto-subtitles all
 ```
 
 - `--illustrate-model` (default `claude-opus-5-5`; `claude-sonnet-5-5` is about half the
