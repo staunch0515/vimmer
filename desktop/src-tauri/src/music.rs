@@ -67,7 +67,9 @@ mod tests {
         assert_eq!(a["ok"], true, "{a}");
         assert_eq!(a, pick_in(&public, &t, None, None));
         let calm = pick_in(&public, &t, Some("calm"), Some(0.1));
-        assert_eq!(calm["track"]["id"], "calm-drift", "{calm}");
+        assert_eq!(calm["track"]["id"], "another-august", "{calm}");
+        assert_eq!(calm["track"]["placeholder"], false, "{calm}");
+        assert_eq!(calm["track"]["credit"]["license"], "CC0-1.0", "{calm}");
         let bad = pick_in(&public, &t, Some("sad"), None);
         assert!(
             bad["error"].as_str().unwrap().contains("available moods"),

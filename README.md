@@ -885,7 +885,7 @@ Instead of a file, the music can name a mood, and the render picks a track from 
 `remotion-renderer/public/assets/music/library/` (`library.json` plus the files):
 
 ```json
-"music": { "pick": { "mood": "upbeat", "energy": 0.7, "exclude": ["playful-hop"] }, "volume": 0.4 }
+"music": { "pick": { "mood": "upbeat", "energy": 0.7, "exclude": ["overdrive"] }, "volume": 0.4 }
 ```
 
 `music` has exactly one of `source` and `pick`. `energy` (0 quiet .. 1 intense) and `exclude`
@@ -895,29 +895,45 @@ How a track is chosen (`vimmer_dsl::library`), before narration and beat sync:
 
 1. only tracks whose `moods` contain the mood (any tag, not only the first) and that are not
    excluded;
-2. with `energy`, the closest tracks, the distance counted in steps of 0.1;
-3. among equal tracks, a hash of the scene ids and the first scene's text with each track id
+2. real tracks before the synthesized placeholders (`"placeholder": true` in `library.json`): a
+   placeholder plays only when no real track has the mood (`ambient`) or all of them are excluded;
+3. with `energy`, the closest tracks, the distance counted in steps of 0.1;
+4. among equal tracks, a hash of the scene ids and the first scene's text with each track id
    (rendezvous hashing). The same video always gets the same track; different videos spread
-   over the equal tracks (40 test timelines asking for `calm`: 18 `calm-drift`, 22
-   `warm-hearth`); editing later scenes never changes the music.
+   over the equal tracks (`upbeat` without an energy: `happy-clappy-loop` or `overdrive`);
+   editing later scenes never changes the music.
 
 An unknown mood stops the render with the list of moods there are. The render prints the choice
 and the reason (`music: assets/music/library/... - mood `upbeat`: ...`). With beat sync on and
 no `music.beats`, the track's `bpm` from the library becomes the beat grid, so cuts snap without
-beat detection.
+beat detection. Tracks without a steady grid (`another-august`, `overdrive`, `ancient-legend`) have no
+`bpm`: beat sync detects their beats at render time, or skips with a warning when the beat is
+unclear.
 
 ```bash
 # The tracks and moods (--mood calm to filter, --json for tools)
 rust-core/target/release/vimmer music list
 # Which track a timeline gets and why, without rendering (--mood / --energy to try others)
 rust-core/target/release/vimmer music pick fixtures/mood-music-demo.json
+# Re-encode the six real tracks from their downloaded originals (not in the repository)
+remotion-renderer/scripts/make-music-library-real.sh path/to/downloads
 # Rebuild the six placeholder tracks (ffmpeg only, about 6 minutes)
 remotion-renderer/scripts/make-music-library.sh
 ```
 
-The bundled tracks are **synthesized placeholders** (`calm-drift`, `warm-hearth`, `tense-pulse`,
-`playful-hop`, `upbeat-sunny`, `epic-rise`; CC0, -18 LUFS, seamless loops). Real tracks replace
-or join them without code changes: drop the file in the folder and add an entry to
+The library has 12 tracks, all at -18 LUFS:
+
+- six **real tracks**, CC0 from OpenGameArt: `another-august` (calm), `bright-eyes` (warm),
+  `tension-theme` (tense), `happy-clappy-loop` (playful, a seamless loop), `overdrive` (upbeat),
+  `ancient-legend` (epic). Titles, artists and pages are in the
+  [library README](remotion-renderer/public/assets/music/library/README.md#credits) and in each
+  entry's `credit`. Only the loop is `loopable`; the render still loops the others under longer
+  videos, and `vimmer check` warns when one is shorter than the video.
+- six **synthesized placeholders** (`calm-drift`, `warm-hearth`, `tense-pulse`, `playful-hop`,
+  `upbeat-sunny`, `epic-rise`; CC0, seamless loops), ranked last but kept so timelines that name
+  them still play.
+
+More tracks join without code changes: drop the file in the folder and add an entry to
 `library.json` (see [its README](remotion-renderer/public/assets/music/library/README.md)).
 
 Where moods show up:

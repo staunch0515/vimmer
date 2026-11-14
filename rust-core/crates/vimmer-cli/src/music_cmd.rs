@@ -104,7 +104,7 @@ fn list(cli: &MusicCli, mood: Option<&str>) -> Result<(), String> {
         return Ok(());
     }
     println!(
-        "{:<14} {:<16} {:>6} {:>5} {:>7}  moods",
+        "{:<17} {:<18} {:>6} {:>6} {:>7}  moods",
         "id", "title", "energy", "bpm", "length"
     );
     for t in out["tracks"].as_array().into_iter().flatten() {
@@ -115,7 +115,7 @@ fn list(cli: &MusicCli, mood: Option<&str>) -> Result<(), String> {
             .filter_map(|m| m.as_str())
             .collect();
         println!(
-            "{:<14} {:<16} {:>6.2} {:>5} {:>7}  {}",
+            "{:<17} {:<18} {:>6.2} {:>6} {:>7}  {}{}",
             t["id"].as_str().unwrap_or(""),
             t["title"].as_str().unwrap_or(""),
             t["energy"].as_f64().unwrap_or(0.0),
@@ -123,7 +123,12 @@ fn list(cli: &MusicCli, mood: Option<&str>) -> Result<(), String> {
             t["duration_ms"]
                 .as_f64()
                 .map_or("-".into(), |d| format!("{:.1} s", d / 1000.0)),
-            moods.join(", ")
+            moods.join(", "),
+            if t["placeholder"] == true {
+                "  (placeholder)"
+            } else {
+                ""
+            }
         );
     }
     println!("moods: {}", lib.moods().join(", "));

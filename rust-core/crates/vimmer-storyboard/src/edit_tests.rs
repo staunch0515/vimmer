@@ -957,16 +957,17 @@ fn music_file_can_become_a_mood_pick_and_the_mood_can_change() {
     assert!(
         out.warnings
             .iter()
-            .any(|w| w.contains("the render will play `upbeat-sunny`")),
+            .any(|w| w.contains("the render will play `overdrive`")),
         "{:?}",
         out.warnings
     );
     let out = ok_in_repo(
         &out.timeline,
         json!([{"op": "replace", "path": "/music/pick/mood", "value": "calm"},
-               {"op": "add", "path": "/music/pick/exclude", "value": ["calm-drift"]}]),
+               {"op": "add", "path": "/music/pick/exclude", "value": ["another-august"]}]),
     )
     .unwrap();
+    // The only real calm track is excluded: the placeholder closest to energy 0.8 plays.
     assert!(
         out.warnings.iter().any(|w| w.contains("`warm-hearth`")),
         "{:?}",
