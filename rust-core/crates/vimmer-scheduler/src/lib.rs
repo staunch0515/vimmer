@@ -18,4 +18,4 @@ pub use run::{
     render_timeline, render_timeline_with, resolve_music, RunReport, SchedulerConfig,
     SchedulerError,
 };
-pub use wordsubs::WordSubtitleConfig;
+pub use wordsubs::{AutoSubtitles, WordSubtitleConfig};

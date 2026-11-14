@@ -262,7 +262,15 @@ pub async fn render_timeline_with(
     // Recognize the narration again to time subtitles word by word. Without an engine this
     // only warns, and subtitles stay as they were.
     let plain_subtitles = timeline.subtitles.clone();
-    let timed = add_word_subtitles(&mut timeline, &cfg, probe.clone(), &ctx, &mut warnings).await?;
+    let timed = add_word_subtitles(
+        &mut timeline,
+        &cfg,
+        probe.clone(),
+        &ctx,
+        &mut warnings,
+        &mut notes,
+    )
+    .await?;
     if timed > 0 {
         // A word-timing bug must never fail the render: fall back to the plain subtitles.
         if let Err(errors) = validate(&timeline) {

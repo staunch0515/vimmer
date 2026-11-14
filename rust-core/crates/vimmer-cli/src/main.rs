@@ -19,7 +19,7 @@ use clap::{Args, Parser, ValueEnum};
 use serde_json::json;
 use vimmer_dsl::VideoTimeline;
 use vimmer_media::{find_chrome, run_limited, FfmpegProbe, Limits, SaySpeech, TtsEngine};
-use vimmer_scheduler::{render_timeline, SchedulerConfig, DEFAULT_CHUNK_MS};
+use vimmer_scheduler::{render_timeline, AutoSubtitles, SchedulerConfig, DEFAULT_CHUNK_MS};
 use vimmer_storyboard::generate::{
     generate, GenerateFailure, GenerateOptions, Generated, LlmHelper, DEFAULT_EFFORT,
     DEFAULT_MAX_RETRIES, DEFAULT_MODEL, EFFORTS,
@@ -200,10 +200,12 @@ struct RenderArgs {
     #[arg(long, value_enum, default_value_t = Toggle::On)]
     word_subtitles: Toggle,
     /// Create subtitle cues from the narration text for narrated scenes that no cue covers.
-    /// Off by default: only cues already in the timeline get word timing, so a timeline keeps
-    /// the subtitles it always had.
-    #[arg(long, value_enum, default_value_t = Toggle::Off)]
-    auto_subtitles: Toggle,
+    /// `on`: only where the narration is not already on screen as text (scene text or text
+    /// layers), so a sentence is not shown twice. `all`: every narrated scene, even when its
+    /// text is on screen (captions for accessibility). Off by default: only cues already in the
+    /// timeline get word timing, so a timeline keeps the subtitles it always had.
+    #[arg(long, value_enum, default_value_t = AutoSubs::Off)]
+    auto_subtitles: AutoSubs,
     /// whisper-cli binary (default: $VIMMER_WHISPER_CLI, then `whisper-cli` on PATH).
     #[arg(long)]
     whisper_cli: Option<PathBuf>,
@@ -240,6 +242,13 @@ enum Tts {
 enum Toggle {
     On,
     Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AutoSubs {
+    Off,
+    On,
+    All,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -316,7 +325,11 @@ async fn render(
     cfg.preprocess_concurrency = args.preprocess_jobs;
     cfg.render_concurrency = args.render_jobs;
     cfg.word_subtitles.enabled = args.word_subtitles == Toggle::On;
-    cfg.word_subtitles.auto_subtitles = args.auto_subtitles == Toggle::On;
+    cfg.word_subtitles.auto_subtitles = match args.auto_subtitles {
+        AutoSubs::Off => AutoSubtitles::Off,
+        AutoSubs::On => AutoSubtitles::On,
+        AutoSubs::All => AutoSubtitles::All,
+    };
     cfg.word_subtitles.whisper_cli = args.whisper_cli;
     cfg.word_subtitles.model = args.whisper_model;
     cfg.word_subtitles.language = args.whisper_language;
