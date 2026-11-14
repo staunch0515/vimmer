@@ -1,0 +1,302 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "scenes": [
+    {
+      "id": "trim-speed",
+      "duration_ms": 1500,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "zoom_in",
+      "audio": null,
+      "video": {
+        "src": "assets/clips/counter-6s.mp4",
+        "trim_start_ms": 1000,
+        "trim_end_ms": 4000,
+        "speed": 2
+      },
+      "layers": [
+        {
+          "id": "label",
+          "kind": "text",
+          "x": 0.06,
+          "y": 0.8,
+          "width": 0.6,
+          "text": "1–4 s at 2×, zooming",
+          "font_size": 0.042,
+          "weight": 700,
+          "align": "left",
+          "background": {
+            "color": "#09090bcc",
+            "padding": 0.35,
+            "radius": 0.25
+          },
+          "start_ms": 0,
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 350
+          }
+        }
+      ]
+    },
+    {
+      "id": "loop",
+      "duration_ms": 1800,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "video": {
+        "src": "assets/clips/gradients-2s.mp4",
+        "speed": 1.5,
+        "fit_time": "loop"
+      },
+      "layers": [
+        {
+          "id": "label",
+          "kind": "text",
+          "x": 0.06,
+          "y": 0.8,
+          "width": 0.6,
+          "text": "2 s clip looping",
+          "font_size": 0.042,
+          "weight": 700,
+          "align": "left",
+          "background": {
+            "color": "#09090bcc",
+            "padding": 0.35,
+            "radius": 0.25
+          },
+          "start_ms": 0,
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 350
+          }
+        }
+      ]
+    },
+    {
+      "id": "freeze",
+      "duration_ms": 1800,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "video": {
+        "src": "assets/clips/counter-6s.mp4",
+        "trim_start_ms": 4000,
+        "trim_end_ms": 5000
+      },
+      "layers": [
+        {
+          "id": "label",
+          "kind": "text",
+          "x": 0.06,
+          "y": 0.8,
+          "width": 0.6,
+          "text": "Then it freezes",
+          "font_size": 0.042,
+          "weight": 700,
+          "align": "left",
+          "background": {
+            "color": "#09090bcc",
+            "padding": 0.35,
+            "radius": 0.25
+          },
+          "start_ms": 0,
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 350
+          }
+        }
+      ]
+    },
+    {
+      "id": "pip",
+      "duration_ms": 1800,
+      "text": null,
+      "highlights": [],
+      "image": "assets/sample.jpeg",
+      "motion": "pan_right",
+      "audio": null,
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 400
+      },
+      "layers": [
+        {
+          "id": "pip",
+          "kind": "video",
+          "src": "assets/clips/pip-cellauto-2s.webm",
+          "x": 0.56,
+          "y": 0.08,
+          "width": 0.38,
+          "height": 0.38,
+          "start_ms": 200,
+          "end_ms": 1700,
+          "fit_time": "loop",
+          "speed": 0.75,
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 400
+          },
+          "exit": {
+            "kind": "fade",
+            "duration_ms": 300
+          },
+          "keyframes": [
+            {
+              "at_ms": 200,
+              "rotation": -3
+            },
+            {
+              "at_ms": 1700,
+              "rotation": 3,
+              "ease": "linear"
+            }
+          ]
+        },
+        {
+          "id": "label",
+          "kind": "text",
+          "x": 0.06,
+          "y": 0.8,
+          "width": 0.6,
+          "text": "Video layer (webm)",
+          "font_size": 0.042,
+          "weight": 700,
+          "align": "left",
+          "background": {
+            "color": "#09090bcc",
+            "padding": 0.35,
+            "radius": 0.25
+          },
+          "start_ms": 0,
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 350
+          }
+        }
+      ]
+    },
+    {
+      "id": "sound",
+      "duration_ms": 2500,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "video": {
+        "src": "assets/clips/life-tone-4s.mp4",
+        "volume": 0.5,
+        "trim_start_ms": 500
+      },
+      "layers": [
+        {
+          "id": "label",
+          "kind": "text",
+          "x": 0.06,
+          "y": 0.8,
+          "width": 0.6,
+          "text": "Clip sound ducks the music",
+          "font_size": 0.042,
+          "weight": 700,
+          "align": "left",
+          "background": {
+            "color": "#09090bcc",
+            "padding": 0.35,
+            "radius": 0.25
+          },
+          "start_ms": 0,
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 350
+          }
+        }
+      ]
+    },
+    {
+      "id": "seam-a",
+      "duration_ms": 1600,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "video": {
+        "src": "assets/clips/counter-6s.mp4",
+        "trim_end_ms": 1600
+      },
+      "layers": [
+        {
+          "id": "label",
+          "kind": "text",
+          "x": 0.06,
+          "y": 0.8,
+          "width": 0.6,
+          "text": "Across a chunk seam…",
+          "font_size": 0.042,
+          "weight": 700,
+          "align": "left",
+          "background": {
+            "color": "#09090bcc",
+            "padding": 0.35,
+            "radius": 0.25
+          },
+          "start_ms": 0,
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 350
+          }
+        }
+      ]
+    },
+    {
+      "id": "seam-b",
+      "duration_ms": 1500,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "video": {
+        "src": "assets/clips/counter-6s.mp4",
+        "trim_start_ms": 1600,
+        "trim_end_ms": 3100
+      },
+      "layers": [
+        {
+          "id": "label",
+          "kind": "text",
+          "x": 0.06,
+          "y": 0.8,
+          "width": 0.6,
+          "text": "…seamless",
+          "font_size": 0.042,
+          "weight": 700,
+          "align": "left",
+          "background": {
+            "color": "#09090bcc",
+            "padding": 0.35,
+            "radius": 0.25
+          },
+          "start_ms": 0
+        }
+      ]
+    }
+  ],
+  "subtitles": [],
+  "music": {
+    "source": "assets/pad-loop.m4a",
+    "volume": 0.3,
+    "fade_in_ms": 500,
+    "fade_out_ms": 800
+  }
+}
