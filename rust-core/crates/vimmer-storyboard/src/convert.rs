@@ -6,7 +6,7 @@ use vimmer_dsl::{validate, ValidationError, VideoTimeline, MAX_DURATION_MS, TARG
 
 use crate::{
     estimate::estimate_duration_ms,
-    model::{Orientation, SceneSpec, Storyboard},
+    model::{Orientation, SceneSpec, Storyboard, StoryboardMusic},
 };
 
 /// Transition length used when a scene names a transition but no `transition_ms`.
@@ -58,7 +58,11 @@ pub enum StoryboardError {
 }
 
 fn join(errors: &[ValidationError]) -> String {
-    errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ")
+    errors
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn scene_err(scene: usize, field: &'static str, message: impl Into<String>) -> StoryboardError {
@@ -127,7 +131,9 @@ fn check_relative(scene: usize, field: &'static str, path: &str) -> Result<(), S
         return Err(scene_err(
             scene,
             field,
-            format!("`{p}` must be a relative path under remotion-renderer/public/ (no `..`, no URL)"),
+            format!(
+                "`{p}` must be a relative path under remotion-renderer/public/ (no `..`, no URL)"
+            ),
         ));
     }
     Ok(())
@@ -152,7 +158,10 @@ pub fn convert(sb: &Storyboard) -> Result<Conversion, StoryboardError> {
         let id = format!("scene-{n:02}");
         let value = convert_scene(sb, spec, n, &id, &mut warnings)?;
         total_ms = total_ms.saturating_add(value["duration_ms"].as_u64().unwrap_or(0));
-        emphasis.insert(id, spec.emphasis.iter().map(|w| w.trim().to_owned()).collect());
+        emphasis.insert(
+            id,
+            spec.emphasis.iter().map(|w| w.trim().to_owned()).collect(),
+        );
         scenes.push(value);
     }
 
@@ -169,21 +178,47 @@ pub fn convert(sb: &Storyboard) -> Result<Conversion, StoryboardError> {
         "resolution": { "width": width, "height": height },
         "scenes": scenes,
     });
-    if let Some(music) = &sb.music {
-        if music.trim().is_empty() {
-            return Err(StoryboardError::Music("must not be empty when present".into()));
+    match &sb.music {
+        None => {}
+        Some(StoryboardMusic::File(music)) => {
+            if music.trim().is_empty() {
+                return Err(StoryboardError::Music(
+                    "must not be empty when present".into(),
+                ));
+            }
+            let p = music.trim();
+            if p.starts_with('/') || p.contains("..") || p.contains("://") {
+                return Err(StoryboardError::Music(format!(
+                    "`{p}` must be a relative path under remotion-renderer/public/"
+                )));
+            }
+            root["music"] = json!({
+                "source": p,
+                "fade_in_ms": 500.min(total_ms / 4),
+                "fade_out_ms": 1500.min(total_ms / 4),
+            });
         }
-        let p = music.trim();
-        if p.starts_with('/') || p.contains("..") || p.contains("://") {
-            return Err(StoryboardError::Music(format!(
-                "`{p}` must be a relative path under remotion-renderer/public/"
-            )));
+        Some(StoryboardMusic::Mood(m)) => {
+            let mood = m.mood.trim().to_lowercase();
+            if mood.is_empty() {
+                return Err(StoryboardError::Music("`mood` must not be empty".into()));
+            }
+            let mut pick = json!({ "mood": mood });
+            if let Some(e) = m.energy {
+                if !(0.0..=1.0).contains(&e) {
+                    return Err(StoryboardError::Music(format!(
+                        "`energy` {e} must be between 0 and 1"
+                    )));
+                }
+                // Two decimals: 0.3 stays 0.3 in the timeline, not 0.30000001192092896.
+                pick["energy"] = json!((f64::from(e) * 100.0).round() / 100.0);
+            }
+            root["music"] = json!({
+                "pick": pick,
+                "fade_in_ms": 500.min(total_ms / 4),
+                "fade_out_ms": 1500.min(total_ms / 4),
+            });
         }
-        root["music"] = json!({
-            "source": p,
-            "fade_in_ms": 500.min(total_ms / 4),
-            "fade_out_ms": 1500.min(total_ms / 4),
-        });
     }
 
     // Built from JSON rather than struct literals: `Scene`/`VideoTimeline` do not implement
@@ -358,7 +393,7 @@ pub fn missing_assets(sb: &Storyboard, public_dir: &Path) -> Vec<(Option<usize>,
             }
         }
     }
-    if let Some(m) = &sb.music {
+    if let Some(StoryboardMusic::File(m)) = &sb.music {
         if !public_dir.join(m.trim()).is_file() {
             missing.push((None, m.clone()));
         }

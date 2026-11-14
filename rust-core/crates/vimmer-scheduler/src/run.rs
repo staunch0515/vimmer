@@ -31,6 +31,8 @@ pub enum SchedulerError {
     Cancelled,
     #[error("music file not found: {0}")]
     MusicMissing(String),
+    #[error("{0}")]
+    MusicPick(String),
     #[error("mixing audio failed: {0}")]
     Mix(String),
     #[error("{what}: {message}")]
@@ -49,6 +51,35 @@ pub enum SchedulerError {
         layer: String,
         path: String,
     },
+}
+
+/// Replaces `music.pick` by the chosen library track, noting which one and why.
+pub fn resolve_music(
+    timeline: &mut VideoTimeline,
+    public_dir: &Path,
+    notes: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) -> Result<(), SchedulerError> {
+    if timeline.music.as_ref().is_none_or(|m| m.pick.is_none()) {
+        return Ok(());
+    }
+    let pick_error = |e: vimmer_dsl::LibraryError| SchedulerError::MusicPick(e.to_string());
+    let (library, missing) = vimmer_dsl::MusicLibrary::load(public_dir).map_err(pick_error)?;
+    if !missing.is_empty() {
+        warnings.push(format!(
+            "music library: file missing for {}; picking among the others",
+            missing.join(", ")
+        ));
+    }
+    if let Some(choice) = vimmer_dsl::resolve_music_pick(timeline, &library).map_err(pick_error)? {
+        notes.push(format!(
+            "music: {} ({}) - {}",
+            choice.track.source(),
+            choice.track.title,
+            choice.reason
+        ));
+    }
+    Ok(())
 }
 
 fn join(errors: &[ValidationError]) -> String {
@@ -168,10 +199,15 @@ pub async fn render_timeline_with(
     validate(&timeline).map_err(SchedulerError::Invalid)?;
     tokio::fs::create_dir_all(&cfg.work_dir).await?;
     let mut warnings = Vec::new();
+    let mut notes = Vec::new();
     ctx.check()?;
 
+    // A music pick becomes a file (and, with beat sync, the track's beat grid) before anything
+    // reads the music.
+    resolve_music(&mut timeline, &cfg.public_dir, &mut notes, &mut warnings)?;
+
     if let Some(music) = &timeline.music {
-        let path = cfg.public_dir.join(&music.source);
+        let path = cfg.public_dir.join(music.source_path());
         if !path.is_file() {
             return Err(SchedulerError::MusicMissing(path.display().to_string()));
         }
@@ -215,7 +251,6 @@ pub async fn render_timeline_with(
 
     // Scene lengths are final now: move the cuts onto the music's beats before anything reads
     // scene start times (word subtitles, clip fitting, audio placement, chunks).
-    let mut notes = Vec::new();
     if let Some(report) =
         crate::beatsync::apply_beat_sync(&mut timeline, &cfg, probe.clone(), &ctx, &mut warnings)
             .await?

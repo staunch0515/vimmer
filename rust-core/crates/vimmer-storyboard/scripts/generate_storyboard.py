@@ -62,9 +62,41 @@ DEFAULT_PROMPT_FILE = os.path.join(HERE, "..", "prompts", "storyboard.md")
 DEFAULT_SCHEMA_FILE = os.path.join(HERE, "..", "schema", "storyboard.schema.json")
 
 NO_ASSETS = (
-    "None in this run. Do not set `image` or `music` (the schema has no such fields): every "
+    "None in this run. Do not set `image` (the schema has no such field): every "
     "scene renders as text only. Describe the picture you would want in `image_prompt`."
 )
+NO_MUSIC = "None in this run. Do not set `music` (the schema has no such field)."
+
+
+def music_text(moods):
+    """The Background music section: the moods on offer, or none."""
+    if not moods:
+        return NO_MUSIC
+    listed = ", ".join("`%s`" % m for m in moods)
+    return (
+        "Choose the ONE mood that best fits the whole video from: " + listed + ". "
+        "Write it as `\"music\": {\"mood\": \"...\"}`; a track with that mood is picked from "
+        "the music library at render time and plays quietly under the narration. "
+        "Optionally add `energy` from 0 (quiet, slow) to 1 (intense) when the text clearly calls "
+        "for one end; otherwise leave it out. Serious or sad topics usually want `calm`; how-tos "
+        "and product news `upbeat`; stories with stakes `tense` or `epic`."
+    )
+
+
+def music_schema(moods):
+    """The `music` property offered to Claude: one of `moods`, optional energy."""
+    return {
+        "type": "object",
+        "properties": {
+            "mood": {"type": "string", "enum": list(moods)},
+            "energy": {
+                "type": "number",
+                "description": "0 (quiet, slow) to 1 (intense). Optional.",
+            },
+        },
+        "required": ["mood"],
+        "additionalProperties": False,
+    }
 
 
 class Failure(Exception):
@@ -81,7 +113,7 @@ class Failure(Exception):
 # Prompt and schema
 
 
-def build_system_prompt(template, lang, orientation, target_seconds):
+def build_system_prompt(template, lang, orientation, target_seconds, moods=None):
     """The part of prompts/storyboard.md below the first `---` line, filled in."""
     marker = "\n---\n"
     if marker in template:
@@ -103,13 +135,17 @@ def build_system_prompt(template, lang, orientation, target_seconds):
         .replace("{{ORIENTATION}}", orientation)
         .replace("{{TARGET_SECONDS}}", target)
         .replace("{{ASSET_LIST}}", NO_ASSETS)
+        .replace("{{MUSIC}}", music_text(moods))
     )
 
 
-def build_schema(base, lang, orientation):
-    """The storyboard schema with `language` and `orientation` pinned to this request."""
+def build_schema(base, lang, orientation, moods=None):
+    """The storyboard schema with `language` and `orientation` pinned to this request, and a
+    `music` mood when moods are offered."""
     schema = json.loads(json.dumps(base))
     props = schema["properties"]
+    if moods:
+        props["music"] = music_schema(moods)
     props["language"]["enum"] = [lang]
     props["orientation"]["enum"] = [orientation]
     for key in ("language", "orientation"):
@@ -308,10 +344,11 @@ def generate(req, prompt_file, schema_file, client_factory=make_client, record=N
         template = f.read()
     with open(schema_file, encoding="utf-8") as f:
         base_schema = json.load(f)
+    moods = req.get("music_moods") or []
     system = build_system_prompt(
-        template, req["language"], req["orientation"], req.get("target_seconds")
+        template, req["language"], req["orientation"], req.get("target_seconds"), moods
     )
-    schema = build_schema(base_schema, req["language"], req["orientation"])
+    schema = build_schema(base_schema, req["language"], req["orientation"], moods)
     params = request_params(req, system, schema)
     client = client_factory(float(req.get("timeout_secs") or 300))
     attempt = len(req.get("history") or []) + 1

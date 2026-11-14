@@ -349,17 +349,17 @@ pub fn check_sources(timeline: &VideoTimeline, public_dir: &Path, ffmpeg: &Path)
     }
 
     if let Some(music) = &timeline.music {
-        if music.source.trim().is_empty() || is_url(&music.source) {
+        if music.source_path().trim().is_empty() || is_url(music.source_path()) {
             return out;
         }
-        let path = public_dir.join(&music.source);
+        let path = public_dir.join(music.source_path());
         if !path.is_file() {
             out.push(Finding::new(
                 Severity::Error,
                 "audio.missing",
                 format!(
                     "music `{}` does not exist ({})",
-                    music.source,
+                    music.source_path(),
                     path.display()
                 ),
                 Suggestion::set(
@@ -376,14 +376,14 @@ pub fn check_sources(timeline: &VideoTimeline, public_dir: &Path, ffmpeg: &Path)
                 out.push(Finding::new(
                     Severity::Error,
                     "audio.unreadable",
-                    format!("music `{}`: {e}", music.source),
+                    format!("music `{}`: {e}", music.source_path()),
                     Suggestion::field("replace it with a WAV, MP3 or M4A file", "/music/source"),
                 ));
                 return out;
             }
         };
         for (severity, code, message) in
-            level_findings(&stats, &format!("music `{}`", music.source))
+            level_findings(&stats, &format!("music `{}`", music.source_path()))
         {
             out.push(Finding::new(
                 severity,

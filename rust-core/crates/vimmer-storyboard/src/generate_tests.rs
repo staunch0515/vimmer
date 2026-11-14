@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use vimmer_media::Limits;
 
 use crate::generate::*;
-use crate::model::{Language, Orientation};
+use crate::model::{Language, Orientation, StoryboardMusic};
 
 /// Counts its runs, keeps a copy of each request file and prints `reply-<n>.json` (or
 /// `reply-last.json` once those run out). `$FAKE_SLEEP` in `sleep.txt` makes it hang first.
@@ -227,6 +227,59 @@ fn replies_must_match_the_request_and_carry_no_asset_paths() {
 }
 
 #[test]
+fn offered_moods_become_a_music_pick() {
+    let moods: Vec<String> = ["calm", "upbeat"].iter().map(|m| m.to_string()).collect();
+    let mut sb = good_storyboard();
+    sb["music"] = json!({"mood": "Calm", "energy": 0.3});
+    let (_, conv) = validate_reply_with_moods(
+        &sb.to_string(),
+        Language::Zh,
+        Orientation::Landscape,
+        &moods,
+    )
+    .unwrap();
+    let music = serde_json::to_string(&conv.timeline.music.unwrap()).unwrap();
+    assert!(
+        music.starts_with(r#"{"pick":{"mood":"calm","energy":0.3},"#),
+        "{music}"
+    );
+    assert!(!music.contains("source"));
+    // Not offered, a file, a mood outside the list, a bad energy.
+    let err = validate_reply(&sb.to_string(), Language::Zh, Orientation::Landscape).unwrap_err();
+    assert!(err.contains("no music is available"), "{err}");
+    for (music, wanted) in [
+        (json!("assets/bgm.mp3"), "give a mood, not a file"),
+        (
+            json!({"mood": "sad"}),
+            "mood `sad` is not available; use one of calm, upbeat",
+        ),
+        (
+            json!({"mood": "calm", "energy": 3}),
+            "energy 3 must be between 0 and 1",
+        ),
+    ] {
+        sb["music"] = music;
+        let err = validate_reply_with_moods(
+            &sb.to_string(),
+            Language::Zh,
+            Orientation::Landscape,
+            &moods,
+        )
+        .unwrap_err();
+        assert!(err.contains(wanted), "{err}");
+    }
+    // Unknown keys in the mood object are rejected.
+    sb["music"] = json!({"mood": "calm", "track": "x"});
+    assert!(validate_reply_with_moods(
+        &sb.to_string(),
+        Language::Zh,
+        Orientation::Landscape,
+        &moods
+    )
+    .is_err());
+}
+
+#[test]
 fn no_key_fails_before_running_anything() {
     let fx = Fixture::new("nokey");
     fx.reply(None, ok_reply(&good_storyboard(), 0.01));
@@ -333,7 +386,7 @@ fn schema_matches_the_storyboard_model() {
         title: "t".into(),
         orientation: Orientation::Landscape,
         language: Language::Zh,
-        music: Some("m".into()),
+        music: Some(StoryboardMusic::File("m".into())),
         narration: true,
         voice: Some("v".into()),
         scenes: vec![crate::SceneSpec {

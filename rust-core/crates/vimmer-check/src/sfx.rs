@@ -124,9 +124,9 @@ pub fn check(timeline: &VideoTimeline, public_dir: &Path, ffmpeg: &Path) -> Vec<
     let music_peak = timeline
         .music
         .as_ref()
-        .filter(|m| !crate::is_url(&m.source))
+        .filter(|m| !crate::is_url(m.source_path()))
         .and_then(|m| {
-            analyze(ffmpeg, &public_dir.join(&m.source))
+            analyze(ffmpeg, &public_dir.join(m.source_path()))
                 .ok()
                 .map(|s| peak_linear(&s) * f64::from(m.volume))
         })
@@ -195,7 +195,7 @@ pub fn check_beats(
     let Some(sync) = music.beat_sync_on() else {
         return out;
     };
-    let path = public_dir.join(&music.source);
+    let path = public_dir.join(music.source_path());
     if !path.is_file() || timeline.scenes.len() < 2 {
         return out;
     }
@@ -215,7 +215,10 @@ pub fn check_beats(
                     out.push(Finding::new(
                         Severity::Warning,
                         "beats.undetected",
-                        format!("could not detect the beats of `{}`: {e}", music.source),
+                        format!(
+                            "could not detect the beats of `{}`: {e}",
+                            music.source_path()
+                        ),
                         Suggestion::field("set the tempo by hand", "/music/beats"),
                     ));
                     return out;
@@ -228,7 +231,7 @@ pub fn check_beats(
                     "beats.low_confidence",
                     format!(
                         "beat detection is unsure of `{}` (confidence {:.2}, best guess {:.1} BPM), so the render will not snap cuts",
-                        music.source, a.confidence, a.bpm
+                        music.source_path(), a.confidence, a.bpm
                     ),
                     Suggestion::set(
                         "if the music does have a steady beat, give it by hand (check the tempo by ear)",

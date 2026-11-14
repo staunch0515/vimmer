@@ -330,7 +330,8 @@ fn rendered_file_checks() {
     t.music = Some(vimmer_dsl::Music {
         beats: None,
         beat_sync: None,
-        source: "m.wav".into(),
+        source: Some("m.wav".into()),
+        pick: None,
         volume: 0.3,
         fade_in_ms: 0,
         fade_out_ms: 0,
@@ -753,4 +754,58 @@ fn beats_sfx_demo_fixture_has_no_errors() {
     assert!(one(&fs, "beats.summary", None, None)
         .message
         .contains("5 of 5 cuts on a beat"));
+}
+
+#[test]
+fn music_pick_is_resolved_and_poor_fits_are_reported() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = temp_dir("music-pick");
+    let lib = dir.join("assets/music/library");
+    std::fs::create_dir_all(&lib).unwrap();
+    wav(&dir, "assets/music/library/short.wav", "'0.2*sin(2*PI*220*t)'", 3.0);
+    std::fs::write(
+        lib.join("library.json"),
+        r#"{"tracks":[
+            {"id":"short","file":"short.wav","moods":["calm"],"energy":0.1,"duration_ms":3000,"loopable":false},
+            {"id":"gone","file":"gone.wav","moods":["calm"],"energy":0.2}]}"#,
+    )
+    .unwrap();
+    let t = |pick: Value| {
+        timeline_json(serde_json::json!({
+            "fps": 30, "resolution": {"width": 1920, "height": 1080}, "subtitles": [],
+            "music": {"pick": pick, "volume": 0.3, "fade_in_ms": 0, "fade_out_ms": 0},
+            "scenes": [
+                {"id": "a", "duration_ms": 3000, "text": "one"},
+                {"id": "b", "duration_ms": 3000, "text": "two"}
+            ]
+        }))
+    };
+    let fs = run(&t(serde_json::json!({"mood": "Calm", "energy": 0.9})), Some(&dir));
+    let picked = one(&fs, "music.picked", None, None);
+    assert!(
+        picked.message.contains("`short` (assets/music/library/short.wav)"),
+        "{}",
+        picked.message
+    );
+    assert!(one(&fs, "music.library_file_missing", None, None)
+        .message
+        .contains("`gone`"));
+    assert!(one(&fs, "music.energy_far", None, None)
+        .message
+        .contains("has 0.10"));
+    assert!(one(&fs, "music.too_short", None, None)
+        .message
+        .contains("does not loop"));
+    // The rest of the check sees the chosen file: it exists, so no audio.missing.
+    assert!(find(&fs, "audio.missing", None, None).is_empty());
+    let fs = run(&t(serde_json::json!({"mood": "epic"})), Some(&dir));
+    let failed = one(&fs, "music.pick_failed", None, None);
+    assert_eq!(failed.severity, Severity::Error);
+    assert!(
+        failed.message.contains("available moods: calm"),
+        "{}",
+        failed.message
+    );
 }

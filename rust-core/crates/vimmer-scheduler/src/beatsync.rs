@@ -34,7 +34,7 @@ pub async fn apply_beat_sync(
     if timeline.scenes.len() < 2 {
         return Ok(None);
     }
-    let path = cfg.public_dir.join(&music.source);
+    let path = cfg.public_dir.join(music.source_path());
     let (beats, downbeat, file_ms) = match &music.beats {
         Some(grid) => {
             let probe = probe.clone();
@@ -56,7 +56,7 @@ pub async fn apply_beat_sync(
             if analysis.confidence < LOW_CONFIDENCE {
                 warnings.push(format!(
                     "beat sync skipped: the beats of `{}` are unclear (confidence {:.2}); set music.beats {{bpm, offset_ms}} by hand",
-                    music.source, analysis.confidence
+                    music.source_path(), analysis.confidence
                 ));
                 return Ok(None);
             }
