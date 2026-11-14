@@ -1404,3 +1404,71 @@ fn template_scenes_are_checked_per_template() {
     );
     assert!(text(&e).contains("unknown param `items`"), "{e}");
 }
+
+// --- beat sync and sound effects -------------------------------------------------------------
+
+#[test]
+fn beat_sync_and_sound_effects_are_editable() {
+    let mut doc = small();
+    doc["music"] = json!({"source": "assets/music/beat-120bpm.m4a", "volume": 0.3, "fade_in_ms": 0, "fade_out_ms": 0});
+    let out = ok(
+        &doc,
+        json!([
+            {"op": "add", "path": "/music/beat_sync", "value": {"enabled": true, "every": 2, "max_shift_ms": 300, "mode": "later"}},
+            {"op": "add", "path": "/music/beats", "value": {"bpm": 96, "offset_ms": 750}},
+            {"op": "add", "path": "/scenes/0/sfx", "value": [{"src": "assets/sfx/whoosh.wav", "at_ms": 2500, "volume": 0.6}]},
+        ]),
+    );
+    assert_eq!(out.timeline["music"]["beat_sync"]["every"], 2);
+    assert_eq!(out.timeline["scenes"][0]["sfx"][0]["at_ms"], 2500);
+    // A layer-event effect needs the layer.
+    let mut with_layer = out.timeline.clone();
+    with_layer["scenes"][1]["layers"] = json!([{"id": "t", "kind": "text", "x": 0.1, "y": 0.1, "width": 0.5, "text": "hi", "start_ms": 400}]);
+    let out = ok(
+        &with_layer,
+        json!([{"op": "add", "path": "/scenes/1/sfx", "value": [{"src": "assets/sfx/pop.wav", "on": {"layer": "t", "event": "enter"}}]}]),
+    );
+    assert_eq!(out.timeline["scenes"][1]["sfx"][0]["on"]["event"], "enter");
+}
+
+#[test]
+fn bad_beat_sync_and_sound_effects_are_rejected() {
+    let mut doc = small();
+    doc["music"] =
+        json!({"source": "assets/m.m4a", "volume": 0.3, "fade_in_ms": 0, "fade_out_ms": 0});
+    let r = err(
+        &doc,
+        json!([{"op": "add", "path": "/music/beat_sync", "value": {"every": 3}}]),
+    );
+    assert!(text(&r).contains("every must be 1, 2 or 4"), "{}", text(&r));
+    let r = err(
+        &doc,
+        json!([{"op": "add", "path": "/music/beat_sync/bars", "value": 2}]),
+    );
+    assert!(text(&r).contains("bars"), "{}", text(&r));
+    let r = err(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/0/sfx", "value": [{"src": "assets/sfx/pop.wav", "at_ms": 100, "pan": -1}]}]),
+    );
+    assert!(text(&r).contains("unknown field `pan`"), "{}", text(&r));
+    let r = err(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/0/sfx", "value": [{"src": "../pop.wav", "at_ms": 100}]}]),
+    );
+    assert!(text(&r).contains("sfx 0"), "{}", text(&r));
+    let r = err(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/0/sfx", "value": [{"src": "assets/sfx/pop.wav", "at_ms": 3000}]}]),
+    );
+    assert!(text(&r).contains("inside the scene"), "{}", text(&r));
+    let r = err(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/0/sfx", "value": [{"src": "assets/sfx/pop.wav", "on": {"layer": "nope", "event": "enter"}}]}]),
+    );
+    assert!(text(&r).contains("no layer `nope`"), "{}", text(&r));
+    let r = err(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/0/sfx", "value": [{"src": "assets/a.png", "at_ms": 0}]}]),
+    );
+    assert!(text(&r).contains("audio file"), "{}", text(&r));
+}

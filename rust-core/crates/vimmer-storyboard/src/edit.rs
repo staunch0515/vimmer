@@ -598,6 +598,13 @@ enum Kind {
     Word,
     Music,
     Duck,
+    /// `music.beats` (a hand-set grid) and `music.beat_sync`.
+    BeatGrid,
+    BeatSync,
+    /// A scene's `sfx` list, one sound effect, and its `on` trigger.
+    SfxList,
+    Sfx,
+    SfxTrigger,
     /// A scene's background `video` clip.
     Video,
     /// The timeline's `brand` and its parts.
@@ -669,7 +676,16 @@ impl Kind {
                 ("keyframes", Keyframes),
                 ("layers", Layers),
                 ("template", Template),
+                ("sfx", SfxList),
             ],
+            Sfx => &[
+                ("src", Leaf),
+                ("at_ms", Leaf),
+                ("on", SfxTrigger),
+                ("volume", Leaf),
+                ("duck_music", Leaf),
+            ],
+            SfxTrigger => &[("layer", Leaf), ("event", Leaf)],
             // Every field any layer kind has; `check_value` narrows it to the value's `kind`.
             Layer => LAYER_FIELDS_ALL,
             LayerAnimation => &[("kind", Leaf), ("duration_ms", Leaf), ("ease", Leaf)],
@@ -701,6 +717,15 @@ impl Kind {
                 ("fade_in_ms", Leaf),
                 ("fade_out_ms", Leaf),
                 ("duck", Duck),
+                ("beats", BeatGrid),
+                ("beat_sync", BeatSync),
+            ],
+            BeatGrid => &[("bpm", Leaf), ("offset_ms", Leaf)],
+            BeatSync => &[
+                ("enabled", Leaf),
+                ("every", Leaf),
+                ("max_shift_ms", Leaf),
+                ("mode", Leaf),
             ],
             Duck => &[
                 ("enabled", Leaf),
@@ -722,6 +747,7 @@ impl Kind {
             Kind::Subtitles => Some(Kind::Cue),
             Kind::Words => Some(Kind::Word),
             Kind::HideOn | Kind::ParamList => Some(Kind::Leaf),
+            Kind::SfxList => Some(Kind::Sfx),
             _ => None,
         }
     }
@@ -750,6 +776,11 @@ impl Kind {
             Kind::Word => "a word timing",
             Kind::Music => "the music settings",
             Kind::Duck => "the music ducking settings",
+            Kind::BeatGrid => "the music's hand-set beat grid",
+            Kind::BeatSync => "the beat sync settings",
+            Kind::SfxList => "a sound effect list",
+            Kind::Sfx => "a sound effect",
+            Kind::SfxTrigger => "a sound effect's layer trigger",
             Kind::Video => "a scene background video",
             Kind::Brand => "the brand",
             Kind::BrandColors => "the brand colors",
@@ -1829,6 +1860,9 @@ fn asset_refs(t: &VideoTimeline) -> Vec<(String, String)> {
                     src.to_string(),
                 ));
             }
+        }
+        for (k, fx) in s.sfx.iter().enumerate() {
+            out.push((format!("scene `{}` sfx {k} src", s.id), fx.src.clone()));
         }
     }
     if let Some(m) = &t.music {
