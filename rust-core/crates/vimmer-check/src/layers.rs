@@ -584,7 +584,8 @@ pub fn check_assets(timeline: &VideoTimeline, public_dir: &Path) -> Vec<Finding>
             let Some(rel) = layer.content.asset() else {
                 continue;
             };
-            if is_url(rel) {
+            // Video layers are checked with the scene videos (video.rs).
+            if is_url(rel) || matches!(layer.content, LayerContent::Video(_)) {
                 continue;
             }
             let at = starts[si] + layer.start_ms;

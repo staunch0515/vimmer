@@ -83,14 +83,18 @@ pub fn probe_video(ffmpeg: &Path, path: &Path) -> Result<VideoInfo, MediaError> 
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     parse_video_info(&stderr).ok_or_else(|| {
-        let last = stderr
-            .lines()
-            .rev()
-            .find(|l| !l.trim().is_empty() && !l.contains("At least one output file"))
-            .unwrap_or("no video stream")
-            .trim()
-            .to_string();
-        err(format!("not a decodable video ({last})"))
+        let reason = if !stderr.contains("Duration:") {
+            let last = stderr
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty() && !l.contains("output file"))
+                .unwrap_or("")
+                .trim();
+            format!("not a video ffmpeg can open ({last})")
+        } else {
+            "not a video: no video stream with a duration (an image or an audio file?)".into()
+        };
+        err(reason)
     })
 }
 
