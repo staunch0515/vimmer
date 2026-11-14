@@ -1,7 +1,8 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
 use clap::Parser;
-use vimmer_storyboard::{convert, missing_assets, Storyboard};
+use vimmer_media::TtsEngine;
+use vimmer_storyboard::{convert_for, missing_assets, Storyboard};
 
 /// Convert a storyboard JSON into a timeline JSON for `vimmer`.
 #[derive(Debug, Parser)]
@@ -31,14 +32,18 @@ fn run(cli: Cli) -> Result<(), String> {
             let lines: Vec<String> = missing
                 .iter()
                 .map(|(scene, p)| match scene {
-                    Some(n) => format!("scene {n}: field `image`: `{p}` not found in {}", dir.display()),
+                    Some(n) => format!(
+                        "scene {n}: field `image`: `{p}` not found in {}",
+                        dir.display()
+                    ),
                     None => format!("field `music`: `{p}` not found in {}", dir.display()),
                 })
                 .collect();
             return Err(lines.join("\n"));
         }
     }
-    let result = convert(&sb).map_err(|e| e.to_string())?;
+    // Scenes without a duration are sized for the engine the render will use ($VIMMER_TTS).
+    let result = convert_for(&sb, TtsEngine::from_env()).map_err(|e| e.to_string())?;
     for w in &result.warnings {
         eprintln!("warning: {w}");
     }
@@ -47,7 +52,8 @@ fn run(cli: Cli) -> Result<(), String> {
         .map_err(|e| format!("cannot write {}: {e}", cli.output.display()))?;
     if let Some(path) = &cli.emphasis_out {
         let json = serde_json::to_string_pretty(&result.emphasis).map_err(|e| e.to_string())?;
-        fs::write(path, json + "\n").map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        fs::write(path, json + "\n")
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     }
     eprintln!(
         "{} scenes, {} ms -> {}",

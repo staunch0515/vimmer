@@ -7,7 +7,7 @@
   "scenes": [
     {
       "id": "scene-01",
-      "duration_ms": 2670,
+      "duration_ms": 3053,
       "text": "西安钟楼，古城的中心。",
       "highlights": [
         "钟楼"
@@ -23,7 +23,7 @@
     },
     {
       "id": "scene-02",
-      "duration_ms": 3820,
+      "duration_ms": 4113,
       "text": "它始建于明代，至今已有六百多年。",
       "highlights": [
         "六百多年"
@@ -80,7 +80,7 @@
     },
     {
       "id": "scene-04",
-      "duration_ms": 2900,
+      "duration_ms": 3265,
       "text": "来西安，别忘了看一看它。",
       "highlights": [
         "别忘了"

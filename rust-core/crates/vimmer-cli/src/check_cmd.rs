@@ -4,9 +4,16 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use vimmer_check::{check_timeline, report::render_human, CheckOptions, Report, SCHEMA};
 use vimmer_dsl::VideoTimeline;
+use vimmer_media::TtsEngine;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Tts {
+    Say,
+    Kokoro,
+}
 
 /// Find quality problems in a timeline before (or after) rendering: text that overflows,
 /// subtitles that are too long or too fast, safe-area and motion problems, missing or clipped
@@ -35,6 +42,10 @@ struct CheckCli {
     /// estimating its length. Slow the first time; later renders reuse the files.
     #[arg(long)]
     synth: bool,
+    /// Narration engine the render will use, for the narration-length estimate: `say` or
+    /// `kokoro` (default: $VIMMER_TTS, else `say`, as in the render).
+    #[arg(long, value_enum)]
+    tts: Option<Tts>,
     /// Directory that image and audio paths are relative to (default: <remotion-dir>/public,
     /// else the nearest remotion-renderer/public above the timeline or the current directory).
     #[arg(long)]
@@ -77,6 +88,11 @@ pub fn main(mut args: Vec<OsString>) -> ExitCode {
         rendered: cli.rendered.clone(),
         synth: cli.synth,
         ffmpeg: cli.ffmpeg.clone(),
+        tts: match cli.tts {
+            Some(Tts::Say) => TtsEngine::Say,
+            Some(Tts::Kokoro) => TtsEngine::Kokoro,
+            None => TtsEngine::from_env(),
+        },
     };
     let findings = check_timeline(&timeline, &opts);
     let report = Report::new(findings, Some(&cli.timeline), cli.rendered.as_deref());

@@ -7,7 +7,7 @@
   "scenes": [
     {
       "id": "scene-01",
-      "duration_ms": 4000,
+      "duration_ms": 4040,
       "text": "春になると、日本中が桜色に染まります。",
       "highlights": [
         "桜色"
@@ -23,7 +23,7 @@
     },
     {
       "id": "scene-02",
-      "duration_ms": 4400,
+      "duration_ms": 4435,
       "text": "人々は木の下に集まり、お花見を楽しみます。",
       "highlights": [
         "お花見"
@@ -42,7 +42,7 @@
     },
     {
       "id": "scene-03",
-      "duration_ms": 3400,
+      "duration_ms": 3085,
       "text": "でも、桜の命はとても短いのです。",
       "highlights": [
         "短い"
@@ -68,7 +68,7 @@
           "ease": "ease_in_out"
         },
         {
-          "at_ms": 3400,
+          "at_ms": 3085,
           "scale": 1.15,
           "x": -3.0,
           "y": -2.0,
@@ -80,7 +80,7 @@
     },
     {
       "id": "scene-04",
-      "duration_ms": 3800,
+      "duration_ms": 3480,
       "text": "だからこそ、この季節は特別なのです。",
       "highlights": [
         "特別"

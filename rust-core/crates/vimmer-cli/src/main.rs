@@ -29,7 +29,7 @@ use vimmer_storyboard::illustrate::{
     DEFAULT_CONCURRENCY as DEFAULT_ILLUSTRATE_JOBS, DEFAULT_EFFORT as DEFAULT_ILLUSTRATE_EFFORT,
     DEFAULT_MODEL as DEFAULT_ILLUSTRATE_MODEL,
 };
-use vimmer_storyboard::{convert, Language, Orientation, Storyboard};
+use vimmer_storyboard::{convert_for, Language, Orientation, Storyboard};
 
 /// Render a timeline JSON to MP4.
 ///
@@ -236,6 +236,19 @@ enum Tts {
     Kokoro,
 }
 
+fn engine_of(t: Tts) -> TtsEngine {
+    match t {
+        Tts::Say => TtsEngine::Say,
+        Tts::Kokoro => TtsEngine::Kokoro,
+    }
+}
+
+/// The engine the render will narrate with: `--tts`, else `$VIMMER_TTS`, else `say`. Scenes
+/// without a duration are sized for it.
+fn render_engine(args: &RenderArgs) -> TtsEngine {
+    args.tts.map_or_else(TtsEngine::from_env, engine_of)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Toggle {
     On,
@@ -320,10 +333,7 @@ async fn render(
     cfg.word_subtitles.whisper_cli = args.whisper_cli;
     cfg.word_subtitles.model = args.whisper_model;
     cfg.word_subtitles.language = args.whisper_language;
-    cfg.tts.engine = args.tts.map(|t| match t {
-        Tts::Say => TtsEngine::Say,
-        Tts::Kokoro => TtsEngine::Kokoro,
-    });
+    cfg.tts.engine = args.tts.map(engine_of);
     cfg.tts.kokoro_python = args.kokoro_python;
     cfg.tts.kokoro_models = args.kokoro_models;
 
@@ -376,6 +386,7 @@ async fn run_generate(cli: GenerateCli) -> Result<(), Box<dyn std::error::Error>
     opts.max_retries = cli.max_retries;
     opts.timeout = Duration::from_secs(cli.llm_timeout.max(1));
     opts.record_dir = cli.save_dir.clone();
+    opts.tts = render_engine(&cli.render);
     if !cli.no_music {
         let public_dir = cli.render.remotion_dir.join("public");
         match vimmer_dsl::MusicLibrary::load(&public_dir) {
@@ -597,7 +608,7 @@ async fn run_illustrate(cli: IllustrateCli) -> Result<(), Box<dyn std::error::Er
                 .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
             serde_json::from_str::<VideoTimeline>(&raw)?
         }
-        None => convert(&storyboard)?.timeline,
+        None => convert_for(&storyboard, render_engine(&cli.render))?.timeline,
     };
     if timeline.scenes.len() != storyboard.scenes.len() {
         return Err(format!(

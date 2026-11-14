@@ -58,7 +58,7 @@ Unknown field names are rejected. Do not add fields.
 {{MUSIC}}
 
 ## Duration rules (when you omit `duration_ms`)
-- `zh`: 230 ms per character (punctuation free), `ja`: 200 ms per character, `en`: 400 ms per word; +600 ms; minimum 2000 ms.
+- The tool estimates how long the local speech engine takes to read `text`: roughly `zh` 250 ms per character, `ja` 200 ms per character, `en` 400 ms per word, a short pause at each comma or sentence end, and more for numbers written as digits; then +600 ms, minimum 2000 ms.
 - So keep a scene's text to roughly: zh 8-30 characters, ja 10-35 characters, en 6-20 words.
 - Set `duration_ms` yourself only when a scene should hold longer than its narration.
 
