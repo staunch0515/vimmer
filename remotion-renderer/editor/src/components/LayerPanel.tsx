@@ -1,8 +1,10 @@
 import type { Dispatch } from "react";
 import { useEffect, useState } from "react";
-import type { BarChartLayer, ChartBar, CounterLayer, Easing, ProgressRingLayer, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
+import type { BarChartLayer, ChartBar, CounterLayer, Easing, Keyframe, ProgressRingLayer, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
 import { splitLayers } from "../../../src/motion/layers";
 import { ANIMATION_KINDS, LAYER_KINDS } from "../layers";
+import { sampleKeyframes } from "../../../src/motion/keyframes";
+import { MAX_LAYER_KEYFRAMES, fieldError, layerSpan, timeError, type PoseField } from "../layerKeyframes";
 import { EASINGS } from "../model";
 import type { Action } from "../state";
 import { Field, MediaInput, NumField } from "./Inspector";
@@ -13,12 +15,19 @@ type Props = {
   sceneIndex: number;
   selectedIndex: number;
   dispatch: Dispatch<Action>;
+  // The selected keyframe of the selected layer (index in its keyframes), if any.
+  selectedKeyframe?: number;
+  // Playhead and scene start, in timeline ms, for "keyframe at playhead".
+  playheadMs: number;
+  sceneStartMs: number;
+  // Moves the playhead to a timeline time in ms.
+  onSeekMs?: (ms: number) => void;
 };
 
 const label = (s: string) => s.replace(/_/g, " ");
 
 /** The scene's layers: list in stacking order (top first), add, select, reorder, delete, edit. */
-export const LayerPanel = ({ scene, sceneIndex, selectedIndex, dispatch }: Props) => {
+export const LayerPanel = ({ scene, sceneIndex, selectedIndex, dispatch, selectedKeyframe, playheadMs, sceneStartMs, onSeekMs }: Props) => {
   const layers = scene.layers ?? [];
   const { below, above } = splitLayers(layers);
   const layer: Layer | undefined = layers[selectedIndex];
@@ -53,15 +62,27 @@ export const LayerPanel = ({ scene, sceneIndex, selectedIndex, dispatch }: Props
         </ul>
       )}
       {layer && (
-        <LayerEditor key={`${sceneIndex}-${selectedIndex}`} layer={layer} scene={scene} sceneIndex={sceneIndex} index={selectedIndex} dispatch={dispatch} />
+        <LayerEditor key={`${sceneIndex}-${selectedIndex}`} layer={layer} scene={scene} sceneIndex={sceneIndex} index={selectedIndex} dispatch={dispatch}>
+          <LayerKeyframes
+            layer={layer}
+            scene={scene}
+            sceneIndex={sceneIndex}
+            index={selectedIndex}
+            selected={selectedKeyframe}
+            playheadMs={playheadMs}
+            sceneStartMs={sceneStartMs}
+            onSeekMs={onSeekMs}
+            dispatch={dispatch}
+          />
+        </LayerEditor>
       )}
     </>
   );
 };
 
 const LayerEditor = ({
-  layer, scene, sceneIndex, index, dispatch,
-}: { layer: Layer; scene: Scene; sceneIndex: number; index: number; dispatch: Dispatch<Action> }) => {
+  layer, scene, sceneIndex, index, dispatch, children,
+}: { layer: Layer; scene: Scene; sceneIndex: number; index: number; dispatch: Dispatch<Action>; children?: React.ReactNode }) => {
   const patch = (p: Record<string, unknown>) => dispatch({ type: "patchLayer", sceneIndex, index, patch: p });
   const frac = (key: "x" | "y" | "width", name: string) => (
     <NumField
@@ -152,12 +173,7 @@ const LayerEditor = ({
         <AnimationField label="Enter" value={layer.enter ?? null} onChange={(a) => patch({ enter: a ?? undefined })} />
         <AnimationField label="Exit" value={layer.exit ?? null} onChange={(a) => patch({ exit: a ?? undefined })} />
       </div>
-      {(layer.keyframes?.length ?? 0) > 0 && (
-        <div className="button-row">
-          <span className="dim">{layer.keyframes!.length} keyframes (edit in JSON or with the assistant)</span>
-          <button className="btn ghost small" onClick={() => patch({ keyframes: undefined })}>Clear keyframes</button>
-        </div>
-      )}
+      {children}
       <KindFields layer={layer} patch={patch} />
     </div>
   );
@@ -617,3 +633,114 @@ const AnimationField = ({
 );
 
 const labelOf = (k: LayerAnimationKind) => label(k);
+
+/**
+ * The layer's keyframes: add one at the playhead (holding the pose there), select one (the
+ * playhead jumps to it), edit its time, values and ease, delete it. Times are from the scene
+ * start and stay inside the layer's time, sorted, without duplicates.
+ */
+const LayerKeyframes = ({
+  layer, scene, sceneIndex, index, selected, playheadMs, sceneStartMs, onSeekMs, dispatch,
+}: {
+  layer: Layer; scene: Scene; sceneIndex: number; index: number; selected?: number;
+  playheadMs: number; sceneStartMs: number; onSeekMs?: (ms: number) => void; dispatch: Dispatch<Action>;
+}) => {
+  const list = layer.keyframes ?? [];
+  const span = layerSpan(layer, scene.duration_ms);
+  const rel = Math.round(playheadMs - sceneStartMs);
+  const inSpan = rel >= span.start && rel <= span.end;
+  const taken = list.some((k) => k.at_ms === rel);
+  const full = list.length >= MAX_LAYER_KEYFRAMES;
+  const kf: Keyframe | undefined = selected === undefined ? undefined : list[selected];
+  const pick = (k: number) => {
+    dispatch({ type: "select", selection: { kind: "layer", sceneIndex, index, keyframe: k } });
+    onSeekMs?.(sceneStartMs + list[k].at_ms);
+  };
+  const patch = (p: Partial<Omit<Keyframe, "at_ms">>) =>
+    selected !== undefined && dispatch({ type: "patchLayerKeyframe", sceneIndex, index, keyframe: selected, patch: p });
+  const num = (field: PoseField, fallback: number, label: string, step: number, suffix?: string) => (
+    <NumField
+      label={label}
+      suffix={suffix}
+      value={kf![field] ?? fallback}
+      step={step}
+      validate={(v) => fieldError(field, v)}
+      onCommit={(v) => patch({ [field]: v })}
+    />
+  );
+  return (
+    <div className="layer-keyframes" data-layer-keyframes={layer.id}>
+      <div className="section-title">Keyframes <span className="count">{list.length}</span></div>
+      <button
+        className="btn primary small full"
+        data-add-layer-keyframe
+        disabled={!inSpan || taken || full}
+        title={!inSpan ? `Move the playhead into the layer's time (${span.start}–${span.end} ms in the scene)` : taken ? "A keyframe already exists at the playhead" : full ? `At most ${MAX_LAYER_KEYFRAMES} keyframes` : undefined}
+        onClick={() => dispatch({ type: "addLayerKeyframe", sceneIndex, index, atMs: rel, pose: sampleKeyframes(list, rel) })}
+      >
+        + Keyframe at playhead ({inSpan ? `${rel} ms` : "outside layer"})
+      </button>
+      {list.length > 0 && (
+        <ul className="cue-list" aria-label={`Keyframes of ${layer.id}`}>
+          {list.map((k, i) => {
+            const outside = k.at_ms < span.start || k.at_ms > span.end;
+            return (
+              <li key={i}>
+                <button className={i === selected ? "cue active" : "cue"} onClick={() => pick(i)} data-layer-keyframe-row={i}>
+                  <span className="mono dim">{k.at_ms} ms</span>
+                  <span className="cue-text">
+                    x {k.x ?? 0} · y {k.y ?? 0} · scale {k.scale ?? 1} · {(k.ease ?? "ease_in_out").replace(/_/g, " ")}
+                    {outside ? " · outside the layer" : ""}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {kf && selected !== undefined && (
+        <>
+          <div className="section-title">Keyframe {selected + 1} at {kf.at_ms} ms</div>
+          <NumField
+            label="Time"
+            suffix="ms"
+            hint="from the scene start"
+            value={kf.at_ms}
+            step={10}
+            validate={(v) => timeError(layer, scene.duration_ms, selected, v)}
+            onCommit={(v) => dispatch({ type: "moveLayerKeyframe", sceneIndex, index, keyframe: selected, atMs: v })}
+          />
+          <div className="two-col">
+            {num("x", 0, "X offset", 1, "%")}
+            {num("y", 0, "Y offset", 1, "%")}
+          </div>
+          <div className="two-col">
+            {num("scale", 1, "Scale", 0.05)}
+            {num("opacity", 1, "Opacity", 0.1)}
+          </div>
+          <div className="two-col">
+            {num("rotation", 0, "Rotation", 1, "°")}
+            <Field label="Ease" hint="to the next">
+              <select value={kf.ease ?? "ease_in_out"} onChange={(e) => patch({ ease: e.target.value as Easing })}>
+                {EASINGS.map((e) => (
+                  <option key={e} value={e}>{label(e)}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="button-row">
+            <button className="btn ghost small" onClick={() => onSeekMs?.(sceneStartMs + kf.at_ms)}>Go to keyframe</button>
+            <button className="btn danger small" onClick={() => dispatch({ type: "deleteLayerKeyframe", sceneIndex, index, keyframe: selected })}>
+              Delete keyframe
+            </button>
+          </div>
+        </>
+      )}
+      {list.length > 0 && (
+        <button className="btn ghost small" onClick={() => dispatch({ type: "patchLayer", sceneIndex, index, patch: { keyframes: undefined } })}>
+          Clear all keyframes
+        </button>
+      )}
+    </div>
+  );
+};

@@ -117,9 +117,9 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
       {/* The brand logo sits above every scene's layers and below the subtitles. */}
       <BrandOverlay timeline={timeline} />
       {timeline.chunk ? (
-        <Subtitles cues={timeline.chunk.subtitles} frameOffset={timeline.chunk.start_frame} />
+        <Subtitles cues={timeline.chunk.subtitles} frameOffset={timeline.chunk.start_frame} box={timeline.subtitle_box} />
       ) : (
-        <Subtitles cues={timeline.subtitles} />
+        <Subtitles cues={timeline.subtitles} box={timeline.subtitle_box} />
       )}
       {/* Sound effects for the preview (renders are muted; the Rust core mixes them). Outside the
           scene Sequences so they ring out past the cut, as in the render. */}

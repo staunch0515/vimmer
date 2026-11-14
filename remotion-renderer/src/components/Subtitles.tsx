@@ -1,7 +1,7 @@
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { cjkLang, sceneCutFrames, subtitleAt, type WordState } from "../subtitles/words";
 import { BUILTIN, brandColor, fontStack, withAlpha } from "../brand";
-import type { Brand, SubtitleCue, VideoTimeline, WordTiming } from "../types/timeline";
+import type { Brand, SubtitleBox, SubtitleCue, VideoTimeline, WordTiming } from "../types/timeline";
 import { useBrand } from "./Brand";
 
 // Word-by-word colors: the spoken word stands out, words still to come are dimmed.
@@ -49,13 +49,18 @@ type Props = {
   // passes the chunk's start frame with full-timeline cues, so every frame is drawn exactly like
   // the same frame of a full render: no fade-out/fade-in blink at a chunk seam.
   frameOffset?: number;
+  // Where the box sits (`subtitle_box`). Absent: the built-in place, drawn exactly as before.
+  box?: SubtitleBox | null;
 };
+
+// Widest box, as a fraction of the frame width (vimmer-check layout.rs SUB_MAX_WIDTH_FRAC).
+export const SUBTITLE_MAX_WIDTH = 0.86;
 
 // Shows the cue whose frame range contains the current frame. Frame ranges come from the
 // same rounding as the Rust side, so a cue starts on the exact frame the DSL specifies.
 // A cue with `words` is drawn word by word with the spoken word highlighted; without words, or
 // when the words no longer spell the cue text (edited after timing), it is drawn as one line.
-export const Subtitles: React.FC<Props> = ({ cues, sceneStarts, frameOffset = 0 }) => {
+export const Subtitles: React.FC<Props> = ({ cues, sceneStarts, frameOffset = 0, box }) => {
   const { fps, width, height, props } = useVideoConfig();
   const frame = useCurrentFrame() + frameOffset;
   const brand = useBrand();
@@ -71,30 +76,55 @@ export const Subtitles: React.FC<Props> = ({ cues, sceneStarts, frameOffset = 0 
   // Scale with the shorter side so the size reads the same in landscape and portrait.
   const fontSize = Math.round(Math.min(width, height) * 0.05);
 
+  const boxStyle: React.CSSProperties = {
+    opacity,
+    maxWidth: "86%",
+    padding: `${Math.round(fontSize * 0.3)}px ${Math.round(fontSize * 0.6)}px`,
+    borderRadius: fontSize * 0.4,
+    backgroundColor: brandColor(brand, "subtitle_background", BUILTIN.subtitleBackground),
+    border: "1px solid rgba(255, 255, 255, 0.08)",
+    color: brandColor(brand, "text", BUILTIN.text),
+    fontFamily: fontStack(brand, "body"),
+    fontSize,
+    fontWeight: 500,
+    lineHeight: 1.3,
+    textAlign: "center",
+    textWrap: "balance",
+    overflowWrap: "break-word",
+  };
+  const content = states ? <Words words={active.words ?? []} states={states} styles={wordStyles(brand)} /> : active.text;
+  const lang = states ? cjkLang(active.text) : undefined;
+
+  if (box) {
+    // An 86 %-wide slot centered on x with its bottom edge at y; the box sits in it like the
+    // built-in band (same widest box, same line breaks), so moving it never rewraps a cue.
+    return (
+      <AbsoluteFill style={{ pointerEvents: "none" }}>
+        <div
+          style={{
+            position: "absolute",
+            left: `${(box.x - SUBTITLE_MAX_WIDTH / 2) * 100}%`,
+            width: `${SUBTITLE_MAX_WIDTH * 100}%`,
+            bottom: `${(1 - box.y) * 100}%`,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+          }}
+        >
+          <div lang={lang} data-subtitle-box style={{ ...boxStyle, maxWidth: "100%" }}>
+            {content}
+          </div>
+        </div>
+      </AbsoluteFill>
+    );
+  }
+
   return (
     <AbsoluteFill
       style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: "4%", pointerEvents: "none" }}
     >
-      <div
-        lang={states ? cjkLang(active.text) : undefined}
-        style={{
-          opacity,
-          maxWidth: "86%",
-          padding: `${Math.round(fontSize * 0.3)}px ${Math.round(fontSize * 0.6)}px`,
-          borderRadius: fontSize * 0.4,
-          backgroundColor: brandColor(brand, "subtitle_background", BUILTIN.subtitleBackground),
-          border: "1px solid rgba(255, 255, 255, 0.08)",
-          color: brandColor(brand, "text", BUILTIN.text),
-          fontFamily: fontStack(brand, "body"),
-          fontSize,
-          fontWeight: 500,
-          lineHeight: 1.3,
-          textAlign: "center",
-          textWrap: "balance",
-          overflowWrap: "break-word",
-        }}
-      >
-        {states ? <Words words={active.words ?? []} states={states} styles={wordStyles(brand)} /> : active.text}
+      <div lang={lang} data-subtitle-box style={boxStyle}>
+        {content}
       </div>
     </AbsoluteFill>
   );

@@ -449,13 +449,8 @@ pub fn check(t: &VideoTimeline, public_dir: Option<&Path>) -> Vec<Finding> {
         ));
     }
     // Subtitles: a two-line band, where a cue shows while the logo is drawn.
-    let band = SubtitleBand::new(t.resolution);
-    let (bl, bt, br, bb) = (
-        band.left_x,
-        band.top_y(2),
-        f64::from(t.resolution.width) - band.left_x,
-        band.bottom_y,
-    );
+    let band = SubtitleBand::for_timeline(t);
+    let (bl, bt, br, bb) = (band.left_x, band.top_y(2), band.right_x, band.bottom_y);
     if l < br && r > bl && top < bb && b > bt {
         let starts = scene_starts_ms(t);
         let hit = t.subtitles.iter().find(|cue| {
@@ -471,7 +466,14 @@ pub fn check(t: &VideoTimeline, public_dir: Option<&Path>) -> Vec<Finding> {
                     Severity::Warning,
                     "brand.logo_subtitles",
                     "the logo sits where two-line subtitles are drawn and covers part of them",
-                    Suggestion::field("put the logo in a top corner", "/brand/logo/corner"),
+                    if t.subtitle_box.is_some() {
+                        Suggestion::field(
+                            "move the subtitles (or the logo to another corner)",
+                            "/subtitle_box",
+                        )
+                    } else {
+                        Suggestion::field("put the logo in a top corner", "/brand/logo/corner")
+                    },
                 )
                 .at(cue.start_ms),
             );
@@ -587,6 +589,30 @@ mod tests {
         let t = timeline(r#","brand":{"logo":{"src":"l.png","hide_on":["zzz"]}}"#);
         let codes: Vec<&str> = check(&t, None).iter().map(|f| f.code).collect();
         assert_eq!(codes, ["brand.unknown_scene"]);
+    }
+
+    #[test]
+    fn logo_and_subtitles_follow_the_subtitle_box() {
+        let logo = r#""brand":{"logo":{"src":"l.png","corner":"top_right","size":0.1}}"#;
+        // A top-right logo is clear of subtitles at the bottom...
+        let t = timeline(&format!(",{logo}"));
+        assert!(check(&t, None)
+            .iter()
+            .all(|f| f.code != "brand.logo_subtitles"));
+        // ...but not of subtitles moved to the top right.
+        let t = timeline(&format!(r#",{logo},"subtitle_box":{{"x":0.6,"y":0.2}}"#));
+        let f: Vec<_> = check(&t, None)
+            .into_iter()
+            .filter(|f| f.code == "brand.logo_subtitles")
+            .collect();
+        assert_eq!(f.len(), 1, "{f:?}");
+        assert_eq!(f[0].suggestion.path.as_deref(), Some("/subtitle_box"));
+        // A bottom-right logo is clear of subtitles moved to the top.
+        let logo = logo.replace("top_right", "bottom_right");
+        let t = timeline(&format!(r#",{logo},"subtitle_box":{{"x":0.5,"y":0.25}}"#));
+        assert!(check(&t, None)
+            .iter()
+            .all(|f| f.code != "brand.logo_subtitles"));
     }
 
     #[test]

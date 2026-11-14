@@ -4,6 +4,7 @@ import {
   DEFAULT_TRANSITION_MS, EASINGS, TRANSITION_KINDS, keyframeFieldError, timecode, type Selection, sortCues,
 } from "../model";
 import { sampleKeyframes } from "../../../src/motion/keyframes";
+import { boxOf } from "../subtitleBox";
 import type { Action } from "../state";
 import { canChooseMedia, chooseAndImport, type MediaKind } from "../media";
 import { ClipFields } from "./ClipFields";
@@ -37,6 +38,8 @@ type Props = {
   pickError: string | null;
   /** URL for a public-relative file (auditioning a music track). */
   audioUrl: (path: string) => string;
+  /** Moves the playhead to a timeline time in ms. */
+  onSeekMs?: (ms: number) => void;
 };
 
 const MOTIONS: Scene["motion"][] = ["static", "zoom_in", "zoom_out", "pan_left", "pan_right"];
@@ -76,7 +79,7 @@ export const Inspector = (props: Props) => {
   );
 };
 
-const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
+const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs }: Props) => {
   if (selection.kind !== "scene" && selection.kind !== "keyframe" && selection.kind !== "layer") {
     return <Empty title="No scene selected" hint="Click a scene block on the timeline to edit it." />;
   }
@@ -85,6 +88,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
   if (!scene) return <Empty title="Scene not found" hint="It may have been deleted." />;
   const patch = (p: Partial<Scene>) => dispatch({ type: "patchScene", index, patch: p });
   const isLast = index === timeline.scenes.length - 1;
+  const sceneStartMs = timeline.scenes.slice(0, index).reduce((a, s) => a + s.duration_ms, 0);
 
   return (
     <div className="form">
@@ -92,15 +96,19 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
       <Field label="ID">
         <input value={scene.id} onChange={(e) => patch({ id: e.target.value })} />
       </Field>
-      <Field label="Duration" suffix="ms" hint={timecode(scene.duration_ms)}>
-        <input
-          type="number"
-          min={100}
-          step={100}
-          value={scene.duration_ms}
-          onChange={(e) => patch({ duration_ms: Math.max(100, Number(e.target.value) || 100) })}
-        />
-      </Field>
+      {/* Committed on Enter or blur, not per keystroke: typing "5000" must not pass through a
+          5 ms scene that clamps the keyframes and layers on the way. */}
+      <CommitNumField
+        label="Duration"
+        suffix="ms"
+        hint={timecode(scene.duration_ms)}
+        value={scene.duration_ms}
+        step={100}
+        min={100}
+        validate={(v) => (Number.isInteger(v) && v >= 100 ? null : "A whole number, at least 100.")}
+        onCommit={(v) => patch({ duration_ms: v })}
+        data-scene-duration
+      />
       {scene.template && <TemplateParams index={index} template={scene.template} dispatch={dispatch} />}
       <Field label="Text" hint={scene.template ? "drawn over the template" : undefined}>
         <textarea rows={3} value={scene.text ?? ""} onChange={(e) => patch({ text: e.target.value || null })} />
@@ -156,6 +164,10 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
         scene={scene}
         sceneIndex={index}
         selectedIndex={selection.kind === "layer" ? selection.index : -1}
+        selectedKeyframe={selection.kind === "layer" ? selection.keyframe : undefined}
+        playheadMs={playheadMs}
+        sceneStartMs={sceneStartMs}
+        onSeekMs={onSeekMs}
         dispatch={dispatch}
       />
       <div className="section-title">Transition in</div>
@@ -204,7 +216,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
         scene={scene}
         sceneIndex={index}
         selectedIndex={selection.kind === "keyframe" ? selection.index : -1}
-        sceneStartMs={timeline.scenes.slice(0, index).reduce((a, s) => a + s.duration_ms, 0)}
+        sceneStartMs={sceneStartMs}
         playheadMs={playheadMs}
         dispatch={dispatch}
       />
@@ -307,6 +319,42 @@ const SubtitleEditor = ({ timeline, selection, playheadMs, dispatch, onSelect, o
           <button className="btn danger small" onClick={() => dispatch({ type: "deleteSubtitle", index: selectedIndex })}>Delete cue</button>
         </>
       )}
+      <SubtitlePosition timeline={timeline} dispatch={dispatch} />
+    </div>
+  );
+};
+
+/** Where every cue sits (`subtitle_box`): fields, and the reset to the built-in place. */
+const SubtitlePosition = ({ timeline, dispatch }: { timeline: VideoTimeline; dispatch: Dispatch<Action> }) => {
+  const box = boxOf(timeline.subtitle_box, timeline.resolution);
+  const set = (p: Partial<typeof box>) => dispatch({ type: "setSubtitleBox", box: { ...box, ...p } });
+  return (
+    <div data-subtitle-position>
+      <div className="section-title">Position <span className="dim">all cues</span></div>
+      <div className="dim">
+        {timeline.subtitle_box ? "Moved." : "Built-in place."} Select a cue, then drag its box in the preview or use the arrow keys (Shift: 10 px).
+      </div>
+      <div className="two-col">
+        <NumField
+          label="X"
+          hint="center"
+          value={Math.round(box.x * 1000) / 1000}
+          step={0.01}
+          validate={(v) => (v >= 0 && v <= 1 ? null : "0 to 1")}
+          onCommit={(v) => set({ x: v })}
+        />
+        <NumField
+          label="Y"
+          hint="bottom edge"
+          value={Math.round(box.y * 1000) / 1000}
+          step={0.01}
+          validate={(v) => (v > 0 && v <= 1 ? null : "above 0, at most 1")}
+          onCommit={(v) => set({ y: v })}
+        />
+      </div>
+      <button className="btn ghost small" disabled={!timeline.subtitle_box} onClick={() => dispatch({ type: "setSubtitleBox", box: null })}>
+        Reset to the built-in place
+      </button>
     </div>
   );
 };
@@ -449,6 +497,68 @@ const MusicEditor = (props: Props) => {
       {playing && <BeatSyncFields music={playing} patch={patch} detected={beats} status={beatStatus} onDetect={onDetectBeats} />}
       <button className="btn danger small" onClick={() => dispatch({ type: "setMusic", music: null })}>Remove music</button>
     </div>
+  );
+};
+
+/**
+ * Number input that commits once, on Enter or blur (Escape reverts), for values whose
+ * in-between states would change other data (a scene's length clamps its keyframes and layers).
+ * The spinner arrows commit right away.
+ */
+export const CommitNumField = ({
+  label, suffix, hint, value, step, min, validate, onCommit, ...rest
+}: {
+  label: string; suffix?: string; hint?: string; value: number; step: number; min?: number;
+  validate: (v: number) => string | null; onCommit: (v: number) => void; "data-scene-duration"?: boolean;
+}) => {
+  const [text, setText] = useState(String(value));
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setText(String(value));
+    setError(null);
+  }, [value]);
+  const parse = (t: string) => (t.trim() === "" ? NaN : Number(t));
+  const commit = () => {
+    const v = parse(text);
+    const err = Number.isFinite(v) ? validate(v) : "Enter a number.";
+    if (err) {
+      setText(String(value));
+      setError(null);
+      return;
+    }
+    setError(null);
+    if (v !== value) onCommit(v);
+  };
+  return (
+    <Field label={label} suffix={suffix} hint={hint}>
+      <input
+        type="number"
+        step={step}
+        min={min}
+        value={text}
+        aria-invalid={error ? true : undefined}
+        data-scene-duration={rest["data-scene-duration"] || undefined}
+        onChange={(e) => {
+          setText(e.target.value);
+          const v = parse(e.target.value);
+          setError(Number.isFinite(v) ? validate(v) : "Enter a number.");
+          // A spinner click (or arrow key) is a whole value, not a keystroke on the way.
+          const native = e.nativeEvent as InputEvent;
+          if (native.inputType === undefined || native.inputType === "insertReplacementText") {
+            if (Number.isFinite(v) && !validate(v) && v !== value) onCommit(v);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") {
+            setText(String(value));
+            setError(null);
+          }
+        }}
+        onBlur={commit}
+      />
+      {error && <span className="field-error">{error}</span>}
+    </Field>
   );
 };
 

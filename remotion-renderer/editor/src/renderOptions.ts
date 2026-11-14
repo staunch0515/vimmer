@@ -183,13 +183,19 @@ const index = (token: string | undefined): number | null => (token !== undefined
  */
 export const findingSelection = (f: CheckFinding, t: VideoTimeline): Selection | null => {
   const tokens = f.suggestion.path ? pointerTokens(f.suggestion.path) : [];
-  const [root, a, kind, b] = tokens;
+  const [root, a, kind, b, sub, c] = tokens;
   if (root === "scenes") {
     const sceneIndex = index(a);
     const scene = sceneIndex === null ? undefined : t.scenes[sceneIndex];
     if (scene && sceneIndex !== null) {
       const i = index(b);
-      if (kind === "layers" && i !== null && scene.layers?.[i]) return { kind: "layer", sceneIndex, index: i };
+      if (kind === "layers" && i !== null && scene.layers?.[i]) {
+        // A layer keyframe (`/scenes/s/layers/l/keyframes/k`) selects that keyframe in its layer.
+        const k = sub === "keyframes" ? index(c) : null;
+        return k !== null && scene.layers[i].keyframes?.[k]
+          ? { kind: "layer", sceneIndex, index: i, keyframe: k }
+          : { kind: "layer", sceneIndex, index: i };
+      }
       if (kind === "keyframes" && i !== null && scene.keyframes?.[i]) return { kind: "keyframe", sceneIndex, index: i };
       return { kind: "scene", index: sceneIndex };
     }

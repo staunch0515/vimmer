@@ -1,14 +1,19 @@
-import type { Brand, Keyframe, Layer, LayerKind, Music, Scene, SceneTemplate, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import type { Brand, SubtitleBox, Keyframe, Layer, LayerKind, Music, Scene, SceneTemplate, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
 import { templateScene } from "./templates";
 import { emptyScene, type Selection } from "./model";
 import { clampLayers, moveInStack, newLayer } from "./layers";
 import { patchCue } from "../../src/subtitles/words";
+import * as kfs from "./layerKeyframes";
+import { clampBox } from "./subtitleBox";
+import { endMerge, record, redo, undo, type Merge } from "./history";
 
 export type EditorState = {
   timeline: VideoTimeline;
   selection: Selection;
   history: VideoTimeline[];
   future: VideoTimeline[];
+  // The edit run the next coalesced edit may join (see history.ts).
+  merge?: Merge;
 };
 
 export type Action =
@@ -28,6 +33,11 @@ export type Action =
   // `patch` replaces whole keys; a key set to undefined is removed (back to its default).
   | { type: "patchLayer"; sceneIndex: number; index: number; patch: Partial<Record<string, unknown>> }
   | { type: "deleteLayer"; sceneIndex: number; index: number }
+  // Keyframes of layer `index`; `keyframe` is the keyframe's index in the layer's list.
+  | { type: "addLayerKeyframe"; sceneIndex: number; index: number; atMs: number; pose: kfs.Pose }
+  | { type: "patchLayerKeyframe"; sceneIndex: number; index: number; keyframe: number; patch: Partial<Omit<Keyframe, "at_ms">> }
+  | { type: "moveLayerKeyframe"; sceneIndex: number; index: number; keyframe: number; atMs: number }
+  | { type: "deleteLayerKeyframe"; sceneIndex: number; index: number; keyframe: number }
   | { type: "moveLayer"; sceneIndex: number; index: number; delta: -1 | 1 }
   | { type: "patchSubtitle"; index: number; patch: Partial<SubtitleCue> }
   | { type: "addSubtitle"; startMs: number }
@@ -37,21 +47,70 @@ export type Action =
   | { type: "patchMusic"; patch: Partial<Music> }
   // The whole brand (null removes it). Brand edits are undoable like any other edit.
   | { type: "setBrand"; brand: Brand | null }
+  // Where the subtitles sit (null: the built-in place).
+  | { type: "setSubtitleBox"; box: SubtitleBox | null }
   // A new scene made from a template, after scene `after` (-1: at the start).
   | { type: "insertTemplate"; name: string; after: number; params?: SceneTemplate["params"] }
   | { type: "patchTemplate"; index: number; params: SceneTemplate["params"] }
   // A whole timeline proposed by the editing assistant and accepted by the user: one undo step.
   | { type: "applyAssistant"; timeline: VideoTimeline }
   | { type: "undo" }
-  | { type: "redo" };
+  | { type: "redo" }
+  // An edit made by typing in a field (or dragging a slider): consecutive ones with the same `key`,
+  // each within a second of the last, are one undo step. `at` is the event time in ms.
+  | { type: "coalesce"; key: string; at: number; action: Action }
+  // The field lost focus: the next edit starts a new undo step.
+  | { type: "endMerge" };
 
-// Edits that mutate the timeline push the previous version onto history, so undo works.
+// An edit's new document and selection. The reducer records it in the history (history.ts).
 const commit = (state: EditorState, timeline: VideoTimeline, selection = state.selection): EditorState => ({
+  ...state,
   timeline,
   selection,
-  history: [...state.history.slice(-99), state.timeline],
-  future: [],
 });
+
+const sameTimeline = (a: VideoTimeline, b: VideoTimeline): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+export const reducer = (state: EditorState, action: Action): EditorState => {
+  switch (action.type) {
+    case "load":
+      return { timeline: action.timeline, selection: { kind: "none" }, history: [], future: [], merge: null };
+    case "select":
+      return { ...state, selection: action.selection };
+    case "undo":
+    case "redo": {
+      const next = action.type === "undo" ? undo(state) : redo(state);
+      return next ? { ...next, selection: keptSelection(state.selection, next.timeline) } : state;
+    }
+    case "endMerge":
+      return endMerge(state);
+    case "coalesce":
+      return record(state, edit(state, action.action), { key: action.key, at: action.at }, sameTimeline);
+    default:
+      return record(state, edit(state, action), null, sameTimeline);
+  }
+};
+
+// After undo or redo, the selection stays when what it points at still exists.
+const keptSelection = (sel: Selection, t: VideoTimeline): Selection => {
+  switch (sel.kind) {
+    case "scene":
+      return t.scenes[sel.index] ? sel : { kind: "none" };
+    case "keyframe":
+      return t.scenes[sel.sceneIndex]?.keyframes?.[sel.index] ? sel : { kind: "none" };
+    case "layer": {
+      const layer = t.scenes[sel.sceneIndex]?.layers?.[sel.index];
+      if (!layer) return { kind: "none" };
+      return sel.keyframe !== undefined && !layer.keyframes?.[sel.keyframe] ? { kind: "layer", sceneIndex: sel.sceneIndex, index: sel.index } : sel;
+    }
+    case "subtitle":
+      return t.subtitles[sel.index] ? sel : { kind: "none" };
+    case "music":
+      return t.music ? sel : { kind: "none" };
+    case "none":
+      return sel;
+  }
+};
 
 // Keeps scene-local motion valid after structural edits (resize, reorder, delete):
 // no transition on the first scene, transitions and keyframes stay inside the scene.
@@ -96,13 +155,27 @@ const withLayers = (t: VideoTimeline, sceneIndex: number, layers: Layer[]): Vide
 const compactKeyframe = (k: Keyframe): Keyframe =>
   Object.fromEntries(Object.entries(k).filter(([, v]) => v !== undefined)) as Keyframe;
 
-export const reducer = (state: EditorState, action: Action): EditorState => {
+const withLayer = (state: EditorState, sceneIndex: number, index: number, fn: (l: Layer, sceneMs: number) => Layer): VideoTimeline | null => {
+  const t = state.timeline;
+  const scene = t.scenes[sceneIndex];
+  const layer = scene?.layers?.[index];
+  if (!layer) return null;
+  const next = fn(layer, scene.duration_ms);
+  if (next === layer) return null;
+  return withLayers(t, sceneIndex, scene.layers!.map((l, i) => (i === index ? next : l)));
+};
+
+// Applies one edit to the document (history is handled by `reducer`).
+const edit = (state: EditorState, action: Action): EditorState => {
   const t = state.timeline;
   switch (action.type) {
     case "load":
-      return { timeline: action.timeline, selection: { kind: "none" }, history: [], future: [] };
     case "select":
-      return { ...state, selection: action.selection };
+    case "undo":
+    case "redo":
+    case "coalesce":
+    case "endMerge":
+      return state;
     case "patchScene": {
       const scenes = t.scenes.map((s, i) => (i === action.index ? { ...s, ...action.patch } : s));
       return commit(state, { ...t, scenes: normalizeScenes(scenes) });
@@ -189,6 +262,26 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
         kind: "scene", index: action.sceneIndex,
       });
     }
+    case "addLayerKeyframe": {
+      const layer = t.scenes[action.sceneIndex]?.layers?.[action.index];
+      const sceneMs = t.scenes[action.sceneIndex]?.duration_ms ?? 0;
+      const added = layer ? kfs.addKeyframe(layer, sceneMs, action.atMs, action.pose) : null;
+      if (!added) return state;
+      const next = withLayer(state, action.sceneIndex, action.index, () => added.layer);
+      return next ? commit(state, next, { kind: "layer", sceneIndex: action.sceneIndex, index: action.index, keyframe: added.index }) : state;
+    }
+    case "patchLayerKeyframe": {
+      const next = withLayer(state, action.sceneIndex, action.index, (l) => kfs.patchKeyframe(l, action.keyframe, action.patch));
+      return next ? commit(state, next) : state;
+    }
+    case "moveLayerKeyframe": {
+      const next = withLayer(state, action.sceneIndex, action.index, (l, ms) => kfs.moveKeyframe(l, ms, action.keyframe, action.atMs));
+      return next ? commit(state, next) : state;
+    }
+    case "deleteLayerKeyframe": {
+      const next = withLayer(state, action.sceneIndex, action.index, (l) => kfs.deleteKeyframe(l, action.keyframe));
+      return next ? commit(state, next, { kind: "layer", sceneIndex: action.sceneIndex, index: action.index }) : state;
+    }
     case "moveLayer": {
       const list = t.scenes[action.sceneIndex]?.layers;
       if (!list?.[action.index]) return state;
@@ -240,6 +333,10 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
       if (!t.music) return state;
       return commit(state, { ...t, music: { ...t.music, ...action.patch } });
     }
+    case "setSubtitleBox": {
+      const { subtitle_box: _old, ...rest } = t;
+      return commit(state, action.box ? { ...rest, subtitle_box: clampBox(action.box) } : rest);
+    }
     case "setBrand": {
       const { brand: _old, ...rest } = t;
       return commit(state, action.brand ? { ...rest, brand: action.brand } : rest);
@@ -260,22 +357,7 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
     }
     case "applyAssistant": {
       const next = { ...action.timeline, subtitles: action.timeline.subtitles ?? [] };
-      const keep =
-        (state.selection.kind === "scene" && next.scenes[state.selection.index]) ||
-        (state.selection.kind === "layer" && next.scenes[state.selection.sceneIndex]?.layers?.[state.selection.index]) ||
-        (state.selection.kind === "subtitle" && next.subtitles[state.selection.index]) ||
-        (state.selection.kind === "music" && next.music);
-      return commit(state, next, keep ? state.selection : { kind: "none" });
-    }
-    case "undo": {
-      const prev = state.history[state.history.length - 1];
-      if (!prev) return state;
-      return { timeline: prev, selection: { kind: "none" }, history: state.history.slice(0, -1), future: [t, ...state.future] };
-    }
-    case "redo": {
-      const next = state.future[0];
-      if (!next) return state;
-      return { timeline: next, selection: { kind: "none" }, history: [...state.history, t], future: state.future.slice(1) };
+      return commit(state, next, keptSelection(state.selection, next));
     }
   }
 };

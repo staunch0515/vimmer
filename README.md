@@ -433,6 +433,13 @@ full-timeline time, so a cue that crosses a chunk boundary fades only at its own
 an unchunked render (no blink at the seam). The overlay sits in the
 lower band; scene text keeps a 260 px bottom inset to stay clear of it.
 
+`subtitle_box` (optional, top level) moves the subtitles, for every cue:
+`{"x": 0.35, "y": 0.3}` puts the box's center at 35 % of the frame width and its bottom edge at
+30 % of the frame height (the box grows upward; same 86 %-wide limit and line breaks as at the
+bottom). Without it the box sits where it always has: centered, its bottom edge 4 % of the frame
+width above the bottom (16:9 `y` ≈ 0.929, 9:16 ≈ 0.978), and timelines render exactly as before.
+`vimmer check` checks the moved box against the title-safe area and the logo.
+
 Image and audio paths are relative to `remotion-renderer/public/`. Normalized
 images are written to `public/generated/`, which is gitignored.
 
@@ -1310,13 +1317,25 @@ cd remotion-renderer && npm install && npm run editor   # http://localhost:5180
 ```
 
 - **Preview**: Remotion Player with frame sync. Space plays and pauses.
-- **Timeline**: scene, subtitle and audio tracks. Click the ruler to scrub, drag a
+- **Timeline**: scene, keyframe, layer, subtitle and audio tracks. Click the ruler to scrub, drag a
   scene's right edge to change its duration, and zoom with the slider. Edges snap to
-  neighbouring boundaries and show a cyan guide.
-- **Inspector**: edit scene text, duration, highlights, image, motion and audio, and
-  edit subtitle cues. Add a cue at the playhead.
-- **Toolbar**: format switch, undo and redo (⌘Z / ⇧⌘Z), import and export JSON.
-  Validation mirrors the Rust rules and appears above the workspace.
+  neighbouring boundaries and show a cyan guide. The **Layer** row shows the selected layer's
+  time and its keyframes; drag a keyframe to retime it (kept between its neighbours and inside the
+  layer), Delete removes it.
+- **Inspector**: edit scene text, duration (applied on Enter or when the field loses focus),
+  highlights, image, motion and audio, and edit subtitle cues. Add a cue at the playhead.
+- **Layer keyframes**: a selected layer lists its keyframes. **+ Keyframe at playhead** adds one
+  holding the layer's pose at that moment; click one to select it and jump the playhead there,
+  then edit its time, x/y offset, scale, opacity, rotation and ease (the renderer's easings).
+  Validation mirrors vimmer-dsl: sorted, no two at the same time, inside the scene, value ranges.
+- **Subtitle position**: with a cue selected, drag the subtitle box in the preview. It snaps to
+  the center lines and the title-safe area (dashed) and shows its guides; arrow keys nudge 1 px
+  (Shift: 10 px). The Subtitles tab has the exact `x`/`y` and **Reset to the built-in place**. This
+  writes `subtitle_box` and moves every cue.
+- **Toolbar**: format switch, undo and redo (⌘Z / ⇧⌘Z; in a text field the field's own undo
+  applies), import and export JSON. One gesture is one undo step: a drag, an add, a run of typing
+  in one field (until it loses focus or a second passes), a run of arrow-key nudges. Selecting is
+  not a step. Validation mirrors the Rust rules and appears above the workspace.
 - **Brand** tab: the six brand colors (picker plus hex field; empty = built-in), heading and body
   font (family and file), logo (file, corner, size, margin, opacity, hidden scenes), Load / Save
   `brand.json`, and **Insert template scene** (after the selected scene). A template scene's
@@ -1368,7 +1387,7 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | `subtitle.too_long` | error / warning | a cue needs more than 2 lines in the band (font 5% of the short side, text width 86% of the frame minus padding); error at 4+ lines even with 12% narrower widths. The fix splits the cue in two |
 | `subtitle.reading_speed` | warning | a cue without word timing above en 20, zh 9, ja 4 characters per second (Netflix limits; en counts spaces, zh/ja skip punctuation). Cues with word timing or over a narrated scene follow the speech and are not checked |
 | `safe_area.text`, `safe_area.subtitle` | warning / error | text, a text layer's, lower third's or bar chart's box or a cue reaches outside the title-safe area (inner 90%, 5% margins, for 16:9 and 9:16) |
-| `safe_area.subtitle_band` | info | at 1080x1920 the renderer puts the subtitle band 43 px from the bottom, inside the 96 px margin (a renderer change, not a timeline field) |
+| `safe_area.subtitle_band` | info / warning | at 1080x1920 the built-in band sits 43 px from the bottom, inside the 96 px margin (info; the fix sets `subtitle_box` with `y` 0.95); a moved `subtitle_box` whose bottom edge is below the safe area (warning, the fix raises `y`) or whose widest box (86 % of the width) reaches past the safe sides (info, the fix centers `x`). A moved box whose cue reaches above the safe top is `safe_area.subtitle` (error, the fix lowers `y`) |
 | `motion.uncovered_edge` | warning | at some frame the keyframes (offset, rotation, scale below 1) leave part of the frame uncovered; the fix raises the keyframe scales |
 | `assets.missing_image`, `assets.unreadable_image` | error | image missing, or not a PNG/JPEG the renderer can normalize (scene images and image layers) |
 | `assets.missing_icon`, `assets.unreadable_icon` | error | an icon layer's file is missing or has no `<svg>` root |

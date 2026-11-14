@@ -374,6 +374,7 @@ mod tests {
             subtitles: vec![],
             music: None,
             brand: None,
+            subtitle_box: None,
         }
     }
 

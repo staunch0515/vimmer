@@ -24,7 +24,7 @@ const timeline = {
   resolution: { width: 1920, height: 1080 },
   scenes: [
     { id: "intro", duration_ms: 3000 },
-    { id: "body", duration_ms: 4000, layers: [{ id: "t" }, { id: "u" }], keyframes: [{ at_ms: 0 }] },
+    { id: "body", duration_ms: 4000, layers: [{ id: "t" }, { id: "u", keyframes: [{ at_ms: 0 }, { at_ms: 500 }] }], keyframes: [{ at_ms: 0 }] },
   ],
   subtitles: [{ start_ms: 0, end_ms: 1000, text: "hi" }],
   music: { source: "a.mp3" },
@@ -51,7 +51,10 @@ const report = (findings: CheckFinding[]): CheckReport => ({
 test("a finding's pointer selects the layer, keyframe, scene, cue or music", () => {
   const sel = (path: string) => findingSelection(finding("error", path), timeline);
   assert.deepEqual(sel("/scenes/1/layers/1/x"), { kind: "layer", sceneIndex: 1, index: 1 });
+  // A layer without that keyframe: the layer. A layer keyframe: that keyframe.
   assert.deepEqual(sel("/scenes/1/layers/0/keyframes/0/at_ms"), { kind: "layer", sceneIndex: 1, index: 0 });
+  assert.deepEqual(sel("/scenes/1/layers/1/keyframes/1/at_ms"), { kind: "layer", sceneIndex: 1, index: 1, keyframe: 1 });
+  assert.deepEqual(sel("/scenes/1/layers/1/keyframes/7"), { kind: "layer", sceneIndex: 1, index: 1 });
   assert.deepEqual(sel("/scenes/1/keyframes/0"), { kind: "keyframe", sceneIndex: 1, index: 0 });
   assert.deepEqual(sel("/scenes/0/duration_ms"), { kind: "scene", index: 0 });
   assert.deepEqual(sel("/scenes/1/template/params/title"), { kind: "scene", index: 1 });

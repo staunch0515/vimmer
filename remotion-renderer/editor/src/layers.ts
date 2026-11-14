@@ -4,6 +4,7 @@
 import type { Layer, LayerAnimationKind, LayerKind, Resolution, Scene, VideoClip } from "../../src/types/timeline";
 import { MAX_CLIP_SPEED, MIN_CLIP_SPEED } from "../../src/motion/video";
 import { splitLayers } from "../../src/motion/layers";
+import { keyframeProblems } from "./layerKeyframes";
 
 export const LAYER_KINDS: LayerKind[] = ["text", "shape", "image", "icon", "video", "lower_third", "counter", "bar_chart", "progress_ring"];
 export const MAX_VIDEO_LAYERS = 4;
@@ -164,6 +165,7 @@ export const checkLayers = (s: Scene): string[] => {
     const anim = (l.enter ? l.enter.duration_ms ?? 400 : 0) + (l.exit ? l.exit.duration_ms ?? 400 : 0);
     if (anim > end - (l.start_ms ?? 0)) out.push(`${name}: enter and exit are longer than the layer is shown.`);
     if (l.opacity !== undefined && !(l.opacity >= 0 && l.opacity <= 1)) out.push(`${name}: opacity must be between 0 and 1.`);
+    out.push(...keyframeProblems(name, l.keyframes, s.duration_ms));
     switch (l.kind) {
       case "text":
         if (!l.text.trim()) out.push(`${name}: the text is empty.`);

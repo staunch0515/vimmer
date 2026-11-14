@@ -512,6 +512,53 @@ impl SoundEffect {
     }
 }
 
+/// Where the subtitle box sits, for every cue. Absent from the timeline: where the renderer has
+/// always put it (centered, its bottom edge 4 % of the frame *width* above the frame bottom), so
+/// timelines without it render exactly as before.
+///
+/// The box keeps its size rules (at most 86 % of the frame width, one font size for all cues);
+/// only its anchor moves. Mirrored by `remotion-renderer/src/components/Subtitles.tsx` and the
+/// subtitle band in `vimmer-check/src/layout.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SubtitleBox {
+    /// Center of the box, as a fraction of the frame width (0..1).
+    pub x: f64,
+    /// Bottom edge of the box, as a fraction of the frame height (0..1). The box grows upward.
+    pub y: f64,
+}
+
+impl SubtitleBox {
+    /// Bottom padding of the default box, as a fraction of the frame width (CSS `paddingBottom: 4%`).
+    pub const DEFAULT_BOTTOM_FRAC_OF_WIDTH: f64 = 0.04;
+
+    /// The box the renderer uses when the timeline has none.
+    pub fn default_for(res: Resolution) -> Self {
+        Self {
+            x: 0.5,
+            y: 1.0
+                - Self::DEFAULT_BOTTOM_FRAC_OF_WIDTH * f64::from(res.width) / f64::from(res.height),
+        }
+    }
+
+    /// Validation problems, worded for `subtitle_box: ...`.
+    pub fn problems(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if !(self.x.is_finite() && (0.0..=1.0).contains(&self.x)) {
+            out.push(format!(
+                "x {} must be between 0 and 1 (fraction of the frame width)",
+                self.x
+            ));
+        }
+        if !(self.y.is_finite() && self.y > 0.0 && self.y <= 1.0) {
+            out.push(format!(
+                "y {} must be above 0 and at most 1 (bottom edge, fraction of the frame height)",
+                self.y
+            ));
+        }
+        out
+    }
+}
+
 /// Root document: the full timeline handed from the Rust core to Remotion.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoTimeline {
@@ -528,9 +575,18 @@ pub struct VideoTimeline {
     /// built-in look.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brand: Option<Brand>,
+    /// Where the subtitles sit (see [`SubtitleBox`]). Absent: the built-in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle_box: Option<SubtitleBox>,
 }
 
 impl VideoTimeline {
+    /// The subtitle box in use: `subtitle_box`, or the built-in place.
+    pub fn subtitle_box_or_default(&self) -> SubtitleBox {
+        self.subtitle_box
+            .unwrap_or_else(|| SubtitleBox::default_for(self.resolution))
+    }
+
     /// Sum of all scene durations, in milliseconds.
     pub fn total_duration_ms(&self) -> u64 {
         self.scenes.iter().map(|s| s.duration_ms).sum()

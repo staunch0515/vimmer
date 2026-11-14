@@ -31,8 +31,9 @@ pub use library::{
 };
 pub use model::{
     AudioMapping, BeatGrid, BeatSync, Duck, Easing, Keyframe, LayerEvent, MotionType, Music,
-    MusicPick, Narration, Resolution, Scene, SfxTrigger, SnapMode, SoundEffect, SubtitleCue,
-    Transition, TransitionKind, VideoTimeline, WordTiming, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
+    MusicPick, Narration, Resolution, Scene, SfxTrigger, SnapMode, SoundEffect, SubtitleBox,
+    SubtitleCue, Transition, TransitionKind, VideoTimeline, WordTiming, MAX_DURATION_MS,
+    MAX_FRAMES, TARGET_FPS,
 };
 pub use srt::{parse_srt, SrtError};
 pub use template::{

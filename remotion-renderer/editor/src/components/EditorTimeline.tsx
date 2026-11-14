@@ -3,6 +3,7 @@ import type { VideoTimeline } from "../../../src/types/timeline";
 import { timecode, type Selection } from "../model";
 import type { Action } from "../state";
 import type { BeatMark } from "../beats";
+import { keyframeRange, layerSpan } from "../layerKeyframes";
 
 const LABEL_W = 116;
 const SNAP_PX = 8;
@@ -23,6 +24,8 @@ type Props = {
 type Drag =
   | { kind: "scrub" }
   | { kind: "keyframe"; sceneIndex: number; index: number; atMs: number; moved: boolean }
+  // A keyframe of layer `index`: `keyframe` is its index in the layer's list.
+  | { kind: "layerKeyframe"; sceneIndex: number; index: number; keyframe: number; atMs: number; moved: boolean }
   | { kind: "resize"; index: number; sceneStartMs: number; startX: number; startDuration: number; duration: number };
 
 // Magnetic snapping: a point within SNAP_PX of a boundary pulls onto it and shows a guide.
@@ -98,6 +101,16 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
       setDrag({ ...drag, atMs: Math.max(lo, Math.min(raw, hi)), moved: true });
       return;
     }
+    if (drag.kind === "layerKeyframe") {
+      const scene = timeline.scenes[drag.sceneIndex];
+      const layer = scene?.layers?.[drag.index];
+      if (!layer) return;
+      // Clamped like the reducer: between its neighbours, inside the layer's time.
+      const { lo, hi } = keyframeRange(layer, scene.duration_ms, drag.keyframe);
+      const raw = Math.round(msFromClientX(e.clientX) - starts[drag.sceneIndex]);
+      setDrag({ ...drag, atMs: Math.max(lo, Math.min(raw, hi)), moved: true });
+      return;
+    }
     const dxMs = ((e.clientX - drag.startX) / pps) * 1000;
     const wanted = drag.sceneStartMs + drag.startDuration + dxMs;
     const snapped = snapTo(wanted, snapPoints, pps);
@@ -109,6 +122,10 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
   const onPointerUp = () => {
     if (drag?.kind === "resize" && drag.duration !== drag.startDuration) {
       dispatch({ type: "patchScene", index: drag.index, patch: { duration_ms: drag.duration } });
+    }
+    if (drag?.kind === "layerKeyframe" && drag.moved) {
+      // One dispatch when the drag ends: a drag is one undo step.
+      dispatch({ type: "moveLayerKeyframe", sceneIndex: drag.sceneIndex, index: drag.index, keyframe: drag.keyframe, atMs: drag.atMs });
     }
     if (drag?.kind === "keyframe" && drag.moved) {
       dispatch({ type: "moveKeyframe", sceneIndex: drag.sceneIndex, index: drag.index, atMs: drag.atMs });
@@ -221,6 +238,17 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
             )}
           </Track>
 
+          <LayerTrack
+            timeline={timeline}
+            selection={selection}
+            starts={starts}
+            pps={pps}
+            drag={drag}
+            onSelect={onSelect}
+            dispatch={dispatch}
+            onStartDrag={setDrag}
+          />
+
           <Track label="Subtitles" height={TRACK_H}>
             {timeline.subtitles.map((c, i) => {
               const active = selection.kind === "subtitle" && selection.index === i;
@@ -280,9 +308,67 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
   );
 };
 
-const Track = ({ label, height, children }: { label: string; height: number; children: React.ReactNode }) => (
+// The selected layer's time in its scene, with its keyframes as draggable markers.
+const LayerTrack = ({
+  timeline, selection, starts, pps, drag, onSelect, dispatch, onStartDrag,
+}: {
+  timeline: VideoTimeline; selection: Selection; starts: number[]; pps: number; drag: Drag | null;
+  onSelect: (s: Selection) => void; dispatch: Dispatch<Action>; onStartDrag: (d: Drag) => void;
+}) => {
+  const sel = selection.kind === "layer" ? selection : null;
+  const scene = sel ? timeline.scenes[sel.sceneIndex] : undefined;
+  const layer = sel ? scene?.layers?.[sel.index] : undefined;
+  if (!sel || !scene || !layer) {
+    return (
+      <Track label="Layer" height={30}>
+        <span className="track-hint dim">Select a layer to see its keyframes</span>
+      </Track>
+    );
+  }
+  const { sceneIndex, index } = sel;
+  const span = layerSpan(layer, scene.duration_ms);
+  const base = starts[sceneIndex];
+  return (
+    <Track label={layer.id.length > 12 ? `${layer.id.slice(0, 11)}…` : layer.id} height={30} title={`Layer “${layer.id}” in ${scene.id}`}>
+      <div
+        className="layer-span"
+        style={{ left: ((base + span.start) / 1000) * pps, width: Math.max(2, ((span.end - span.start) / 1000) * pps) }}
+        data-layer-span={layer.id}
+        onPointerDown={() => onSelect({ kind: "layer", sceneIndex, index })}
+      />
+      {(layer.keyframes ?? []).map((k, ki) => {
+        const dragging = drag?.kind === "layerKeyframe" && drag.sceneIndex === sceneIndex && drag.index === index && drag.keyframe === ki;
+        const at = dragging ? drag.atMs : k.at_ms;
+        const active = sel.keyframe === ki;
+        return (
+          <div
+            key={`lkf-${ki}`}
+            role="button"
+            aria-label={`Keyframe ${ki + 1} of layer ${layer.id} at ${at} ms`}
+            className={active ? "kf-marker layer active" : "kf-marker layer"}
+            data-layer-kf-marker={ki}
+            style={{ left: ((base + at) / 1000) * pps }}
+            title={`${layer.id} · ${at} ms`}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              onSelect({ kind: "layer", sceneIndex, index, keyframe: ki });
+              onStartDrag({ kind: "layerKeyframe", sceneIndex, index, keyframe: ki, atMs: k.at_ms, moved: false });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Delete" || e.key === "Backspace") dispatch({ type: "deleteLayerKeyframe", sceneIndex, index, keyframe: ki });
+            }}
+            tabIndex={0}
+          />
+        );
+      })}
+    </Track>
+  );
+};
+
+const Track = ({ label, height, title, children }: { label: string; height: number; title?: string; children: React.ReactNode }) => (
   <div className="track-row" style={{ height }}>
-    <div className="track-label">{label}</div>
+    <div className="track-label" title={title ?? label}>{label}</div>
     <div className="track-content">{children}</div>
   </div>
 );
