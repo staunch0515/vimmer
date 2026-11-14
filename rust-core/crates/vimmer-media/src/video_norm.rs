@@ -209,38 +209,35 @@ impl ClipJob {
             .map(String::from)
             .to_vec();
         args.extend(self.input_args());
-        args.extend(
-            [
-                "-map".into(),
-                "0:v:0".into(),
-                "-vf".into(),
-                self.video_filter(),
-                "-frames:v".into(),
-                self.frames.to_string(),
-                "-r".into(),
-                self.fps.to_string(),
-                "-c:v".into(),
-                "libx264".into(),
-                "-preset".into(),
-                "veryfast".into(),
-                "-crf".into(),
-                "18".into(),
-                "-g".into(),
-                CLIP_GOP.to_string(),
-                "-keyint_min".into(),
-                CLIP_GOP.to_string(),
-                "-sc_threshold".into(),
-                "0".into(),
-                "-bf".into(),
-                "0".into(),
-                "-pix_fmt".into(),
-                "yuv420p".into(),
-                "-an".into(),
-                "-movflags".into(),
-                "+faststart".into(),
-            ]
-            .into_iter(),
-        );
+        args.extend([
+            "-map".into(),
+            "0:v:0".into(),
+            "-vf".into(),
+            self.video_filter(),
+            "-frames:v".into(),
+            self.frames.to_string(),
+            "-r".into(),
+            self.fps.to_string(),
+            "-c:v".into(),
+            "libx264".into(),
+            "-preset".into(),
+            "veryfast".into(),
+            "-crf".into(),
+            "18".into(),
+            "-g".into(),
+            CLIP_GOP.to_string(),
+            "-keyint_min".into(),
+            CLIP_GOP.to_string(),
+            "-sc_threshold".into(),
+            "0".into(),
+            "-bf".into(),
+            "0".into(),
+            "-pix_fmt".into(),
+            "yuv420p".into(),
+            "-an".into(),
+            "-movflags".into(),
+            "+faststart".into(),
+        ]);
         args.push(dst.display().to_string());
         args
     }
