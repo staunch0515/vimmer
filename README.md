@@ -570,7 +570,8 @@ cargo run --release -p vimmer-cli -- generate story.txt --lang en --no-render > 
   (tokens, cost, retries per attempt) and `reply-N.json` (the raw API replies).
 - Every render option of `vimmer <timeline.json>` works here too (`--tts`, `--auto-subtitles`,
   `--word-subtitles`, `--remotion-dir`, `--work-dir`, …). Generated timelines carry no subtitle
-  cues, so pass `--auto-subtitles on` to get subtitles.
+  cues, and each scene's narration is its on-screen text, so `--auto-subtitles on` adds no cue
+  that would repeat it; pass `--auto-subtitles all` for captions under every narrated scene.
 - Pictures are not generated unless you pass `--illustrate` (see "Illustrations" below):
   without it each scene's `image_prompt` is kept in the storyboard, `image` stays empty, and
   scenes render as text.
@@ -1172,9 +1173,23 @@ Where things live:
   - `--word-subtitles on|off` (default **on**): add word timing to subtitle cues that cover a
     synthesized narration. Scenes without narration, and cues that already have `words`, are
     left alone.
-  - `--auto-subtitles on|off` (default **off**): also create cues from the narration text for
-    narrated scenes that no cue covers. Off by default so an existing timeline renders the same
-    subtitles it always did; when nothing needs timing, whisper is not even looked up.
+  - `--auto-subtitles off|on|all` (default **off**): also create cues from the narration text
+    for narrated scenes that no cue covers. Off by default so an existing timeline renders the
+    same subtitles it always did; when nothing needs timing, whisper is not even looked up.
+    - `on` skips a scene whose whole narration is already on screen as text, so the same
+      sentence is not shown twice (animated scene text above, subtitle below). Narration counts
+      as on screen when its letters and digits, in order, appear in the text the scene shows
+      while it plays: the scene `text`, then `text` layers and lower-third titles/subtitles on
+      screen at any time from the narration start to the scene end (layers under the scene text
+      first, in drawing order). Case, punctuation (ASCII or CJK), whitespace and full-width forms
+      are ignored, so `你好，世界。` matches `你好, 世界` and `ＡＩ` matches `AI`. Narration that only
+      partly appears (a sentence under a short headline) is still subtitled. The render log
+      lists the scenes that were skipped. Narration always speaks the scene `text`, which the
+      renderer always draws, so today `on` creates no cues for synthesized narration (and runs
+      no recognition for it); use `all` for captions.
+    - `all` creates cues for every narrated scene, even when its text is on screen (the old
+      `on`; captions for accessibility).
+    - Cues already in the timeline are never removed and get word timing in every mode.
 - When `whisper-cli` or the model is missing, the render prints one warning and the subtitles
   stay exactly as they were. Recognition stops when the render is cancelled, and gives up after
   180 s plus 30× the audio length (then plain subtitles are kept and later clips are skipped).
@@ -1198,7 +1213,8 @@ Where things live:
   words costs their character distance. Misheard words keep their slot, missed words are
   interpolated between neighbours by length, extra words are ignored.
 - **Cues**: subtitle cues overlapping a narrated clip get `words` for their own text. With
-  `--auto-subtitles on`, a clip no cue covers gets cues generated from the script: a sentence
+  `--auto-subtitles all` (or `on`, when the narration is not on screen), a clip no cue covers
+  gets cues generated from the script: a sentence
   end closes a line, and a long line breaks at a comma or before the word that overflows.
 
 Each cue can carry absolute word times, which must lie inside the cue, in order and without
