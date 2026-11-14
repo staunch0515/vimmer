@@ -42,8 +42,9 @@ pub const DEFAULT_SUBTITLE_BACKGROUND: &str = "#09090bb8";
 
 /// Font file extensions a brand font may have (lower case).
 pub const FONT_EXTENSIONS: [&str; 4] = ["ttf", "otf", "woff", "woff2"];
-/// Image file extensions a logo may have (lower case).
-pub const LOGO_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "svg"];
+/// Image file extensions a logo may have (lower case): the raster formats image layers use, since
+/// templates draw the logo as an image layer.
+pub const LOGO_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
 /// Longest font family name.
 pub const MAX_FAMILY_CHARS: usize = 64;
 
@@ -125,7 +126,7 @@ fn default_one() -> f32 {
 /// A logo drawn on every scene (except `hide_on`), above the layers and below the subtitles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Logo {
-    /// A .png, .jpg, .jpeg, .webp or .svg file relative to the public dir.
+    /// A .png, .jpg or .jpeg file relative to the public dir (transparent PNG works best).
     pub src: String,
     #[serde(default)]
     pub corner: Corner,
@@ -397,7 +398,7 @@ mod tests {
             .iter()
             .any(|m| m.contains("fonts.body.src: a font must be")));
         let ok: Brand = serde_json::from_str(
-            r##"{"colors":{"accent":"#abc"},"fonts":{"body":{"family":"My Font","src":"assets/fonts/x.woff2"}},"logo":{"src":"assets/logo.svg"}}"##,
+            r##"{"colors":{"accent":"#abc"},"fonts":{"body":{"family":"My Font","src":"assets/fonts/x.woff2"}},"logo":{"src":"assets/logo.png"}}"##,
         )
         .unwrap();
         assert!(ok.problems().is_empty());

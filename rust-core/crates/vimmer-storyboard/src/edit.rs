@@ -600,6 +600,20 @@ enum Kind {
     Duck,
     /// A scene's background `video` clip.
     Video,
+    /// The timeline's `brand` and its parts.
+    Brand,
+    BrandColors,
+    BrandFonts,
+    BrandFont,
+    Logo,
+    /// `logo.hide_on`: scene ids.
+    HideOn,
+    /// A scene's `template` and its `params` (names checked against the template's catalog
+    /// entry; see `vimmer_dsl::template`).
+    Template,
+    TemplateParams,
+    /// A template param that is a list of strings (`items`, `lines`).
+    ParamList,
     /// A number, string, bool or enum value: no children.
     Leaf,
 }
@@ -614,7 +628,32 @@ impl Kind {
                 ("scenes", Scenes),
                 ("subtitles", Subtitles),
                 ("music", Music),
+                ("brand", Brand),
             ],
+            Brand => &[
+                ("colors", BrandColors),
+                ("fonts", BrandFonts),
+                ("logo", Logo),
+            ],
+            BrandColors => &[
+                ("primary", Leaf),
+                ("accent", Leaf),
+                ("text", Leaf),
+                ("muted_text", Leaf),
+                ("background", Leaf),
+                ("subtitle_background", Leaf),
+            ],
+            BrandFonts => &[("heading", BrandFont), ("body", BrandFont)],
+            BrandFont => &[("family", Leaf), ("src", Leaf)],
+            Logo => &[
+                ("src", Leaf),
+                ("corner", Leaf),
+                ("size", Leaf),
+                ("margin", Leaf),
+                ("opacity", Leaf),
+                ("hide_on", HideOn),
+            ],
+            Template => &[("name", Leaf), ("params", TemplateParams)],
             Resolution => &[("width", Leaf), ("height", Leaf)],
             Scene => &[
                 ("id", Leaf),
@@ -629,6 +668,7 @@ impl Kind {
                 ("transition_in", Transition),
                 ("keyframes", Keyframes),
                 ("layers", Layers),
+                ("template", Template),
             ],
             // Every field any layer kind has; `check_value` narrows it to the value's `kind`.
             Layer => LAYER_FIELDS_ALL,
@@ -681,6 +721,7 @@ impl Kind {
             Kind::Bars => Some(Kind::Bar),
             Kind::Subtitles => Some(Kind::Cue),
             Kind::Words => Some(Kind::Word),
+            Kind::HideOn | Kind::ParamList => Some(Kind::Leaf),
             _ => None,
         }
     }
@@ -710,6 +751,15 @@ impl Kind {
             Kind::Music => "the music settings",
             Kind::Duck => "the music ducking settings",
             Kind::Video => "a scene background video",
+            Kind::Brand => "the brand",
+            Kind::BrandColors => "the brand colors",
+            Kind::BrandFonts => "the brand fonts",
+            Kind::BrandFont => "a brand font",
+            Kind::Logo => "the brand logo",
+            Kind::HideOn => "the logo's hide_on list",
+            Kind::Template => "a scene template",
+            Kind::TemplateParams => "template params",
+            Kind::ParamList => "a template param list",
             Kind::Leaf => "a plain value",
         }
     }
@@ -942,7 +992,19 @@ fn kind_at(tokens: &[String]) -> Result<Kind, String> {
                 format!("`{}`", pointer_of(&tokens[..depth]))
             }
         };
-        kind = if let Some(fields) = kind.fields() {
+        kind = if kind == Kind::TemplateParams {
+            // Any param of any template here; the template's own list is checked on the value
+            // (`check_value`) and by validation, which knows the scene's template name.
+            match template_param_kind(token) {
+                Some(k) => k,
+                None => {
+                    return Err(format!(
+                        "`{token}` is not a param of any template; params: {}",
+                        all_template_params().join(", ")
+                    ))
+                }
+            }
+        } else if let Some(fields) = kind.fields() {
             match fields.iter().find(|(name, _)| name == token) {
                 Some((_, k)) => *k,
                 None => {
@@ -975,10 +1037,77 @@ fn kind_at(tokens: &[String]) -> Result<Kind, String> {
     Ok(kind)
 }
 
+/// The kind of a template param named `name` (of any template), if one exists.
+fn template_param_kind(name: &str) -> Option<Kind> {
+    use vimmer_dsl::template::{ParamKind, CATALOG};
+    CATALOG
+        .iter()
+        .flat_map(|t| t.params.iter())
+        .find(|p| p.name == name)
+        .map(|p| match p.kind {
+            ParamKind::Lines { .. } => Kind::ParamList,
+            _ => Kind::Leaf,
+        })
+}
+
+fn all_template_params() -> Vec<&'static str> {
+    let mut names: Vec<&str> = vimmer_dsl::template::CATALOG
+        .iter()
+        .flat_map(|t| t.params.iter().map(|p| p.name))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+/// A whole `template` value: a known name and only that template's params.
+fn check_template_value(map: &Map<String, Value>, at: &str) -> Result<(), String> {
+    let Some(name) = map.get("name").and_then(Value::as_str) else {
+        return Ok(()); // deserialization reports a missing or non-string name
+    };
+    let Some(info) = vimmer_dsl::template::template_info(name) else {
+        let names: Vec<&str> = vimmer_dsl::template::CATALOG
+            .iter()
+            .map(|t| t.name)
+            .collect();
+        return Err(format!(
+            "unknown template `{name}` at `{at}`; the templates are {}",
+            names.join(", ")
+        ));
+    };
+    if let Some(Value::Object(params)) = map.get("params") {
+        for key in params.keys() {
+            if !info.params.iter().any(|p| p.name == key) {
+                let names: Vec<&str> = info.params.iter().map(|p| p.name).collect();
+                return Err(format!(
+                    "unknown param `{key}` for template `{name}` at `{at}/params`; its params are {}",
+                    names.join(", ")
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Checks that a value written at a place of `kind` has only known fields, recursively.
 fn check_value(kind: Kind, value: &Value, at: &str) -> Result<(), String> {
     match value {
+        Value::Object(map) if kind == Kind::TemplateParams => {
+            for (key, child) in map {
+                let Some(k) = template_param_kind(key) else {
+                    return Err(format!(
+                        "unknown template param `{key}` at `{at}`; params: {}",
+                        all_template_params().join(", ")
+                    ));
+                };
+                check_value(k, child, &format!("{at}/{}", escape_token(key)))?;
+            }
+            Ok(())
+        }
         Value::Object(map) => {
+            if kind == Kind::Template {
+                check_template_value(map, at)?;
+            }
             let (fields, layer_kind) = if kind == Kind::Layer {
                 let (f, k) = layer_fields_for(map);
                 (f, k)
@@ -1702,6 +1831,11 @@ fn asset_refs(t: &VideoTimeline) -> Vec<(String, String)> {
     }
     if let Some(m) = &t.music {
         out.push(("music.source".into(), m.source.clone()));
+    }
+    if let Some(b) = &t.brand {
+        for (what, src) in b.assets() {
+            out.push((format!("brand {what}"), src.to_string()));
+        }
     }
     out
 }

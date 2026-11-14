@@ -196,9 +196,9 @@ pub fn check_reply(
 
 /// Media files under the public dir, relative and sorted, for Claude to choose from.
 pub fn list_assets(public_dir: &Path) -> Vec<String> {
-    const EXT: [&str; 15] = [
+    const EXT: [&str; 19] = [
         "png", "jpg", "jpeg", "webp", "gif", "svg", "mp3", "wav", "m4a", "aac", "ogg", "mp4",
-        "mov", "m4v", "webm",
+        "mov", "m4v", "webm", "ttf", "otf", "woff", "woff2",
     ];
     // Normalized clips and their sound, written by the renderer: not assets to choose.
     let skip = public_dir.join("generated").join("videos");
@@ -361,34 +361,35 @@ pub fn propose_edit_with_key_check(
             &call_limits,
         );
         let _ = fs::remove_file(&request_file);
-        let output =
-            match output {
-                Ok(o) => o,
-                Err(MediaError::Cancelled) => return Err(fail(
+        let output = match output {
+            Ok(o) => o,
+            Err(MediaError::Cancelled) => {
+                return Err(fail(
                     FailureKind::Cancelled,
                     format!(
                         "cancelled during attempt {number}; tokens of that call are not counted"
                     ),
                     &attempts,
                     usage,
-                )),
-                Err(MediaError::TimedOut { secs }) => {
-                    return Err(fail(
-                        FailureKind::TimedOut,
-                        format!("Claude did not answer within {secs} s (attempt {number})"),
-                        &attempts,
-                        usage,
-                    ))
-                }
-                Err(e) => {
-                    return Err(fail(
-                        FailureKind::Helper,
-                        format!("cannot run {}: {e}", helper.python.display()),
-                        &attempts,
-                        usage,
-                    ))
-                }
-            };
+                ))
+            }
+            Err(MediaError::TimedOut { secs }) => {
+                return Err(fail(
+                    FailureKind::TimedOut,
+                    format!("Claude did not answer within {secs} s (attempt {number})"),
+                    &attempts,
+                    usage,
+                ))
+            }
+            Err(e) => {
+                return Err(fail(
+                    FailureKind::Helper,
+                    format!("cannot run {}: {e}", helper.python.display()),
+                    &attempts,
+                    usage,
+                ))
+            }
+        };
         let stdout = String::from_utf8_lossy(&output.stdout);
         let reply: Option<HelperReply> = stdout
             .lines()

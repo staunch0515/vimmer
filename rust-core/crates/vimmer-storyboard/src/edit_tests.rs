@@ -1320,3 +1320,87 @@ fn bad_video_edits_are_rejected() {
     );
     assert!(text(&r).contains("not allowed"), "{}", text(&r));
 }
+
+// --- brand kit and templates ----------------------------------------------------------------------
+
+#[test]
+fn brand_can_be_added_and_changed() {
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/brand", "value": {"colors": {"primary": "#ff6b35", "text": "#fff8f0"}}}]),
+    );
+    let doc = out.timeline;
+    let out = ok(
+        &doc,
+        json!([{"op": "replace", "path": "/brand/colors/primary", "value": "#22d3ee"}]),
+    );
+    assert_eq!(out.timeline["brand"]["colors"]["primary"], "#22d3ee");
+    // Unknown fields, bad colors and odd font names are rejected.
+    let e = err(
+        &doc,
+        json!([{"op": "add", "path": "/brand/colors/secondary", "value": "#000"}]),
+    );
+    assert!(
+        text(&e).contains("`secondary` is not a field of the brand colors"),
+        "{e}"
+    );
+    let e = err(
+        &doc,
+        json!([{"op": "replace", "path": "/brand/colors/text", "value": "white"}]),
+    );
+    assert!(text(&e).contains("colors.text `white`"), "{e}");
+    let e = err(
+        &doc,
+        json!([{"op": "add", "path": "/brand/logo", "value": {"src": "../secret.png"}}]),
+    );
+    assert!(text(&e).contains("logo"), "{e}");
+}
+
+#[test]
+fn template_scenes_are_checked_per_template() {
+    let scene = |params: Value| {
+        json!([{"op": "add", "path": "/scenes/-", "value": {
+            "id": "q", "duration_ms": 5000, "transition_in": {"kind": "fade", "duration_ms": 400},
+            "template": {"name": "quote", "params": params}}}])
+    };
+    let out = ok(
+        &small(),
+        scene(json!({"quote": "Less is more.", "author": "Mies"})),
+    );
+    assert!(
+        out.summary.iter().any(|l| l.contains("q")),
+        "{:?}",
+        out.summary
+    );
+    let e = err(&small(), scene(json!({"quote": "Q", "items": ["a"]})));
+    assert!(
+        text(&e).contains("unknown param `items` for template `quote`"),
+        "{e}"
+    );
+    let e = err(&small(), scene(json!({"quote": "x".repeat(221)})));
+    assert!(text(&e).contains("221 characters; the limit is 220"), "{e}");
+    let e = err(&small(), scene(json!({"author": "only"})));
+    assert!(text(&e).contains("`quote` is required"), "{e}");
+    let bad = json!([{"op": "add", "path": "/scenes/-", "value": {"id": "x", "duration_ms": 3000, "template": {"name": "slideshow"}}}]);
+    assert!(text(&err(&small(), bad)).contains("unknown template `slideshow`"));
+    // A param path is checked against every template's params, then validated for this one.
+    let doc = ok(&small(), scene(json!({"quote": "Q"}))).timeline;
+    let out = ok(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/2/template/params/author", "value": "Someone"}]),
+    );
+    assert_eq!(
+        out.timeline["scenes"][2]["template"]["params"]["author"],
+        "Someone"
+    );
+    let e = err(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/2/template/params/colour", "value": "red"}]),
+    );
+    assert!(text(&e).contains("not a param of any template"), "{e}");
+    let e = err(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/2/template/params/items", "value": ["a"]}]),
+    );
+    assert!(text(&e).contains("unknown param `items`"), "{e}");
+}

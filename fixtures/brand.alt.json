@@ -1,0 +1,20 @@
+{
+  "colors": {
+    "primary": "#22d3ee",
+    "accent": "#a3e635",
+    "text": "#f8fafc",
+    "muted_text": "#94a3b8",
+    "background": "#0b1d2a",
+    "subtitle_background": "#0b1d2acc"
+  },
+  "logo": {
+    "src": "assets/brand/alt-logo.png",
+    "corner": "top_left",
+    "size": 0.07,
+    "margin": 0.05,
+    "hide_on": [
+      "intro",
+      "outro"
+    ]
+  }
+}

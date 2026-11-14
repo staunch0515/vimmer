@@ -105,6 +105,11 @@ def scene_table(timeline):
             parts.append(f"keyframes={len(s['keyframes'])}")
         if s.get("video"):
             parts.append(f"video={(s['video'] or {}).get('src')}")
+        tpl = s.get("template")
+        if tpl:
+            # The template and its params; their text lives in params, not in `text`.
+            params = json.dumps(tpl.get("params") or {}, ensure_ascii=False)
+            parts.append(f"template={tpl.get('name')} params={_clip(params, 120)}")
         if s.get("layers"):
             # Index, id and kind of each layer, so "the logo" maps to /scenes/i/layers/j.
             names = ",".join(
@@ -124,7 +129,8 @@ def build_user_message(req):
     out = [
         f"Format: {res.get('width')}x{res.get('height')}, {len(lines)} scenes, total {total} ms, "
         f"{len(timeline.get('subtitles') or [])} subtitle cues, music: "
-        f"{'yes' if timeline.get('music') else 'none'}.",
+        f"{'yes' if timeline.get('music') else 'none'}, brand: "
+        f"{'yes' if timeline.get('brand') else 'none'}.",
         "Scenes (numbered from 1 as people say them; JSON indices start at 0):",
         *lines,
         "",

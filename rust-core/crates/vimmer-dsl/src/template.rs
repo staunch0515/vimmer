@@ -720,10 +720,10 @@ fn title_card(c: &mut Ctx, a: &Args) {
 
 fn quote(c: &mut Ctx, a: &Args) {
     let p = c.portrait;
-    let (mark_size, mark_y) = if p { (0.16, 0.17) } else { (0.3, 0.04) };
+    let (mark_size, mark_y) = if p { (0.16, 0.17) } else { (0.3, 0.06) };
     let (x, w) = if p { (0.1, 0.8) } else { (0.14, 0.72) };
     let color = Some(c.primary());
-    let mark_w = c.wide(mark_size * 0.8);
+    let mark_w = c.wide(mark_size * 1.3);
     c.text(TextSpec {
         id: "mark",
         text: "\u{201C}",
@@ -732,7 +732,7 @@ fn quote(c: &mut Ctx, a: &Args) {
         w: mark_w,
         h: mark_size,
         size: mark_size,
-        font: FontRole::Heading,
+        font: FontRole::Body,
         weight: 700,
         align: TextAlign::Left,
         color,
