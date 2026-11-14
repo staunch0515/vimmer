@@ -8,7 +8,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 
 const ENDPOINT = "/__vimmer/edit";
@@ -142,6 +142,36 @@ const runExpand = (bin: string, timelineJson: string): Promise<{ code: number | 
     child.stdin.end(timelineJson);
   });
 
+const BEATS_ENDPOINT = "/__vimmer/beats";
+
+/** Runs `vimmer beats --json` on a file of the public dir, with the render's cache. */
+const runBeats = (bin: string, file: string, cacheDir: string): Promise<{ code: number | null; stdout: string; stderr: string }> =>
+  new Promise((ok) => {
+    const child = spawn(bin, ["beats", "--json", "--cache-dir", cacheDir, file], { stdio: "pipe" });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => child.kill("SIGTERM"), 120_000);
+    child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      ok({ code: -1, stdout, stderr: String(e) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      ok({ code, stdout, stderr });
+    });
+    child.stdin.end();
+  });
+
+/** A public-relative path that stays inside the public dir, or null. */
+const publicFile = (publicDir: string, source: unknown): string | null => {
+  if (typeof source !== "string" || !source || source.startsWith("/") || source.includes("\\")) return null;
+  if (source.split("/").some((seg) => !seg || seg === "." || seg === "..")) return null;
+  const file = resolve(publicDir, source);
+  return file.startsWith(resolve(publicDir) + sep) && existsSync(file) ? file : null;
+};
+
 export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
   name: "vimmer-edit-assistant",
   configureServer(server) {
@@ -166,6 +196,30 @@ export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
           return send(res, 200, JSON.parse(line));
         } catch {
           return send(res, 200, { ok: false, errors: [`vimmer expand failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}`] });
+        }
+      })();
+    });
+    // "Detect beats": the music file's tempo and beat times, from the same code and cache as a render.
+    server.middlewares.use(BEATS_ENDPOINT, (req: IncomingMessage, res: ServerResponse) => {
+      void (async () => {
+        if (req.method !== "POST") return send(res, 405, { ok: false, error: "POST only" });
+        if (!isLocalRequest(req)) return send(res, 403, { ok: false, error: "local requests only" });
+        let body: { source?: unknown };
+        try {
+          body = JSON.parse(await readBody(req)) as { source?: unknown };
+        } catch (e) {
+          return send(res, 400, { ok: false, error: `bad request: ${String(e)}` });
+        }
+        const file = publicFile(publicDir, body.source);
+        if (!file) return send(res, 200, { ok: false, error: `No music file at public/${String(body.source)}.` });
+        const bin = findVimmer(repo);
+        if (!bin) return send(res, 200, { ok: false, error: "Build the CLI to detect beats: cd rust-core && cargo build -p vimmer-cli" });
+        const out = await runBeats(bin, file, join(publicDir, "generated", "beats"));
+        const line = out.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
+        try {
+          return send(res, 200, JSON.parse(line));
+        } catch {
+          return send(res, 200, { ok: false, error: `vimmer beats failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}` });
         }
       })();
     });

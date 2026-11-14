@@ -9,6 +9,7 @@ import { BUILTIN, brandColor } from "../brand";
 import { BrandContext, BrandOverlay } from "../components/Brand";
 import { layoutScenes, msToFrames, totalFrames, type SceneLayout } from "../layout";
 import { transitionPose } from "../motion/transitions";
+import { DEFAULT_SFX_VOLUME, sfxFrame } from "../motion/sfx";
 import type { Music, Scene, SubtitleCue, Transition, VideoTimeline } from "../types/timeline";
 
 // Gain at a frame: the music volume, faded in and out at the timeline's ends.
@@ -119,6 +120,18 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
         <Subtitles cues={timeline.chunk.subtitles} frameOffset={timeline.chunk.start_frame} />
       ) : (
         <Subtitles cues={timeline.subtitles} />
+      )}
+      {/* Sound effects for the preview (renders are muted; the Rust core mixes them). Outside the
+          scene Sequences so they ring out past the cut, as in the render. */}
+      {layouts.flatMap(({ scene, from }) =>
+        (scene.sfx ?? []).map((fx, k) => {
+          const at = sfxFrame(fx, scene, timeline.fps);
+          return at == null ? null : (
+            <Sequence key={`${scene.id}-sfx-${k}`} from={from + at} name={`${scene.id} sfx ${k}`} layout="none">
+              <Audio src={resolveAsset(fx.src, assetUrl)} volume={fx.volume ?? DEFAULT_SFX_VOLUME} />
+            </Sequence>
+          );
+        }),
       )}
       {timeline.music?.source ? (
         // Looped and faded in the preview. The render mixes music in after joining, so chunks omit it.

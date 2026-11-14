@@ -143,7 +143,7 @@ fn default_remotion_dir() -> PathBuf {
 
 /// A GUI app inherits a minimal PATH, so `npx` and `ffmpeg` would not be found. This asks the
 /// user's login shell for its PATH once and reuses it for every child process.
-fn user_path() -> String {
+pub(crate) fn user_path() -> String {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
         let shell_path = Command::new("/bin/zsh")
@@ -159,7 +159,7 @@ fn user_path() -> String {
     .clone()
 }
 
-fn find_in_path(name: &str, path: &str) -> PathBuf {
+pub(crate) fn find_in_path(name: &str, path: &str) -> PathBuf {
     path.split(':')
         .map(|dir| Path::new(dir).join(name))
         .find(|candidate| candidate.is_file())
