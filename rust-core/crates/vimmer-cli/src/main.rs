@@ -19,7 +19,7 @@ use clap::{Args, Parser, ValueEnum};
 use serde_json::json;
 use vimmer_dsl::VideoTimeline;
 use vimmer_media::{find_chrome, run_limited, FfmpegProbe, Limits, SaySpeech, TtsEngine};
-use vimmer_scheduler::{render_timeline, AutoSubtitles, SchedulerConfig, DEFAULT_CHUNK_MS};
+use vimmer_scheduler::{render_timeline, AutoSubtitles, RenderOptions, DEFAULT_CHUNK_MS};
 use vimmer_storyboard::generate::{
     generate, GenerateFailure, GenerateOptions, Generated, LlmHelper, DEFAULT_EFFORT,
     DEFAULT_MAX_RETRIES, DEFAULT_MODEL, EFFORTS,
@@ -333,22 +333,24 @@ async fn render(
     args: RenderArgs,
     output: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut cfg = SchedulerConfig::new(args.work_dir, output, args.remotion_dir);
-    cfg.chunk_ms = args.chunk_ms;
-    cfg.preprocess_concurrency = args.preprocess_jobs;
-    cfg.render_concurrency = args.render_jobs;
-    cfg.word_subtitles.enabled = args.word_subtitles == Toggle::On;
-    cfg.word_subtitles.auto_subtitles = match args.auto_subtitles {
-        AutoSubs::Off => AutoSubtitles::Off,
-        AutoSubs::On => AutoSubtitles::On,
-        AutoSubs::All => AutoSubtitles::All,
-    };
-    cfg.word_subtitles.whisper_cli = args.whisper_cli;
-    cfg.word_subtitles.model = args.whisper_model;
-    cfg.word_subtitles.language = args.whisper_language;
-    cfg.tts.engine = args.tts.map(engine_of);
-    cfg.tts.kokoro_python = args.kokoro_python;
-    cfg.tts.kokoro_models = args.kokoro_models;
+    let cfg = RenderOptions {
+        chunk_ms: args.chunk_ms,
+        preprocess_jobs: args.preprocess_jobs,
+        render_jobs: args.render_jobs,
+        word_subtitles: args.word_subtitles == Toggle::On,
+        auto_subtitles: match args.auto_subtitles {
+            AutoSubs::Off => AutoSubtitles::Off,
+            AutoSubs::On => AutoSubtitles::On,
+            AutoSubs::All => AutoSubtitles::All,
+        },
+        whisper_cli: args.whisper_cli,
+        whisper_model: args.whisper_model,
+        whisper_language: args.whisper_language,
+        tts: args.tts.map(engine_of),
+        kokoro_python: args.kokoro_python,
+        kokoro_models: args.kokoro_models,
+    }
+    .config(args.work_dir, output, args.remotion_dir);
 
     let report = render_timeline(
         timeline,
