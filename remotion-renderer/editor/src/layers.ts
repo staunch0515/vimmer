@@ -1,10 +1,13 @@
 // Editor helpers for scene layers: defaults for new layers, stacking moves, and the checks that
 // mirror vimmer-dsl validation (rust-core/crates/vimmer-dsl/src/validation.rs, layer_problems).
 
-import type { Layer, LayerAnimationKind, LayerKind, Resolution, Scene } from "../../src/types/timeline";
+import type { Layer, LayerAnimationKind, LayerKind, Resolution, Scene, VideoClip } from "../../src/types/timeline";
+import { MAX_CLIP_SPEED, MIN_CLIP_SPEED } from "../../src/motion/video";
 import { splitLayers } from "../../src/motion/layers";
 
-export const LAYER_KINDS: LayerKind[] = ["text", "shape", "image", "icon", "lower_third", "counter", "bar_chart", "progress_ring"];
+export const LAYER_KINDS: LayerKind[] = ["text", "shape", "image", "icon", "video", "lower_third", "counter", "bar_chart", "progress_ring"];
+export const MAX_VIDEO_LAYERS = 4;
+export const DEFAULT_CLIP = "assets/clips/counter-6s.mp4";
 export const ANIMATION_KINDS: LayerAnimationKind[] = ["fade", "slide_up", "slide_down", "slide_left", "slide_right", "pop"];
 export const MAX_LAYERS = 32;
 export const MAX_LAYER_TEXT_CHARS = 400;
@@ -28,6 +31,11 @@ export const newLayer = (kind: LayerKind, scene: Scene, res: Resolution = { widt
       return { id, kind, src: "assets/sample.png", x: 0.6, y: 0.1, width: 0.3, height: 0.3, fit: "cover" };
     case "icon":
       return { id, kind, src: "assets/icons/star.svg", color: "#facc15", x: 0.45, y: 0.4, width: 0.1, height: 0.18 };
+    case "video":
+      // Picture-in-picture in the top-right corner, 16:9 in either orientation.
+      return portrait
+        ? { id, kind, src: DEFAULT_CLIP, x: 0.5, y: 0.08, width: 0.44, height: 0.139, fit_time: "loop" }
+        : { id, kind, src: DEFAULT_CLIP, x: 0.6, y: 0.08, width: 0.34, height: 0.34, fit_time: "loop" };
     case "lower_third":
       return portrait
         ? { id, kind, title: "Name Surname", subtitle: "Role, Company", x: 0.06, y: 0.62, width: 0.8, font_size: 0.03 }
@@ -118,11 +126,28 @@ const numberFormat = (name: string, out: string[], decimals?: number, prefix?: s
   if ([...(prefix ?? "")].length > 16 || [...(suffix ?? "")].length > 16) out.push(`${name}: prefix and suffix are at most 16 characters.`);
 };
 
+/** Problems with a video clip's fields (mirrors vimmer-dsl `clip_problems`). */
+export const checkClip = (name: string, c: VideoClip): string[] => {
+  const out: string[] = [];
+  const p = assetProblem(c.src) ?? (/\.(mp4|mov|m4v|webm)$/i.test(c.src) ? null : "must be a .mp4, .mov, .m4v or .webm file");
+  if (p) out.push(`${name}: video ${p}.`);
+  const start = c.trim_start_ms ?? 0;
+  if (!(Number.isInteger(start) && start >= 0)) out.push(`${name}: trim start must be 0 ms or more.`);
+  if (c.trim_end_ms != null && !(c.trim_end_ms > start)) out.push(`${name}: trim end must be after trim start.`);
+  const speed = c.speed ?? 1;
+  if (!(speed >= MIN_CLIP_SPEED && speed <= MAX_CLIP_SPEED)) out.push(`${name}: speed must be ${MIN_CLIP_SPEED} to ${MAX_CLIP_SPEED}.`);
+  const vol = c.volume ?? 0;
+  if (!(vol >= 0 && vol <= 1)) out.push(`${name}: volume must be between 0 and 1.`);
+  return out;
+};
+
 /** Problems with the scene's layers, in words for the problem bar. */
 export const checkLayers = (s: Scene): string[] => {
   const out: string[] = [];
   const layers = s.layers ?? [];
   if (layers.length > MAX_LAYERS) out.push(`Scene “${s.id}” has ${layers.length} layers; the limit is ${MAX_LAYERS}.`);
+  const videos = layers.filter((l) => l.kind === "video").length;
+  if (videos > MAX_VIDEO_LAYERS) out.push(`Scene “${s.id}” has ${videos} video layers; the limit is ${MAX_VIDEO_LAYERS}.`);
   const ids = new Set<string>();
   for (const l of layers) {
     const name = `Scene “${s.id}” layer “${l.id}”`;
@@ -163,6 +188,9 @@ export const checkLayers = (s: Scene): string[] => {
         if (l.color !== undefined && !isColor(l.color)) out.push(`${name}: color must be #rgb, #rrggbb or #rrggbbaa.`);
         break;
       }
+      case "video":
+        out.push(...checkClip(name, l));
+        break;
       case "lower_third":
         if (!l.title.trim()) out.push(`${name}: the title is empty.`);
         if ([...l.title].length > 120) out.push(`${name}: the title is over 120 characters.`);

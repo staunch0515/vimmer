@@ -1,6 +1,6 @@
 import type { Easing, Keyframe, Scene, SubtitleCue, TransitionKind, VideoTimeline } from "../../src/types/timeline";
 import { totalFrames } from "../../src/layout";
-import { checkLayers } from "./layers";
+import { checkClip, checkLayers } from "./layers";
 
 export const MAX_DURATION_MS = 200_000;
 export const ALLOWED_RESOLUTIONS = [
@@ -35,7 +35,9 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
     if (ids.has(s.id)) problems.push(`Duplicate scene id “${s.id}”.`);
     ids.add(s.id);
     if (s.duration_ms <= 0) problems.push(`Scene “${s.id}” has zero duration.`);
-    if (!s.text?.trim() && !s.image && !s.layers?.length) problems.push(`Scene “${s.id}” needs text, an image or a layer.`);
+    if (!s.text?.trim() && !s.image && !s.video && !s.layers?.length) problems.push(`Scene “${s.id}” needs text, an image, a video or a layer.`);
+    if (s.image && s.video) problems.push(`Scene “${s.id}” has both an image and a video; choose one background.`);
+    if (s.video) problems.push(...checkClip(`Scene “${s.id}” background`, s.video));
     problems.push(...checkSceneMotion(s, t.scenes.indexOf(s)));
     problems.push(...checkLayers(s));
   }
