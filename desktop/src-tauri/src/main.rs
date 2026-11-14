@@ -25,6 +25,8 @@ fn main() {
             music::music_pick,
             render::start_render,
             render::cancel_render,
+            render::render_defaults,
+            render::check_before_render,
             render::reveal_in_finder,
             assets::import_asset,
             assets::asset_root,

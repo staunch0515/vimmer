@@ -317,6 +317,35 @@ textarea { resize: vertical; width: 100%; }
 }
 .render-foot { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 
+/* Render options and the pre-render check */
+.render-card.setup { width: 400px; max-height: calc(100vh - 96px); overflow-y: auto; gap: 12px; }
+.render-head { display: flex; align-items: center; gap: 8px; }
+.render-card .hint { font-size: 11px; line-height: 1.4; }
+.render-advanced summary { cursor: pointer; color: var(--text-2); font-size: 12px; }
+.render-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.render-check { display: flex; flex-direction: column; gap: 8px; font-size: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.render-check-head { display: flex; align-items: center; gap: 8px; }
+.render-check .ok { color: var(--emerald); }
+.render-check .warn { color: var(--amber); }
+.render-check .bad { color: var(--danger); }
+.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.finding {
+  width: 100%; text-align: left; display: flex; flex-direction: column; gap: 3px;
+  padding: 7px 9px; border-radius: 7px; border: 1px solid var(--border); border-left-width: 3px;
+  background: rgba(255, 255, 255, 0.02); color: var(--text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.finding:hover { background: var(--hover); }
+.finding.error { border-left-color: var(--danger); }
+.finding.warning { border-left-color: var(--amber); }
+.finding.info { border-left-color: var(--cyan); }
+.finding-top { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.sev { font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; }
+.sev.error { color: var(--danger); }
+.sev.warning { color: var(--amber); }
+.sev.info { color: var(--cyan); }
+.finding-fix { color: var(--text-2); }
+.finding-path { font-size: 11px; overflow-wrap: anywhere; }
+
 .check { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 12px; cursor: pointer; }
 .check input { accent-color: var(--accent); }
 

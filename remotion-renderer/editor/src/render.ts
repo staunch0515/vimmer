@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { inTauri } from "./project";
+import { FALLBACK_DEFAULTS, toPanelArgs, type CheckReport, type RenderDefaults, type RenderOptions, type TtsName } from "./renderOptions";
 
 // Mirrors `vimmer_scheduler::Progress` (serde tag "kind", snake_case).
 export type RenderProgress =
@@ -23,8 +24,22 @@ export const renderSupported = (): boolean => inTauri();
 export const pickRenderOutput = (defaultName: string): Promise<string | null> =>
   save({ defaultPath: defaultName, filters: [{ name: "MP4 video", extensions: ["mp4"] }] });
 
-export const startRender = (timelineJson: string, output: string): Promise<void> =>
-  invoke("start_render", { args: { timelineJson, output } });
+export const startRender = (timelineJson: string, output: string, options: RenderOptions, defaults: RenderDefaults): Promise<void> =>
+  invoke("start_render", { args: { timelineJson, output, options: toPanelArgs(options, defaults) } });
+
+/** The engine and job counts a render uses without a choice (from the desktop shell). */
+export const loadRenderDefaults = async (): Promise<RenderDefaults> => {
+  if (!inTauri()) return FALLBACK_DEFAULTS;
+  try {
+    return await invoke<RenderDefaults>("render_defaults");
+  } catch {
+    return FALLBACK_DEFAULTS;
+  }
+};
+
+/** Runs the `vimmer check` rules on the timeline, sizing narration for `tts`. */
+export const checkBeforeRender = (timelineJson: string, tts: TtsName): Promise<CheckReport> =>
+  invoke<CheckReport>("check_before_render", { args: { timelineJson, tts } });
 
 export const cancelRender = (): Promise<boolean> => invoke<boolean>("cancel_render");
 
@@ -45,6 +60,7 @@ export const listenRender = async (
 /** What the progress card shows. */
 export type RenderView =
   | { status: "idle" }
+  | { status: "setup" }
   | { status: "running"; stage: string; images?: { done: number; total: number }; chunks?: { done: number; total: number } }
   | { status: "done"; output: string }
   | { status: "cancelled" }
