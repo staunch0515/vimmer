@@ -23,7 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::Keyframe;
+use crate::model::{Easing, Keyframe};
 
 /// Most layers one scene may have.
 pub const MAX_LAYERS: usize = 32;
@@ -69,6 +69,10 @@ pub struct LayerAnimation {
     pub kind: LayerAnimationKind,
     #[serde(default = "default_animation_ms")]
     pub duration_ms: u64,
+    /// Progress curve of the animation. Absent: the kind's own curve (ease-out cubic for an
+    /// enter, ease-in cubic for an exit, back-out for `pop` entering).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ease: Option<Easing>,
 }
 
 /// How an image fills its box.
@@ -100,6 +104,68 @@ pub enum TextReveal {
     None,
     /// Word by word, like the scene text.
     Words,
+    /// Character by character at `typing_cps`, from the layer's start. Characters are counted
+    /// as [`typing_units`] (an emoji or an accented letter is one character).
+    Typewriter,
+}
+
+/// Default typing speed of the typewriter reveal, in characters per second.
+pub const DEFAULT_TYPING_CPS: f32 = 20.0;
+/// Highest typing speed.
+pub const MAX_TYPING_CPS: f32 = 200.0;
+
+/// Code points that attach to the code point before them instead of being typed on their own:
+/// combining marks, variation selectors, zero-width joiner, emoji skin tones, tag characters.
+/// Mirrors `joinsPrevious` in `remotion-renderer/src/motion/typewriter.ts`.
+fn joins_previous(c: char) -> bool {
+    matches!(u32::from(c),
+        0x0300..=0x036F
+        | 0x1AB0..=0x1AFF
+        | 0x1DC0..=0x1DFF
+        | 0x20D0..=0x20FF
+        | 0xFE20..=0xFE2F
+        | 0xFE00..=0xFE0F
+        | 0x200D
+        | 0x1F3FB..=0x1F3FF
+        | 0xE0020..=0xE007F
+        | 0xE0100..=0xE01EF)
+}
+
+fn is_regional_indicator(c: char) -> bool {
+    (0x1F1E6..=0x1F1FF).contains(&u32::from(c))
+}
+
+/// The text split into the units a typewriter types one at a time: a code point plus everything
+/// that attaches to it (combining marks, variation selectors, skin tones, ZWJ sequences, flag
+/// pairs). An approximation of grapheme clusters that is good for CJK, emoji and accents and
+/// needs no Unicode tables; the renderer uses the same rule.
+pub fn typing_units(text: &str) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut start = 0;
+    let mut prev: Option<char> = None;
+    // Regional indicators already in the current unit (a flag is two).
+    let mut ri = 0;
+    for (i, c) in text.char_indices() {
+        let attach = match prev {
+            None => false,
+            Some(p) => {
+                joins_previous(c) || p == '\u{200D}' || (is_regional_indicator(c) && ri == 1)
+            }
+        };
+        if !attach && i > 0 {
+            out.push(&text[start..i]);
+            start = i;
+            ri = 0;
+        }
+        if is_regional_indicator(c) {
+            ri += 1;
+        }
+        prev = Some(c);
+    }
+    if start < text.len() {
+        out.push(&text[start..]);
+    }
+    out
 }
 
 fn default_box_padding() -> f32 {
@@ -188,6 +254,24 @@ pub struct TextLayer {
     pub highlights: Vec<String>,
     #[serde(default)]
     pub reveal: TextReveal,
+    /// Typing speed of the typewriter reveal, characters per second. Absent:
+    /// [`DEFAULT_TYPING_CPS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typing_cps: Option<f32>,
+    /// A blinking cursor after the typed text (typewriter reveal only).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cursor: bool,
+}
+
+impl TextLayer {
+    /// How long the typewriter takes to type the whole text, in ms (0 for other reveals).
+    pub fn typing_ms(&self) -> u64 {
+        if self.reveal != TextReveal::Typewriter {
+            return 0;
+        }
+        let cps = f64::from(self.typing_cps.unwrap_or(DEFAULT_TYPING_CPS));
+        (typing_units(&self.text).len() as f64 * 1000.0 / cps).ceil() as u64
+    }
 }
 
 /// A rectangle, ellipse or line.
@@ -216,6 +300,351 @@ pub struct IconLayer {
     pub color: String,
 }
 
+/// Longest lower-third title, in characters.
+pub const MAX_LOWER_THIRD_TITLE_CHARS: usize = 120;
+/// Longest lower-third subtitle, in characters.
+pub const MAX_LOWER_THIRD_SUBTITLE_CHARS: usize = 160;
+/// Built-in entrance and exit of a lower third, used when the layer has no `enter` / `exit`.
+/// Each is shortened to 40 % / 30 % of the layer's time when the layer is short.
+pub const LOWER_THIRD_IN_MS: u64 = 700;
+pub const LOWER_THIRD_OUT_MS: u64 = 450;
+
+fn default_lower_third_size() -> f32 {
+    0.045
+}
+
+fn default_subtitle_color() -> String {
+    "#d4d4d8".into()
+}
+
+fn default_accent_color() -> String {
+    "#6366f1".into()
+}
+
+fn default_lower_third_background() -> Option<String> {
+    Some("#09090bd9".into())
+}
+
+/// A name/title strip: an accent bar beside a title and an optional subtitle on a box. Without
+/// `height` the box is as tall as its text. Unless the layer has its own `enter` / `exit`, the
+/// accent bar grows, the box wipes in from the left and the text slides in; on the way out the
+/// box wipes back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LowerThirdLayer {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    /// Title size as a fraction of the frame height; the subtitle is 0.62 of it.
+    #[serde(default = "default_lower_third_size")]
+    pub font_size: f32,
+    /// Title color.
+    #[serde(default = "default_text_color")]
+    pub color: String,
+    #[serde(default = "default_subtitle_color")]
+    pub subtitle_color: String,
+    #[serde(default = "default_accent_color")]
+    pub accent_color: String,
+    /// Box color; `null` draws no box.
+    #[serde(default = "default_lower_third_background")]
+    pub background_color: Option<String>,
+}
+
+impl LowerThirdLayer {
+    /// Built-in (entrance, exit) lengths in ms for a layer shown `span_ms`.
+    pub fn builtin_ms(span_ms: u64) -> (u64, u64) {
+        (
+            LOWER_THIRD_IN_MS.min(span_ms * 2 / 5),
+            LOWER_THIRD_OUT_MS.min(span_ms * 3 / 10),
+        )
+    }
+}
+
+/// Largest magnitude of a number a counter, chart or ring shows.
+pub const MAX_ABS_NUMBER: f64 = 1e15;
+/// Most decimals of a formatted number.
+pub const MAX_DECIMALS: u8 = 6;
+/// Longest number prefix or suffix, in characters.
+pub const MAX_AFFIX_CHARS: usize = 16;
+
+fn ease_out() -> Easing {
+    Easing::EaseOut
+}
+
+fn default_separator() -> String {
+    ",".into()
+}
+
+fn default_decimal_mark() -> String {
+    ".".into()
+}
+
+fn default_counter_size() -> f32 {
+    0.12
+}
+
+fn default_counter_weight() -> u16 {
+    700
+}
+
+/// `value` with `decimals` decimals, `separator` between groups of three integer digits and
+/// `decimal_mark` before the decimals; `-` before the prefix for negatives (never `-0`). Does not
+/// depend on the machine's locale. The renderer's `formatNumber` (`motion/data.ts`) gives the same
+/// text except, rarely, for a value exactly halfway between two roundings.
+pub fn format_number(
+    value: f64,
+    decimals: u8,
+    separator: &str,
+    decimal_mark: &str,
+    prefix: &str,
+    suffix: &str,
+) -> String {
+    let fixed = format!("{:.*}", usize::from(decimals), value.abs());
+    let (int, frac) = fixed.split_once('.').unwrap_or((&fixed, ""));
+    let negative = value < 0.0 && fixed.chars().any(|c| c.is_ascii_digit() && c != '0');
+    let mut grouped = String::new();
+    for (i, c) in int.chars().enumerate() {
+        if i > 0 && (int.len() - i) % 3 == 0 {
+            grouped.push_str(separator);
+        }
+        grouped.push(c);
+    }
+    let mut out = String::new();
+    if negative {
+        out.push('-');
+    }
+    out.push_str(prefix);
+    out.push_str(&grouped);
+    if !frac.is_empty() {
+        out.push_str(decimal_mark);
+        out.push_str(frac);
+    }
+    out.push_str(suffix);
+    out
+}
+
+/// A number that counts from `from` to `to` while the layer is shown. One line, no wrapping;
+/// without `height` the box is one line tall.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CounterLayer {
+    #[serde(default)]
+    pub from: f64,
+    pub to: f64,
+    /// How long the count takes, from the layer's start. Absent: until the layer's exit begins
+    /// (its whole time without an exit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default = "ease_out")]
+    pub ease: Easing,
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub prefix: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub suffix: String,
+    /// Between groups of three digits; empty for none.
+    #[serde(default = "default_separator")]
+    pub separator: String,
+    #[serde(default = "default_decimal_mark")]
+    pub decimal_mark: String,
+    /// Fraction of the frame height.
+    #[serde(default = "default_counter_size")]
+    pub font_size: f32,
+    #[serde(default = "default_text_color")]
+    pub color: String,
+    #[serde(default = "default_counter_weight")]
+    pub weight: u16,
+    #[serde(default)]
+    pub align: TextAlign,
+}
+
+impl CounterLayer {
+    /// The text shown for `value`.
+    pub fn format(&self, value: f64) -> String {
+        format_number(
+            value,
+            self.decimals,
+            &self.separator,
+            &self.decimal_mark,
+            &self.prefix,
+            &self.suffix,
+        )
+    }
+}
+
+/// Frames a count (or a chart/ring animation) of `duration_ms` takes at `fps`, or, without a
+/// duration, the layer's frames before its exit. At least 1. Mirrors `countFrames` in
+/// `remotion-renderer/src/motion/data.ts`.
+pub fn count_frames(layer: &Layer, duration_ms: Option<u64>, scene_ms: u64, fps: u32) -> u64 {
+    let frames = |ms: u64| (ms * u64::from(fps) + 500) / 1000;
+    let n = match duration_ms {
+        Some(ms) => frames(ms),
+        None => {
+            let span = frames(layer.end_ms_in(scene_ms)).saturating_sub(frames(layer.start_ms));
+            span.saturating_sub(layer.exit.map_or(0, |e| frames(e.duration_ms)))
+        }
+    };
+    n.max(1)
+}
+
+/// Progress 0..=1 of an animation `n` frames long on layer frame `frame`: 0 on the first frame, 1
+/// from frame `n - 1` on.
+pub fn frame_progress(frame: u64, n: u64) -> f64 {
+    if n <= 1 {
+        1.0
+    } else {
+        (frame as f64 / (n - 1) as f64).min(1.0)
+    }
+}
+
+/// Most bars of one chart.
+pub const MAX_BARS: usize = 12;
+/// Longest bar label, in characters.
+pub const MAX_BAR_LABEL_CHARS: usize = 40;
+
+fn default_label_color() -> String {
+    "#e4e4e7".into()
+}
+
+fn default_chart_font_size() -> f32 {
+    0.032
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_grow_ms() -> u64 {
+    800
+}
+
+fn default_stagger_ms() -> u64 {
+    120
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+/// One bar of a [`BarChartLayer`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChartBar {
+    pub label: String,
+    /// 0 or more.
+    pub value: f64,
+    /// Absent: the chart's `color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartOrientation {
+    /// Bars grow up from a baseline; labels under them.
+    #[default]
+    Vertical,
+    /// Bars grow right; labels in a column on the left.
+    Horizontal,
+}
+
+/// Bars that grow in one after another. Bar `i` starts `stagger_ms * i` after the layer and grows
+/// for `grow_ms` with `ease`; its value label counts up with it. Layout (fractions shared with
+/// `remotion-renderer/src/motion/data.ts`): vertical charts keep 1.5 font sizes on top for the
+/// values and 1.6 below for the labels; horizontal charts give labels 28 % of the width and values
+/// 16 %. Each bar fills 62 % of its slot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BarChartLayer {
+    pub bars: Vec<ChartBar>,
+    #[serde(default)]
+    pub orientation: ChartOrientation,
+    /// The value of a full-length bar. Absent: the largest value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// Bar color.
+    #[serde(default = "default_accent_color")]
+    pub color: String,
+    /// Labels and values.
+    #[serde(default = "default_label_color")]
+    pub label_color: String,
+    /// Labels and values, fraction of the frame height.
+    #[serde(default = "default_chart_font_size")]
+    pub font_size: f32,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub show_values: bool,
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub prefix: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub suffix: String,
+    #[serde(default = "default_grow_ms")]
+    pub grow_ms: u64,
+    #[serde(default = "default_stagger_ms")]
+    pub stagger_ms: u64,
+    #[serde(default = "ease_out")]
+    pub ease: Easing,
+}
+
+impl BarChartLayer {
+    /// The value label of `value` (`,` thousands, `.` decimals).
+    pub fn format(&self, value: f64) -> String {
+        format_number(value, self.decimals, ",", ".", &self.prefix, &self.suffix)
+    }
+}
+
+/// Longest custom ring label, in characters.
+pub const MAX_RING_LABEL_CHARS: usize = 24;
+
+fn default_track_color() -> String {
+    "#ffffff26".into()
+}
+
+fn default_ring_thickness() -> f32 {
+    0.12
+}
+
+/// A ring that fills clockwise from the top, from `from` to `value` (fractions of a full ring)
+/// over `duration_ms` (default: the layer's time before its exit). The ring is the largest circle
+/// that fits the box, centered; `thickness` is a fraction of its diameter. The center shows the
+/// animated percentage, or `label`, or nothing (`show_label: false`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProgressRingLayer {
+    /// 0..=1.
+    pub value: f64,
+    /// 0..=1, where the fill starts.
+    #[serde(default)]
+    pub from: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default = "ease_out")]
+    pub ease: Easing,
+    #[serde(default = "default_accent_color")]
+    pub color: String,
+    #[serde(default = "default_track_color")]
+    pub track_color: String,
+    #[serde(default = "default_ring_thickness")]
+    pub thickness: f32,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub show_label: bool,
+    /// Custom center text instead of the percentage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Decimals of the percentage.
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default = "default_text_color")]
+    pub label_color: String,
+}
+
+impl ProgressRingLayer {
+    /// The center text for a filled fraction `fraction` (custom label or percentage).
+    pub fn label_text(&self, fraction: f64) -> String {
+        match &self.label {
+            Some(l) => l.clone(),
+            None => format_number(fraction * 100.0, self.decimals, ",", ".", "", "%"),
+        }
+    }
+}
+
 /// What a layer draws, tagged by `kind` in the JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -224,6 +653,10 @@ pub enum LayerContent {
     Text(TextLayer),
     Shape(ShapeLayer),
     Icon(IconLayer),
+    LowerThird(LowerThirdLayer),
+    Counter(CounterLayer),
+    BarChart(BarChartLayer),
+    ProgressRing(ProgressRingLayer),
 }
 
 impl LayerContent {
@@ -234,7 +667,19 @@ impl LayerContent {
             LayerContent::Text(_) => "text",
             LayerContent::Shape(_) => "shape",
             LayerContent::Icon(_) => "icon",
+            LayerContent::LowerThird(_) => "lower_third",
+            LayerContent::Counter(_) => "counter",
+            LayerContent::BarChart(_) => "bar_chart",
+            LayerContent::ProgressRing(_) => "progress_ring",
         }
+    }
+
+    /// Kinds whose box may leave out `height` (it is then as tall as the content).
+    pub fn auto_height(&self) -> bool {
+        matches!(
+            self,
+            LayerContent::Text(_) | LayerContent::LowerThird(_) | LayerContent::Counter(_)
+        )
     }
 
     /// The asset file the layer draws, if any.
@@ -242,13 +687,17 @@ impl LayerContent {
         match self {
             LayerContent::Image(l) => Some(&l.src),
             LayerContent::Icon(l) => Some(&l.src),
-            LayerContent::Text(_) | LayerContent::Shape(_) => None,
+            _ => None,
         }
     }
 }
 
 fn default_opacity() -> f32 {
     1.0
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero_u64(v: &u64) -> bool {
@@ -368,6 +817,80 @@ mod tests {
             r#"{"id":"x","kind":"video","x":0,"y":0,"width":1,"height":1,"src":"a.mp4"}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn typing_units_keep_emoji_accents_and_flags_whole() {
+        assert_eq!(typing_units("abc"), ["a", "b", "c"]);
+        assert_eq!(typing_units("你好，世界"), ["你", "好", "，", "世", "界"]);
+        // e + combining acute, thumbs up + skin tone, family ZWJ sequence, flag, keycap.
+        let s = "e\u{301}👍🏽👨\u{200D}👩\u{200D}👧🇯🇵1\u{FE0F}\u{20E3}!";
+        let u = typing_units(s);
+        assert_eq!(u.len(), 6, "{u:?}");
+        assert_eq!(u.concat(), s);
+        assert_eq!(u[3], "🇯🇵");
+        // Two flags in a row are two units.
+        assert_eq!(typing_units("🇯🇵🇫🇷").len(), 2);
+        assert!(typing_units("").is_empty());
+    }
+
+    #[test]
+    fn typewriter_fields_default_and_time() {
+        let mut t: Layer = serde_json::from_str(
+            r#"{"id":"t","kind":"text","x":0,"y":0,"width":1,"text":"你好世界!","reveal":"typewriter"}"#,
+        )
+        .unwrap();
+        let LayerContent::Text(text) = &mut t.content else {
+            panic!()
+        };
+        assert_eq!(text.typing_cps, None);
+        assert!(!text.cursor);
+        assert_eq!(text.typing_ms(), 250); // 5 units at 20 cps
+        text.typing_cps = Some(3.0);
+        assert_eq!(text.typing_ms(), 1667);
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(!json.contains("cursor"));
+    }
+
+    #[test]
+    fn numbers_are_formatted_without_a_locale() {
+        assert_eq!(
+            format_number(1234567.891, 2, ",", ".", "$", ""),
+            "$1,234,567.89"
+        );
+        assert_eq!(
+            format_number(1234567.0, 0, " ", ",", "", " €"),
+            "1 234 567 €"
+        );
+        assert_eq!(format_number(999.0, 0, ",", ".", "", ""), "999");
+        assert_eq!(format_number(1000.0, 0, ",", ".", "", ""), "1,000");
+        assert_eq!(format_number(-1500.26, 1, ".", ",", "", "%"), "-1.500,3%");
+        assert_eq!(format_number(-0.004, 2, ",", ".", "", ""), "0.00");
+        assert_eq!(format_number(0.0, 0, ",", ".", "", ""), "0");
+        assert_eq!(format_number(12345.0, 0, "", ".", "", ""), "12345");
+        assert_eq!(
+            format_number(1e15, 0, ",", ".", "", ""),
+            "1,000,000,000,000,000"
+        );
+    }
+
+    #[test]
+    fn count_frames_default_to_the_time_before_the_exit() {
+        let l: Layer = serde_json::from_str(
+            r#"{"id":"c","kind":"counter","x":0,"y":0,"width":0.3,"to":100,"start_ms":1000,"end_ms":4000,"exit":{"kind":"fade","duration_ms":500}}"#,
+        )
+        .unwrap();
+        assert_eq!(count_frames(&l, None, 5000, 30), 75);
+        assert_eq!(count_frames(&l, Some(1000), 5000, 30), 30);
+        assert_eq!(frame_progress(0, 30), 0.0);
+        assert_eq!(frame_progress(29, 30), 1.0);
+        assert_eq!(frame_progress(100, 30), 1.0);
+        assert_eq!(frame_progress(0, 1), 1.0);
+        let LayerContent::Counter(c) = &l.content else {
+            panic!()
+        };
+        assert_eq!(c.ease, Easing::EaseOut);
+        assert_eq!(c.format(1234.0), "1,234");
     }
 
     #[test]

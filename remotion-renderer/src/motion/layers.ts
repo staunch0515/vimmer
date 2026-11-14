@@ -14,7 +14,7 @@
 // - stacking in a scene: scene image, layers with z < 0, scene text, layers with z >= 0; equal z
 //   keeps list order (splitLayers).
 
-import type { Layer, LayerAnimationKind } from "../types/timeline";
+import type { Easing, Layer, LayerAnimationKind } from "../types/timeline";
 
 // Pose from the layer's keyframes (motion/keyframes.ts sampleKeyframes), passed in by the caller.
 export type KeyframePoseLike = { scale: number; x: number; y: number; opacity: number; rotation: number };
@@ -51,18 +51,20 @@ export type AnimationPose = { dx: number; dy: number; scale: number; opacity: nu
 export const REST: AnimationPose = { dx: 0, dy: 0, scale: 1, opacity: 1 };
 
 // Pose of an enter animation at progress p (0 = start, 1 = done) or of an exit animation at
-// progress p (0 = start of the exit, fully shown; 1 = gone). Offsets in px.
+// progress p (0 = start of the exit, fully shown; 1 = gone). Offsets in px. `curve` replaces the
+// kind's own progress curve (the animation's `ease`); it may overshoot 1 (back_out, elastic_out).
 export const animationPose = (
   kind: LayerAnimationKind,
   p: number,
   phase: "enter" | "exit",
   frameWidth: number,
   frameHeight: number,
+  curve?: (t: number) => number,
 ): AnimationPose => {
   const t = clamp01(p);
   const d = SLIDE_DISTANCE * Math.min(frameWidth, frameHeight);
   if (phase === "enter") {
-    const e = easeOutCubic(t);
+    const e = curve ? curve(t) : easeOutCubic(t);
     const away = d * (1 - e);
     switch (kind) {
       case "fade":
@@ -76,10 +78,10 @@ export const animationPose = (
       case "slide_right": // from the left
         return { dx: 0 - away, dy: 0, scale: 1, opacity: e };
       case "pop":
-        return { dx: 0, dy: 0, scale: POP_FROM + (1 - POP_FROM) * easeOutBack(t), opacity: clamp01(t / 0.35) };
+        return { dx: 0, dy: 0, scale: POP_FROM + (1 - POP_FROM) * (curve ? e : easeOutBack(t)), opacity: clamp01(t / 0.35) };
     }
   }
-  const e = easeInCubic(t);
+  const e = curve ? curve(t) : easeInCubic(t);
   const gone = d * e;
   switch (kind) {
     case "fade":
@@ -93,7 +95,7 @@ export const animationPose = (
     case "slide_right":
       return { dx: gone, dy: 0, scale: 1, opacity: 1 - e };
     case "pop":
-      return { dx: 0, dy: 0, scale: 1 - (1 - POP_FROM) * easeInCubic(t), opacity: 1 - clamp01((t - 0.65) / 0.35) };
+      return { dx: 0, dy: 0, scale: 1 - (1 - POP_FROM) * e, opacity: 1 - clamp01((t - 0.65) / 0.35) };
   }
 };
 
@@ -112,8 +114,15 @@ export type LayerFrameState = {
 
 const r4 = (v: number): number => Math.round(v * 1e4) / 1e4;
 
+// Easing curves by name (motion/keyframes.ts applyEasing), passed in by the caller so this module
+// keeps no runtime imports.
+export type ApplyEasing = (ease: Easing, t: number) => number;
+
+const curveOf = (ease: Easing | undefined, easing: ApplyEasing | undefined): ((t: number) => number) | undefined =>
+  ease && easing ? (t) => easing(ease, t) : undefined;
+
 // State of `layer` on scene frame `frame`. `kf` is the keyframe pose at that frame (identity when
-// the layer has no keyframes).
+// the layer has no keyframes). `easing` is needed only for enter/exit animations with an `ease`.
 export const layerStateAt = (
   layer: Layer,
   frame: number,
@@ -122,6 +131,7 @@ export const layerStateAt = (
   frameWidth: number,
   frameHeight: number,
   kf: KeyframePoseLike = NO_KEYFRAMES,
+  easing?: ApplyEasing,
 ): LayerFrameState => {
   const { start, end } = layerFrames(layer, fps, sceneFrames);
   const width = layer.width * frameWidth;
@@ -140,13 +150,15 @@ export const layerStateAt = (
   let anim = REST;
   if (layer.enter) {
     const n = Math.max(1, msToFrames(layer.enter.duration_ms ?? DEFAULT_ANIMATION_MS, fps));
-    if (local < n) anim = animationPose(layer.enter.kind, local / n, "enter", frameWidth, frameHeight);
+    if (local < n) {
+      anim = animationPose(layer.enter.kind, local / n, "enter", frameWidth, frameHeight, curveOf(layer.enter.ease, easing));
+    }
   }
   if (layer.exit) {
     const n = Math.max(1, msToFrames(layer.exit.duration_ms ?? DEFAULT_ANIMATION_MS, fps));
     const into = local - (span - n) + 1; // 1..n over the last n frames
     if (into > 0) {
-      const out = animationPose(layer.exit.kind, into / n, "exit", frameWidth, frameHeight);
+      const out = animationPose(layer.exit.kind, into / n, "exit", frameWidth, frameHeight, curveOf(layer.exit.ease, easing));
       anim = { dx: anim.dx + out.dx, dy: anim.dy + out.dy, scale: anim.scale * out.scale, opacity: anim.opacity * out.opacity };
     }
   }

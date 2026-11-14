@@ -3,6 +3,7 @@ import { Player, type PlayerRef } from "@remotion/player";
 import { Timeline } from "../../../src/compositions/Timeline";
 import type { Layer, VideoTimeline } from "../../../src/types/timeline";
 import { frameCount } from "../model";
+import { outlineHeight } from "../layers";
 import { AssetUrlContext } from "../../../src/assets";
 import { assetUrlFor } from "../media";
 
@@ -25,7 +26,7 @@ const LayerHandle = ({ layer, onMove }: { layer: Layer; onMove: (x: number, y: n
   const x = layer.x + (drag?.dx ?? 0);
   const y = layer.y + (drag?.dy ?? 0);
   // Auto-height text: outline about one line.
-  const height = layer.height ?? (layer.kind === "text" ? (layer.font_size ?? 0.06) * (layer.line_height ?? 1.2) : 0.05);
+  const height = outlineHeight(layer);
   const transforms = [layer.anchor === "center" ? "translate(-50%, -50%)" : "", layer.rotation ? `rotate(${layer.rotation}deg)` : ""];
   return (
     <div

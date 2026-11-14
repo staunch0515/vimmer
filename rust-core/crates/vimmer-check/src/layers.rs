@@ -11,14 +11,18 @@
 
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use vimmer_dsl::{
-    Anchor, ImageFit, Layer, LayerContent, Resolution, Scene, TextLayer, VideoTimeline,
+    count_frames, frame_progress, typing_units, Anchor, BarChartLayer, ChartOrientation,
+    CounterLayer, ImageFit, Layer, LayerContent, LowerThirdLayer, ProgressRingLayer, Resolution,
+    Scene, TextLayer, TextReveal, VideoTimeline,
 };
 
 use crate::assets::{UPSCALE_INFO, UPSCALE_WARN};
 use crate::layout::{title_safe, SceneTextArea, SCENE_LETTER_SPACING_EM, SCENE_WORD_GAP_EM};
-use crate::text::{capacity_chars, cps_limit, reading_chars, scene_text_lines, Lang, OPTIMISTIC};
+use crate::text::{
+    capacity_chars, cps_limit, reading_chars, scene_text_lines, width, Lang, OPTIMISTIC,
+};
 use crate::{is_url, scene_starts_ms, Finding, Severity, Suggestion};
 
 fn layer_path(scene: usize, layer: usize, field: &str) -> String {
@@ -104,7 +108,6 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
     let mut out = Vec::new();
     let res = timeline.resolution;
     let starts = scene_starts_ms(timeline);
-    let (safe_l, safe_t, safe_r, safe_b) = title_safe(res);
     for (si, scene) in timeline.scenes.iter().enumerate() {
         for (li, layer) in scene.layers.iter().enumerate() {
             let at = starts[si] + layer.start_ms;
@@ -144,31 +147,89 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
                         .at(at),
                     );
                 }
-                let (l, top, w, h) = place(layer, res, box_h);
-                if l < safe_l - 0.5
-                    || top < safe_t - 0.5
-                    || l + w > safe_r + 0.5
-                    || top + h > safe_b + 0.5
-                {
+                if let Some(f) = outside_safe_area(&name, layer, res, box_h, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
+                }
+                reading_speed(&mut out, scene, si, li, layer, t, at);
+                typing_time(&mut out, scene, si, li, layer, t, at);
+            }
+
+            if let LayerContent::LowerThird(lt) = &layer.content {
+                let (needed, optimistic) = lower_third_height(lt, layer, res);
+                match fixed_h {
+                    Some(fixed) if needed > fixed + 0.5 => {
+                        let severity = if optimistic > fixed + 0.5 {
+                            Severity::Error
+                        } else {
+                            Severity::Warning
+                        };
+                        out.push(
+                            Finding::new(
+                                severity,
+                                "text.overflow",
+                                format!(
+                                    "{name} needs about {needed:.0} px for its title and subtitle but its box is {fixed:.0} px tall"
+                                ),
+                                Suggestion::set(
+                                    "leave out `height` so the box fits its text",
+                                    layer_path(si, li, "height"),
+                                    Value::Null,
+                                ),
+                            )
+                            .scene(&scene.id)
+                            .at(at),
+                        );
+                    }
+                    Some(_) => {}
+                    None => box_h = needed,
+                }
+                if let Some(f) = outside_safe_area(&name, layer, res, box_h, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
+                }
+            }
+
+            if let LayerContent::Counter(c) = &layer.content {
+                let font_px = f64::from(c.font_size) * f64::from(res.height);
+                if fixed_h.is_none() {
+                    box_h = font_px * 1.2;
+                }
+                let box_w = f64::from(layer.width) * f64::from(res.width);
+                let (widest, text) = widest_count(c, layer, scene, timeline.fps, font_px);
+                if widest > box_w + 0.5 {
+                    let fit =
+                        (f64::from(c.font_size) * box_w / widest * 0.95 * 1000.0).floor() / 1000.0;
                     out.push(
                         Finding::new(
                             Severity::Warning,
-                            "safe_area.text",
+                            "counter.overflow",
                             format!(
-                                "{name} spans x {l:.0}..{:.0}, y {top:.0}..{:.0} px; the title-safe area is x {safe_l:.0}..{safe_r:.0}, y {safe_t:.0}..{safe_b:.0}",
-                                l + w,
-                                top + h
+                                "{name} shows `{text}` at its widest, about {widest:.0} px, but its box is {box_w:.0} px wide"
                             ),
-                            Suggestion::field(
-                                "move or shrink the layer so its text stays 5% inside every edge",
-                                layer_path(si, li, "x"),
+                            Suggestion::set(
+                                format!("make the font smaller ({fit}) or the box wider"),
+                                layer_path(si, li, "font_size"),
+                                json!(fit),
                             ),
                         )
                         .scene(&scene.id)
                         .at(at),
                     );
                 }
-                reading_speed(&mut out, scene, si, li, layer, t, at);
+            }
+
+            if let LayerContent::BarChart(ch) = &layer.content {
+                for f in chart_findings(&name, ch, layer, res, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
+                }
+                if let Some(f) = outside_safe_area(&name, layer, res, box_h, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
+                }
+            }
+
+            if let LayerContent::ProgressRing(r) = &layer.content {
+                if let Some(f) = ring_label_overflow(&name, r, layer, res, si, li) {
+                    out.push(f.scene(&scene.id).at(at));
+                }
             }
 
             let rect = place(layer, res, box_h);
@@ -197,6 +258,232 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
         }
     }
     out
+}
+
+/// A box (before rotation, at rest) that leaves the title-safe area.
+fn outside_safe_area(
+    name: &str,
+    layer: &Layer,
+    res: Resolution,
+    box_h: f64,
+    si: usize,
+    li: usize,
+) -> Option<Finding> {
+    let (safe_l, safe_t, safe_r, safe_b) = title_safe(res);
+    let (l, top, w, h) = place(layer, res, box_h);
+    if l >= safe_l - 0.5 && top >= safe_t - 0.5 && l + w <= safe_r + 0.5 && top + h <= safe_b + 0.5
+    {
+        return None;
+    }
+    Some(Finding::new(
+        Severity::Warning,
+        "safe_area.text",
+        format!(
+            "{name} spans x {l:.0}..{:.0}, y {top:.0}..{:.0} px; the title-safe area is x {safe_l:.0}..{safe_r:.0}, y {safe_t:.0}..{safe_b:.0}",
+            l + w,
+            top + h
+        ),
+        Suggestion::field(
+            "move or shrink the layer so its text stays 5% inside every edge",
+            layer_path(si, li, "x"),
+        ),
+    ))
+}
+
+/// A text area of `line_width` px at `font_px` with line height `lh` (a multiple of the font).
+fn area(font_px: f64, lh: f64, line_width: f64) -> SceneTextArea {
+    SceneTextArea {
+        font_px,
+        letter_spacing_em: SCENE_LETTER_SPACING_EM,
+        word_gap_em: SCENE_WORD_GAP_EM,
+        line_height_px: font_px * lh,
+        line_width: line_width.max(1.0),
+        max_lines: u32::MAX,
+        bottom_y: 0.0,
+    }
+}
+
+/// Lower-third layout, in em of the title font (`components/LayerKinds.tsx` `LowerThirdView`).
+const LT_BAR_EM: f64 = 0.16;
+const LT_PAD_V_EM: f64 = 0.38;
+const LT_PAD_H_EM: f64 = 0.7;
+const LT_TITLE_LH: f64 = 1.15;
+const LT_SUB_SCALE: f64 = 0.62;
+const LT_SUB_LH: f64 = 1.3;
+const LT_SUB_GAP_EM: f64 = 0.25;
+
+/// Height in px a lower third needs for its text: (nominal, optimistic).
+fn lower_third_height(lt: &LowerThirdLayer, layer: &Layer, res: Resolution) -> (f64, f64) {
+    let f = f64::from(lt.font_size) * f64::from(res.height);
+    let line_width =
+        f64::from(layer.width) * f64::from(res.width) - (LT_BAR_EM + 2.0 * LT_PAD_H_EM) * f;
+    let title = area(f, LT_TITLE_LH, line_width);
+    let sub = area(f * LT_SUB_SCALE, LT_SUB_LH, line_width);
+    let at = |factor: f64| {
+        let mut h = 2.0 * LT_PAD_V_EM * f
+            + f64::from(scene_text_lines(&lt.title, &title, factor)) * title.line_height_px;
+        if let Some(s) = lt.subtitle.as_deref().filter(|s| !s.trim().is_empty()) {
+            h += LT_SUB_GAP_EM * sub.font_px
+                + f64::from(scene_text_lines(s, &sub, factor)) * sub.line_height_px;
+        }
+        h
+    };
+    (at(1.0), at(OPTIMISTIC))
+}
+
+/// The widest text a counter shows on any frame (an elastic ease overshoots `to`), in px.
+fn widest_count(
+    c: &CounterLayer,
+    layer: &Layer,
+    scene: &Scene,
+    fps: u32,
+    font_px: f64,
+) -> (f64, String) {
+    let n = count_frames(layer, c.duration_ms, scene.duration_ms, fps);
+    let mut best = (0.0, String::new());
+    for f in 0..n {
+        let e = c.ease.apply(frame_progress(f, n));
+        let text = c.format(c.from + (c.to - c.from) * e);
+        let w = width(&text, font_px, SCENE_LETTER_SPACING_EM);
+        if w > best.0 {
+            best = (w, text);
+        }
+    }
+    best
+}
+
+/// Bar chart layout (`motion/data.ts`): bar slot fill, label/value columns and rows.
+const HBAR_LABEL_FRAC: f64 = 0.28;
+const HBAR_VALUE_FRAC: f64 = 0.16;
+const VBAR_LABEL_EM: f64 = 1.6;
+const VBAR_VALUE_EM: f64 = 1.5;
+
+/// Labels and value labels wider than their room, and a plot squeezed by them.
+fn chart_findings(
+    name: &str,
+    ch: &BarChartLayer,
+    layer: &Layer,
+    res: Resolution,
+    si: usize,
+    li: usize,
+) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let f = f64::from(ch.font_size) * f64::from(res.height);
+    let w = f64::from(layer.width) * f64::from(res.width);
+    let h = f64::from(layer.height.unwrap_or(0.0)) * f64::from(res.height);
+    let n = ch.bars.len().max(1) as f64;
+    let horizontal = ch.orientation == ChartOrientation::Horizontal;
+    let (label_room, value_room) = if horizontal {
+        (w * HBAR_LABEL_FRAC - 0.4 * f, w * HBAR_VALUE_FRAC - 0.3 * f)
+    } else {
+        (w / n, w / n)
+    };
+    let measure = |s: &str| width(s, f, SCENE_LETTER_SPACING_EM);
+    let widest = |texts: Vec<String>| {
+        texts
+            .into_iter()
+            .map(|t| (measure(&t), t))
+            .fold((0.0, String::new()), |a, b| if b.0 > a.0 { b } else { a })
+    };
+    let (lw, label) = widest(ch.bars.iter().map(|b| b.label.clone()).collect());
+    if lw > label_room + 0.5 {
+        out.push(Finding::new(
+            Severity::Warning,
+            "chart.label_overflow",
+            format!(
+                "{name}: the label `{label}` is about {lw:.0} px wide but has {label_room:.0} px; it runs into its neighbours"
+            ),
+            Suggestion::field(
+                "shorten the labels, make the chart wider or the font smaller",
+                layer_path(si, li, "bars"),
+            ),
+        ));
+    }
+    if ch.show_values {
+        let (vw, value) = widest(ch.bars.iter().map(|b| ch.format(b.value)).collect());
+        if vw > value_room + 0.5 {
+            out.push(Finding::new(
+                Severity::Warning,
+                "chart.label_overflow",
+                format!(
+                    "{name}: the value label `{value}` is about {vw:.0} px wide but has {value_room:.0} px"
+                ),
+                Suggestion::field(
+                    "use fewer decimals, a shorter suffix, a wider chart or a smaller font",
+                    layer_path(si, li, "font_size"),
+                ),
+            ));
+        }
+    }
+    // Vertical: room for the bars between the value and label rows. Horizontal: each row must
+    // hold a line of label text.
+    let (room, needed, what) = if horizontal {
+        (h / n, 1.25 * f, "per bar row")
+    } else {
+        let rows = VBAR_LABEL_EM + if ch.show_values { VBAR_VALUE_EM } else { 0.0 };
+        (h - rows * f, 2.0 * f, "for the bars")
+    };
+    if room < needed {
+        out.push(Finding::new(
+            Severity::Warning,
+            "chart.cramped",
+            format!(
+                "{name}: its {h:.0} px tall box leaves about {:.0} px {what}; it needs {needed:.0} px",
+                room.max(0.0)
+            ),
+            Suggestion::field(
+                "make the chart taller, the font smaller or use fewer bars",
+                layer_path(si, li, "height"),
+            ),
+        ));
+    }
+    out
+}
+
+/// Ring center label sizes, fractions of the diameter (`LayerKinds.tsx`).
+const RING_PERCENT_SCALE: f64 = 0.22;
+const RING_LABEL_SCALE: f64 = 0.15;
+
+/// A center label wider than the hole of the ring.
+fn ring_label_overflow(
+    name: &str,
+    r: &ProgressRingLayer,
+    layer: &Layer,
+    res: Resolution,
+    si: usize,
+    li: usize,
+) -> Option<Finding> {
+    if !r.show_label {
+        return None;
+    }
+    let d = (f64::from(layer.width) * f64::from(res.width))
+        .min(f64::from(layer.height.unwrap_or(0.0)) * f64::from(res.height));
+    let hole = d * (1.0 - 2.0 * f64::from(r.thickness));
+    let (text, font) = match &r.label {
+        Some(l) => (l.clone(), d * RING_LABEL_SCALE),
+        // The widest percentage it can show: 100 % with its decimals.
+        None => (r.label_text(1.0), d * RING_PERCENT_SCALE),
+    };
+    let w = width(&text, font, SCENE_LETTER_SPACING_EM);
+    if w <= hole * 0.92 {
+        return None;
+    }
+    let field = if r.label.is_some() {
+        "label"
+    } else {
+        "decimals"
+    };
+    Some(Finding::new(
+        Severity::Warning,
+        "ring.label_overflow",
+        format!(
+            "{name}: the center text `{text}` is about {w:.0} px wide but the ring's hole is {hole:.0} px"
+        ),
+        Suggestion::field(
+            "shorten the label, make the ring bigger or thinner",
+            layer_path(si, li, field),
+        ),
+    ))
 }
 
 fn reading_speed(
@@ -241,6 +528,50 @@ fn reading_speed(
             .at(at),
         );
     }
+}
+
+/// A typewriter that is still typing when its layer starts to leave.
+fn typing_time(
+    out: &mut Vec<Finding>,
+    scene: &Scene,
+    si: usize,
+    li: usize,
+    layer: &Layer,
+    t: &TextLayer,
+    at: u64,
+) {
+    if t.reveal != TextReveal::Typewriter {
+        return;
+    }
+    let shown = layer
+        .end_ms_in(scene.duration_ms)
+        .saturating_sub(layer.start_ms);
+    let until_exit = shown.saturating_sub(layer.exit.map_or(0, |e| e.duration_ms));
+    let typing = t.typing_ms();
+    if typing <= until_exit || until_exit == 0 {
+        return;
+    }
+    let units = typing_units(&t.text).len();
+    let needed = (units as f64 * 1000.0 / until_exit as f64).ceil();
+    out.push(
+        Finding::new(
+            Severity::Warning,
+            "text.typing_unfinished",
+            format!(
+                "layer `{}` types {units} characters in {} but leaves after {}; the end of the text is never shown",
+                layer.id,
+                crate::secs(typing),
+                crate::secs(until_exit)
+            ),
+            Suggestion::set(
+                format!("type faster (typing_cps {needed}) or show the layer longer"),
+                layer_path(si, li, "typing_cps"),
+                json!(needed),
+            ),
+        )
+        .scene(&scene.id)
+        .at(at),
+    );
 }
 
 /// Image and icon files: missing, unreadable, too small for their box; icons without a viewBox.
@@ -362,7 +693,7 @@ pub fn check_assets(timeline: &VideoTimeline, public_dir: &Path) -> Vec<Finding>
                         ));
                     }
                 }
-                LayerContent::Text(_) | LayerContent::Shape(_) => {}
+                _ => {}
             }
         }
     }

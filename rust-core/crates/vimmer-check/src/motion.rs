@@ -12,7 +12,7 @@
 //! layer's coordinates, must lie inside the scaled layer.
 
 use serde_json::json;
-use vimmer_dsl::{Easing, Keyframe, Resolution, VideoTimeline};
+use vimmer_dsl::{Keyframe, Resolution, VideoTimeline};
 
 use crate::{scene_path, scene_starts_ms, Finding, Severity, Suggestion};
 
@@ -22,21 +22,6 @@ pub struct Pose {
     pub x: f64,
     pub y: f64,
     pub rotation: f64,
-}
-
-fn ease(e: Easing, t: f64) -> f64 {
-    match e {
-        Easing::Linear => t,
-        Easing::EaseIn => t * t,
-        Easing::EaseOut => 1.0 - (1.0 - t) * (1.0 - t),
-        Easing::EaseInOut => {
-            if t < 0.5 {
-                2.0 * t * t
-            } else {
-                1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
-            }
-        }
-    }
 }
 
 fn pose_of(k: &Keyframe) -> Pose {
@@ -63,10 +48,9 @@ pub fn sample(keyframes: &[Keyframe], time_ms: f64) -> (Pose, usize, usize) {
         i += 1;
     }
     let (a, b) = (&keyframes[i], &keyframes[i + 1]);
-    let t = ease(
-        a.ease,
-        (time_ms - a.at_ms as f64) / (b.at_ms - a.at_ms) as f64,
-    );
+    let t = a
+        .ease
+        .apply((time_ms - a.at_ms as f64) / (b.at_ms - a.at_ms) as f64);
     let (pa, pb) = (pose_of(a), pose_of(b));
     let lerp = |x: f64, y: f64| x + (y - x) * t;
     (
@@ -181,6 +165,7 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vimmer_dsl::Easing;
 
     const RES: Resolution = Resolution {
         width: 1920,

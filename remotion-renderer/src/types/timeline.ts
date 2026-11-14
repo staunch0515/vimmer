@@ -14,7 +14,9 @@ export type Narration = {
 };
 
 // Easing of the segment that leaves a keyframe. Mirrors `Easing` in model.rs.
-export type Easing = "linear" | "ease_in" | "ease_out" | "ease_in_out";
+// back_out overshoots to about 1.1, elastic_out springs to about 1.37 and rings out, bounce_out
+// bounces up to 1 (never above).
+export type Easing = "linear" | "ease_in" | "ease_out" | "ease_in_out" | "back_out" | "elastic_out" | "bounce_out";
 
 // One pose of the scene's image layer. Mirrors `Keyframe` in model.rs.
 // Optional fields fall back to the identity pose when absent from the JSON.
@@ -69,6 +71,7 @@ export type LayerAnimationKind = "fade" | "slide_up" | "slide_down" | "slide_lef
 export type LayerAnimation = {
   kind: LayerAnimationKind;
   duration_ms?: number; // default 400
+  ease?: Easing; // default: the kind's own curve (ease-out cubic in, ease-in cubic out, back-out for pop in)
 };
 
 export type LayerCommon = {
@@ -111,7 +114,10 @@ export type TextLayer = LayerCommon & {
   line_height?: number; // default 1.2
   background?: TextBackground | null;
   highlights?: string[];
-  reveal?: "none" | "words"; // default none
+  // typewriter: unit by unit (motion/typewriter.ts) at typing_cps from the layer start
+  reveal?: "none" | "words" | "typewriter"; // default none
+  typing_cps?: number; // characters per second, 1..200, default 20
+  cursor?: boolean; // blinking cursor, typewriter only, default false
 };
 
 export type ShapeKind = "rect" | "ellipse" | "line";
@@ -131,7 +137,81 @@ export type IconLayer = LayerCommon & {
   color?: string; // default #fafafa
 };
 
-export type Layer = ImageLayer | TextLayer | ShapeLayer | IconLayer;
+// Name/title strip. Without enter/exit it animates itself (motion/lowerThird.ts).
+export type LowerThirdLayer = LayerCommon & {
+  kind: "lower_third";
+  title: string; // at most 120 characters
+  subtitle?: string | null; // at most 160 characters
+  font_size?: number; // title, fraction of the frame height, default 0.045; subtitle 0.62 of it
+  color?: string; // title, default #fafafa
+  subtitle_color?: string; // default #d4d4d8
+  accent_color?: string; // default #6366f1
+  background_color?: string | null; // default #09090bd9; null = no box
+};
+
+// A number counting from `from` to `to` (motion/data.ts). One line; height may be left out.
+export type CounterLayer = LayerCommon & {
+  kind: "counter";
+  from?: number; // default 0
+  to: number;
+  duration_ms?: number | null; // default: until the exit begins
+  ease?: Easing; // default ease_out
+  decimals?: number; // 0..6, default 0
+  prefix?: string;
+  suffix?: string;
+  separator?: string; // thousands, default ","; "" for none
+  decimal_mark?: string; // default "."
+  font_size?: number; // fraction of the frame height, default 0.12
+  color?: string; // default #fafafa
+  weight?: number; // default 700
+  align?: "left" | "center" | "right"; // default center
+};
+
+export type ChartBar = { label: string; value: number; color?: string | null };
+
+// Bars growing in one after another (motion/data.ts for timing and layout fractions).
+export type BarChartLayer = LayerCommon & {
+  kind: "bar_chart";
+  bars: ChartBar[]; // 1..12, values >= 0
+  orientation?: "vertical" | "horizontal"; // default vertical
+  max?: number | null; // default the largest value
+  color?: string; // bars, default #6366f1
+  label_color?: string; // default #e4e4e7
+  font_size?: number; // labels and values, fraction of the frame height, default 0.032
+  show_values?: boolean; // default true
+  decimals?: number; // value labels, 0..6
+  prefix?: string;
+  suffix?: string;
+  grow_ms?: number; // default 800
+  stagger_ms?: number; // default 120
+  ease?: Easing; // default ease_out
+};
+
+// A ring filling clockwise from the top, from `from` to `value` (fractions of a full ring).
+export type ProgressRingLayer = LayerCommon & {
+  kind: "progress_ring";
+  value: number; // 0..1
+  from?: number; // 0..1, default 0
+  duration_ms?: number | null; // default: until the exit begins
+  ease?: Easing; // default ease_out
+  color?: string; // default #6366f1
+  track_color?: string; // default #ffffff26
+  thickness?: number; // fraction of the ring's diameter, 0.02..0.5, default 0.12
+  show_label?: boolean; // default true
+  label?: string | null; // custom center text (at most 24 characters); default the percentage
+  decimals?: number; // of the percentage, default 0
+  label_color?: string; // default #fafafa
+};
+
+export type Layer =
+  | ImageLayer
+  | TextLayer
+  | ShapeLayer
+  | IconLayer
+  | LowerThirdLayer
+  | CounterLayer
+  | BarChartLayer
+  | ProgressRingLayer;
 export type LayerKind = Layer["kind"];
 
 export type Resolution = {

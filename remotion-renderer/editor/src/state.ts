@@ -162,7 +162,7 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
     case "addLayer": {
       const scene = t.scenes[action.sceneIndex];
       if (!scene) return state;
-      const layers = [...(scene.layers ?? []), newLayer(action.kind, scene)];
+      const layers = [...(scene.layers ?? []), newLayer(action.kind, scene, t.resolution)];
       return commit(state, withLayers(t, action.sceneIndex, layers), {
         kind: "layer", sceneIndex: action.sceneIndex, index: layers.length - 1,
       });

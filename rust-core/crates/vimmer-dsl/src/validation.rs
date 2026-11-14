@@ -3,8 +3,10 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use crate::layer::{
-    is_hex_color, Layer, LayerContent, ShapeKind, MAX_LAYERS, MAX_LAYER_KEYFRAMES,
-    MAX_LAYER_TEXT_CHARS,
+    is_hex_color, Layer, LayerContent, ShapeKind, MAX_ABS_NUMBER, MAX_AFFIX_CHARS, MAX_BARS,
+    MAX_BAR_LABEL_CHARS, MAX_DECIMALS, MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS,
+    MAX_LOWER_THIRD_SUBTITLE_CHARS, MAX_LOWER_THIRD_TITLE_CHARS, MAX_RING_LABEL_CHARS,
+    MAX_TYPING_CPS,
 };
 use crate::model::{
     Keyframe, Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
@@ -255,7 +257,7 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
         Some(h) if !size_ok(h) => out.push(format!(
             "height must be above 0 and at most 4 (fractions of the frame), got {h}"
         )),
-        None if !matches!(layer.content, LayerContent::Text(_)) => {
+        None if !layer.content.auto_height() => {
             out.push(format!("a {} layer needs a height", layer.content.kind()))
         }
         _ => {}
@@ -356,6 +358,166 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
             if t.highlights.iter().any(|h| h.trim().is_empty()) {
                 out.push("a highlight is empty".to_string());
             }
+            if let Some(cps) = t.typing_cps {
+                if !(cps.is_finite() && (1.0..=MAX_TYPING_CPS).contains(&cps)) {
+                    out.push(format!(
+                        "typing_cps must be between 1 and {MAX_TYPING_CPS} characters per second, got {cps}"
+                    ));
+                }
+            }
+        }
+        LayerContent::LowerThird(lt) => {
+            let n = lt.title.chars().count();
+            if lt.title.trim().is_empty() {
+                out.push("the title is empty".to_string());
+            } else if n > MAX_LOWER_THIRD_TITLE_CHARS {
+                out.push(format!(
+                    "the title is {n} characters; the limit is {MAX_LOWER_THIRD_TITLE_CHARS}"
+                ));
+            }
+            if let Some(sub) = &lt.subtitle {
+                let n = sub.chars().count();
+                if n > MAX_LOWER_THIRD_SUBTITLE_CHARS {
+                    out.push(format!(
+                        "the subtitle is {n} characters; the limit is {MAX_LOWER_THIRD_SUBTITLE_CHARS}"
+                    ));
+                }
+            }
+            if !(lt.font_size.is_finite() && lt.font_size > 0.0 && lt.font_size <= 0.2) {
+                out.push(format!(
+                    "font_size must be above 0 and at most 0.2 (fraction of the frame height), got {}",
+                    lt.font_size
+                ));
+            }
+            color("color", &lt.color, &mut out);
+            color("subtitle_color", &lt.subtitle_color, &mut out);
+            color("accent_color", &lt.accent_color, &mut out);
+            if let Some(c) = &lt.background_color {
+                color("background_color", c, &mut out);
+            }
+        }
+        LayerContent::Counter(c) => {
+            for (name, v) in [("from", c.from), ("to", c.to)] {
+                number(name, v, &mut out);
+            }
+            out.extend(number_format_problems(
+                c.decimals,
+                &c.prefix,
+                &c.suffix,
+                Some((&c.separator, &c.decimal_mark)),
+            ));
+            if let Some(ms) = c.duration_ms {
+                if ms == 0 || ms > span {
+                    out.push(format!(
+                        "duration_ms must be above 0 and at most the layer's time ({span} ms), got {ms}"
+                    ));
+                }
+            }
+            if !(c.font_size.is_finite() && c.font_size > 0.0 && c.font_size <= 0.5) {
+                out.push(format!(
+                    "font_size must be above 0 and at most 0.5 (fraction of the frame height), got {}",
+                    c.font_size
+                ));
+            }
+            if !(100..=900).contains(&c.weight) || c.weight % 100 != 0 {
+                out.push(format!(
+                    "weight must be 100, 200, ... 900, got {}",
+                    c.weight
+                ));
+            }
+            color("color", &c.color, &mut out);
+        }
+        LayerContent::BarChart(ch) => {
+            if ch.bars.is_empty() || ch.bars.len() > MAX_BARS {
+                out.push(format!(
+                    "a chart needs 1 to {MAX_BARS} bars, got {}",
+                    ch.bars.len()
+                ));
+            }
+            for (i, bar) in ch.bars.iter().enumerate() {
+                let n = bar.label.chars().count();
+                if n > MAX_BAR_LABEL_CHARS {
+                    out.push(format!(
+                        "bar {i} label is {n} characters; the limit is {MAX_BAR_LABEL_CHARS}"
+                    ));
+                }
+                if !(bar.value.is_finite() && (0.0..=MAX_ABS_NUMBER).contains(&bar.value)) {
+                    out.push(format!(
+                        "bar {i} value must be 0 or more (at most {MAX_ABS_NUMBER:e}), got {}",
+                        bar.value
+                    ));
+                }
+                if let Some(c) = &bar.color {
+                    color(&format!("bar {i} color"), c, &mut out);
+                }
+            }
+            let largest = ch.bars.iter().map(|b| b.value).fold(0.0, f64::max);
+            match ch.max {
+                Some(m) if !(m.is_finite() && m > 0.0 && m <= MAX_ABS_NUMBER) => {
+                    out.push(format!("max must be above 0, got {m}"))
+                }
+                Some(m) if largest > m => out.push(format!(
+                    "max ({m}) is below the largest value ({largest}); leave it out to use the largest value"
+                )),
+                None if largest <= 0.0 && !ch.bars.is_empty() => {
+                    out.push("every bar is 0: give one a value above 0 or set max".to_string())
+                }
+                _ => {}
+            }
+            out.extend(number_format_problems(
+                ch.decimals,
+                &ch.prefix,
+                &ch.suffix,
+                None,
+            ));
+            if !(ch.font_size.is_finite() && ch.font_size > 0.0 && ch.font_size <= 0.2) {
+                out.push(format!(
+                    "font_size must be above 0 and at most 0.2 (fraction of the frame height), got {}",
+                    ch.font_size
+                ));
+            }
+            if ch.grow_ms == 0 || ch.grow_ms > 10_000 {
+                out.push(format!("grow_ms must be 1..10000, got {}", ch.grow_ms));
+            }
+            if ch.stagger_ms > 2_000 {
+                out.push(format!("stagger_ms must be 0..2000, got {}", ch.stagger_ms));
+            }
+            color("color", &ch.color, &mut out);
+            color("label_color", &ch.label_color, &mut out);
+        }
+        LayerContent::ProgressRing(r) => {
+            for (name, v) in [("value", r.value), ("from", r.from)] {
+                if !(v.is_finite() && (0.0..=1.0).contains(&v)) {
+                    out.push(format!(
+                        "{name} must be between 0 and 1 (a fraction of the ring), got {v}"
+                    ));
+                }
+            }
+            if let Some(ms) = r.duration_ms {
+                if ms == 0 || ms > span {
+                    out.push(format!(
+                        "duration_ms must be above 0 and at most the layer's time ({span} ms), got {ms}"
+                    ));
+                }
+            }
+            if !in_range(r.thickness, 0.02, 0.5) {
+                out.push(format!(
+                    "thickness must be between 0.02 and 0.5 (fraction of the ring's diameter), got {}",
+                    r.thickness
+                ));
+            }
+            if let Some(l) = &r.label {
+                let n = l.chars().count();
+                if n > MAX_RING_LABEL_CHARS {
+                    out.push(format!(
+                        "the label is {n} characters; the limit is {MAX_RING_LABEL_CHARS}"
+                    ));
+                }
+            }
+            out.extend(number_format_problems(r.decimals, "", "", None));
+            color("color", &r.color, &mut out);
+            color("track_color", &r.track_color, &mut out);
+            color("label_color", &r.label_color, &mut out);
         }
         LayerContent::Shape(sh) => {
             if let Some(c) = &sh.fill {
@@ -376,6 +538,50 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
             if !in_range(sh.corner_radius, 0.0, 0.5) {
                 out.push("corner_radius must be between 0 and 0.5".to_string());
             }
+        }
+    }
+    out
+}
+
+/// A finite number within ±[`MAX_ABS_NUMBER`].
+fn number(name: &str, v: f64, out: &mut Vec<String>) {
+    if !(v.is_finite() && v.abs() <= MAX_ABS_NUMBER) {
+        out.push(format!(
+            "{name} must be a number within ±{MAX_ABS_NUMBER:e}, got {v}"
+        ));
+    }
+}
+
+/// Decimals, prefix and suffix of a formatted number, and its separator and decimal mark when
+/// the kind has them.
+fn number_format_problems(
+    decimals: u8,
+    prefix: &str,
+    suffix: &str,
+    marks: Option<(&str, &str)>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if decimals > MAX_DECIMALS {
+        out.push(format!(
+            "decimals must be 0..{MAX_DECIMALS}, got {decimals}"
+        ));
+    }
+    for (name, s) in [("prefix", prefix), ("suffix", suffix)] {
+        if s.chars().count() > MAX_AFFIX_CHARS {
+            out.push(format!(
+                "{name} is longer than {MAX_AFFIX_CHARS} characters"
+            ));
+        }
+    }
+    if let Some((sep, mark)) = marks {
+        let digit = |s: &str| s.chars().any(|c| c.is_ascii_digit());
+        if sep.chars().count() > 2 || digit(sep) {
+            out.push("separator must be at most 2 characters and no digits".to_string());
+        }
+        if mark.chars().count() != 1 || digit(mark) || mark == sep {
+            out.push(
+                "decimal_mark must be one character, not a digit and not the separator".to_string(),
+            );
         }
     }
     out
@@ -1063,6 +1269,9 @@ mod tests {
             ),
             layer(r#"{"id":"bad id!","kind":"text","x":0,"y":0,"width":0.5,"text":"a"}"#),
             layer(r#"{"id":"empty","kind":"shape","x":0,"y":0,"width":0.5,"height":0.5}"#),
+            layer(
+                r#"{"id":"type","kind":"text","x":0,"y":0,"width":0.5,"text":"a","reveal":"typewriter","typing_cps":0}"#,
+            ),
         ];
         let errs = validate(&timeline(vec![a])).unwrap_err();
         assert!(errs.contains(&ValidationError::DuplicateLayerId {
@@ -1094,6 +1303,128 @@ mod tests {
         has("kf", "scale");
         has("bad id!", "id must be");
         has("empty", "fill or a stroke");
+        has("type", "typing_cps");
+    }
+
+    #[test]
+    fn lower_third_rules() {
+        let mut a = scene("a", 3_000);
+        a.layers = vec![
+            layer(
+                r#"{"id":"ok","kind":"lower_third","x":0.06,"y":0.66,"width":0.5,"title":"Ada","subtitle":"Mathematician"}"#,
+            ),
+            layer(
+                r##"{"id":"bad","kind":"lower_third","x":0.06,"y":0.66,"width":0.5,"title":" ","accent_color":"blue","font_size":0.5}"##,
+            ),
+        ];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(layer_messages(&errs, "ok").is_empty(), "{errs:?}");
+        let m = layer_messages(&errs, "bad");
+        for needle in ["title is empty", "accent_color", "font_size"] {
+            assert!(m.iter().any(|m| m.contains(needle)), "{needle}: {m:?}");
+        }
+        let long = "x".repeat(121);
+        let mut b = scene("b", 3_000);
+        b.layers = vec![layer(&format!(
+            r#"{{"id":"long","kind":"lower_third","x":0,"y":0,"width":0.5,"title":"{long}"}}"#
+        ))];
+        let errs = validate(&timeline(vec![b])).unwrap_err();
+        assert!(layer_messages(&errs, "long")[0].contains("limit is 120"));
+    }
+
+    #[test]
+    fn counter_rules() {
+        let mut a = scene("a", 3_000);
+        a.layers = vec![
+            layer(
+                r#"{"id":"ok","kind":"counter","x":0.3,"y":0.3,"width":0.4,"from":-5,"to":1250.5,"decimals":1,"prefix":"$","separator":" ","decimal_mark":",","duration_ms":3000}"#,
+            ),
+            layer(
+                r#"{"id":"bad","kind":"counter","x":0.3,"y":0.3,"width":0.4,"to":1e16,"decimals":7,"suffix":"a very long suffix!","separator":"1","decimal_mark":"..","duration_ms":4000}"#,
+            ),
+        ];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(layer_messages(&errs, "ok").is_empty(), "{errs:?}");
+        let m = layer_messages(&errs, "bad");
+        for needle in [
+            "to must be",
+            "decimals",
+            "suffix",
+            "separator",
+            "decimal_mark",
+            "duration_ms",
+        ] {
+            assert!(m.iter().any(|m| m.contains(needle)), "{needle}: {m:?}");
+        }
+    }
+
+    #[test]
+    fn bar_chart_rules() {
+        let bars = |n: usize| {
+            (0..n)
+                .map(|i| format!(r#"{{"label":"b{i}","value":{i}}}"#))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let mut a = scene("a", 3_000);
+        a.layers = vec![
+            layer(&format!(
+                r#"{{"id":"ok","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,"orientation":"horizontal","bars":[{}]}}"#,
+                bars(12)
+            )),
+            layer(&format!(
+                r#"{{"id":"many","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,"bars":[{}]}}"#,
+                bars(13)
+            )),
+            layer(
+                r#"{"id":"bad","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,"max":5,"grow_ms":0,
+                    "bars":[{"label":"a","value":-1},{"label":"b","value":9,"color":"green"}]}"#,
+            ),
+            layer(
+                r#"{"id":"zero","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,"bars":[{"label":"a","value":0}]}"#,
+            ),
+            layer(
+                r#"{"id":"nohead","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"bars":[{"label":"a","value":1}]}"#,
+            ),
+        ];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(layer_messages(&errs, "ok").is_empty(), "{errs:?}");
+        let has = |id: &str, needle: &str| {
+            let m = layer_messages(&errs, id);
+            assert!(m.iter().any(|m| m.contains(needle)), "{id} {needle}: {m:?}");
+        };
+        has("many", "1 to 12 bars");
+        has("bad", "bar 0 value");
+        has("bad", "bar 1 color");
+        has("bad", "below the largest");
+        has("bad", "grow_ms");
+        has("zero", "every bar is 0");
+        has("nohead", "needs a height");
+    }
+
+    #[test]
+    fn progress_ring_rules() {
+        let mut a = scene("a", 3_000);
+        a.layers = vec![
+            layer(
+                r#"{"id":"ok","kind":"progress_ring","x":0.4,"y":0.3,"width":0.2,"height":0.35,"value":0.72,"from":0.1,"label":"72 of 100"}"#,
+            ),
+            layer(
+                r#"{"id":"bad","kind":"progress_ring","x":0.4,"y":0.3,"width":0.2,"height":0.35,"value":1.5,"thickness":0.9,"duration_ms":0,"track_color":"grey","label":"a label that is far too long"}"#,
+            ),
+        ];
+        let errs = validate(&timeline(vec![a])).unwrap_err();
+        assert!(layer_messages(&errs, "ok").is_empty(), "{errs:?}");
+        let m = layer_messages(&errs, "bad");
+        for needle in [
+            "value must be",
+            "thickness",
+            "duration_ms",
+            "track_color",
+            "label is",
+        ] {
+            assert!(m.iter().any(|m| m.contains(needle)), "{needle}: {m:?}");
+        }
     }
 
     #[test]

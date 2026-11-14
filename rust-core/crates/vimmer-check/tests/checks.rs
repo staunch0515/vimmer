@@ -488,3 +488,134 @@ fn layers_demo_fixture_has_no_errors() {
     let bad: Vec<_> = fs.iter().filter(|f| f.severity > Severity::Info).collect();
     assert!(bad.is_empty(), "{bad:#?}");
 }
+
+/// A one-scene 16:9 timeline whose scene holds `layers` (a JSON array).
+fn with_layers(scene_ms: u64, layers: &str) -> VideoTimeline {
+    serde_json::from_str(&format!(
+        r#"{{"fps":30,"resolution":{{"width":1920,"height":1080}},"subtitles":[],
+            "scenes":[{{"id":"s","duration_ms":{scene_ms},"text":null,"highlights":[],"image":null,
+            "motion":"static","audio":null,"layers":{layers}}}]}}"#
+    ))
+    .unwrap()
+}
+
+#[test]
+fn typewriter_that_never_finishes_is_a_warning() {
+    let t = with_layers(
+        3000,
+        r#"[{"id":"slow","kind":"text","x":0.1,"y":0.1,"width":0.8,"reveal":"typewriter","typing_cps":10,
+             "text":"这是一个很长的句子，打字机需要很久才能打完它。This one is long too.","exit":{"kind":"fade","duration_ms":500}},
+            {"id":"quick","kind":"text","x":0.1,"y":0.5,"width":0.8,"reveal":"typewriter","text":"你好 👋🏽"}]"#,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let f = one(&fs, "text.typing_unfinished", Some("s"), None);
+    assert!(f.message.contains("`slow`"), "{}", f.message);
+    assert_eq!(f.severity, Severity::Warning);
+    let fixed = apply(&t, f);
+    assert!(find(&run(&fixed, None), "text.typing_unfinished", None, None).is_empty());
+}
+
+#[test]
+fn lower_third_overflow_and_safe_area() {
+    let t = with_layers(
+        4000,
+        r##"[{"id":"good","kind":"lower_third","x":0.06,"y":0.66,"width":0.5,"title":"Ada Lovelace","subtitle":"Mathematician"},
+            {"id":"cramped","kind":"lower_third","x":0.06,"y":0.1,"width":0.3,"height":0.05,
+             "title":"A very long title that has to wrap onto several lines in this narrow box","subtitle":"and a subtitle"},
+            {"id":"edge","kind":"lower_third","x":0.0,"y":0.9,"width":0.5,"title":"At the edge","background_color":null}]"##,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let about = |code: &str, id: &str| {
+        find(&fs, code, None, None)
+            .into_iter()
+            .filter(|f| f.message.contains(&format!("`{id}`")))
+            .count()
+    };
+    assert_eq!(about("text.overflow", "cramped"), 1, "{fs:#?}");
+    assert_eq!(about("safe_area.text", "edge"), 1, "{fs:#?}");
+    assert!(fs.iter().all(|f| !f.message.contains("`good`")), "{fs:#?}");
+    let f = one(&fs, "text.overflow", Some("s"), None);
+    let fixed = apply(&t, f);
+    assert!(find(&run(&fixed, None), "text.overflow", None, None).is_empty());
+}
+
+#[test]
+fn counter_whose_widest_value_overflows_is_a_warning() {
+    // Elastic overshoot: 0 -> 900 springs past 1,000, so the widest text is "1,2xx", not "900".
+    let t = with_layers(
+        3000,
+        r##"[{"id":"narrow","kind":"counter","x":0.4,"y":0.3,"width":0.1,"to":900,"ease":"elastic_out"},
+            {"id":"roomy","kind":"counter","x":0.3,"y":0.6,"width":0.4,"from":0,"to":12500000,"prefix":"$"}]"##,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let f = one(&fs, "counter.overflow", Some("s"), None);
+    assert!(f.message.contains("`narrow`"), "{}", f.message);
+    assert!(
+        f.message.contains("`1,"),
+        "overshoot counted: {}",
+        f.message
+    );
+    let fixed = apply(&t, f);
+    assert!(find(&run(&fixed, None), "counter.overflow", None, None).is_empty());
+}
+
+#[test]
+fn chart_labels_that_do_not_fit_are_warnings() {
+    let t = with_layers(
+        3000,
+        r##"[{"id":"good","kind":"bar_chart","x":0.1,"y":0.1,"width":0.8,"height":0.6,
+              "bars":[{"label":"2022","value":10},{"label":"2023","value":24},{"label":"2024","value":31}]},
+            {"id":"wordy","kind":"bar_chart","x":0.1,"y":0.1,"width":0.4,"height":0.6,
+              "bars":[{"label":"Northern Territories","value":1},{"label":"b","value":2},{"label":"c","value":3},{"label":"d","value":4},{"label":"e","value":5},{"label":"f","value":6}]},
+            {"id":"flat","kind":"bar_chart","x":0.1,"y":0.75,"width":0.6,"height":0.1,"orientation":"horizontal",
+              "bars":[{"label":"a","value":1},{"label":"b","value":2},{"label":"c","value":3},{"label":"d","value":4}]}]"##,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let about = |code: &str, id: &str| {
+        find(&fs, code, None, None)
+            .into_iter()
+            .filter(|f| f.message.contains(&format!("`{id}`")))
+            .count()
+    };
+    assert_eq!(about("chart.label_overflow", "wordy"), 1, "{fs:#?}");
+    assert_eq!(about("chart.cramped", "flat"), 1, "{fs:#?}");
+    assert!(fs.iter().all(|f| !f.message.contains("`good`")), "{fs:#?}");
+}
+
+#[test]
+fn ring_label_wider_than_the_hole_is_a_warning() {
+    let t = with_layers(
+        3000,
+        r##"[{"id":"pct","kind":"progress_ring","x":0.4,"y":0.3,"width":0.2,"height":0.356,"value":0.72},
+            {"id":"wordy","kind":"progress_ring","x":0.1,"y":0.3,"width":0.1,"height":0.178,"value":0.5,"thickness":0.3,"label":"Almost there now"}]"##,
+    );
+    vimmer_dsl::validate(&t).unwrap();
+    let fs = run(&t, None);
+    let f = one(&fs, "ring.label_overflow", Some("s"), None);
+    assert!(f.message.contains("`wordy`"), "{}", f.message);
+    assert_eq!(
+        f.suggestion.path.as_deref(),
+        Some("/scenes/0/layers/1/label")
+    );
+}
+
+#[test]
+fn anim_layers_demo_fixtures_have_no_errors_or_warnings() {
+    for name in ["anim-layers-demo.json", "anim-layers-demo-9x16.json"] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../fixtures")
+            .join(name);
+        let t: VideoTimeline =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        vimmer_dsl::validate(&t).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let public =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer/public");
+        let fs = run(&t, Some(&public));
+        let bad: Vec<_> = fs.iter().filter(|f| f.severity > Severity::Info).collect();
+        assert!(bad.is_empty(), "{name}: {bad:#?}");
+    }
+}

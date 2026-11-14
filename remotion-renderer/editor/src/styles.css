@@ -368,3 +368,7 @@ textarea { resize: vertical; width: 100%; }
   position: absolute; left: 0; top: -22px; font: 11px var(--mono); color: #fff; background: var(--accent);
   padding: 1px 6px; border-radius: 4px; white-space: nowrap;
 }
+
+.bar-rows { display: flex; flex-direction: column; gap: 4px; }
+.bar-row { display: grid; grid-template-columns: 1fr 70px 80px auto; gap: 4px; align-items: center; }
+.bar-row input { min-width: 0; }

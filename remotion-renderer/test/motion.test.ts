@@ -4,7 +4,10 @@ import { test } from "node:test";
 import { IDENTITY_POSE, applyEasing, sampleKeyframes } from "../src/motion/keyframes.ts";
 import { transitionPose } from "../src/motion/transitions.ts";
 import { animationPose, layerFrames, layerStateAt, splitLayers } from "../src/motion/layers.ts";
-import type { Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
+import { barProgress, chartMax, countFrames, formatNumber, frameProgress, ringFraction } from "../src/motion/data.ts";
+import { lowerThirdPose } from "../src/motion/lowerThird.ts";
+import { cursorVisible, typedCount, typedSegments, typingUnits } from "../src/motion/typewriter.ts";
+import type { Easing, Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
 
 const kf = (at_ms: number, extra: Partial<Keyframe> = {}): Keyframe => ({ at_ms, ...extra });
 const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`);
@@ -59,6 +62,51 @@ test("easing curves hit their endpoints and midpoint", () => {
   close(applyEasing("ease_in_out", 0.5), 0.5);
   assert.ok(applyEasing("ease_in_out", 0.25) < 0.25);
   assert.ok(applyEasing("ease_in_out", 0.75) > 0.75);
+});
+
+const peak = (ease: Easing): number => {
+  let m = -Infinity;
+  for (let i = 0; i <= 1000; i++) m = Math.max(m, applyEasing(ease, i / 1000));
+  return m;
+};
+
+test("springy easings start at 0, end at 1, and overshoot where expected", () => {
+  for (const ease of ["back_out", "elastic_out", "bounce_out"] as const) {
+    close(applyEasing(ease, 0), 0);
+    close(applyEasing(ease, 1), 1);
+    assert.equal(applyEasing(ease, -0.5), applyEasing(ease, 0)); // clamped
+    assert.equal(applyEasing(ease, 1.5), applyEasing(ease, 1));
+  }
+  const back = peak("back_out");
+  assert.ok(back > 1.09 && back < 1.11, `back_out peak ${back}`);
+  const elastic = peak("elastic_out");
+  assert.ok(elastic > 1.3 && elastic < 1.4, `elastic_out peak ${elastic}`);
+  assert.ok(peak("bounce_out") <= 1 + 1e-9);
+  close(applyEasing("bounce_out", 1 / 2.75), 1); // first landing
+  assert.ok(applyEasing("bounce_out", 1.5 / 2.75) < 0.76); // top of the first bounce
+  // Old curves are unchanged by the clamp inside [0, 1].
+  close(applyEasing("ease_in_out", 0.3), 2 * 0.09);
+});
+
+test("a springy keyframe ease overshoots between keyframes", () => {
+  const keys = [kf(0, { scale: 1, ease: "elastic_out" }), kf(1000, { scale: 2 })];
+  assert.ok(Math.max(...[100, 150, 200].map((t) => sampleKeyframes(keys, t).scale)) > 2.2);
+  close(sampleKeyframes(keys, 1000).scale, 2);
+});
+
+test("an enter/exit ease replaces the kind's curve; without one the pose is unchanged", () => {
+  const W = 1920;
+  const H = 1080;
+  const springy = animationPose("pop", 0.15, "enter", W, H, (t) => applyEasing("elastic_out", t));
+  assert.ok(springy.scale > 1, `elastic pop overshoots: ${springy.scale}`);
+  assert.deepEqual(animationPose("slide_up", 0.4, "enter", W, H), animationPose("slide_up", 0.4, "enter", W, H, undefined));
+  const shape: ShapeLayer = { id: "s", kind: "shape", x: 0, y: 0, width: 0.1, height: 0.1, fill: "#fff", enter: { kind: "slide_up", duration_ms: 1000 } };
+  const plain = layerStateAt(shape, 10, 30, 90, W, H, undefined, applyEasing);
+  const without = layerStateAt(shape, 10, 30, 90, W, H);
+  assert.deepEqual(plain, without);
+  const eased = layerStateAt({ ...shape, enter: { kind: "slide_up", duration_ms: 1000, ease: "linear" } }, 15, 30, 90, W, H, undefined, applyEasing);
+  // Linear: halfway through the slide, half the distance is left and the opacity is 0.5.
+  close(eased.opacity, 0.5);
 });
 
 test("exact keyframe times return that keyframe's values", () => {
@@ -175,4 +223,109 @@ test("a layer's state depends only on the scene frame (chunked renders match ful
     const b = layerStateAt(l, f, 30, 90, 1920, 1080, sampleKeyframes(l.keyframes!, (f * 1000) / 30));
     assert.deepEqual(a, b);
   }
+});
+
+test("typewriter units keep CJK characters, emoji, accents and flags whole", () => {
+  assert.deepEqual(typingUnits("abc"), ["a", "b", "c"]);
+  assert.deepEqual(typingUnits("你好，世界"), ["你", "好", "，", "世", "界"]);
+  const s = "é👍🏽👨‍👩‍👧🇯🇵1️⃣!";
+  const u = typingUnits(s);
+  assert.equal(u.length, 6, JSON.stringify(u));
+  assert.equal(u.join(""), s);
+  assert.equal(u[3], "🇯🇵");
+  assert.equal(typingUnits("🇯🇵🇫🇷").length, 2);
+  // Astral CJK (surrogate pairs in UTF-16) is one unit per character.
+  assert.deepEqual(typingUnits("𠮷野家"), ["𠮷", "野", "家"]);
+});
+
+test("typewriter count and cursor depend only on the layer frame", () => {
+  assert.equal(typedCount(0, 30, 20, 10), 0);
+  assert.equal(typedCount(3, 30, 20, 10), 2);
+  assert.equal(typedCount(300, 30, 20, 10), 10);
+  // 10 units at 20 cps are typed by frame 15; solid cursor until then, then blinking.
+  assert.equal(cursorVisible(14, 30, 20, 10), true);
+  assert.equal(cursorVisible(15, 30, 20, 10), true);
+  assert.equal(cursorVisible(15 + 16, 30, 20, 10), false); // 533 ms after: off
+  assert.equal(cursorVisible(15 + 32, 30, 20, 10), true);
+});
+
+test("typed segments never split a unit and put the cursor after the typed text", () => {
+  const segs = typedSegments("Hi 👋🏽 世界", 3, (w) => w === "世界");
+  assert.deepEqual(
+    segs.map((s) => [s.shown, s.hidden, s.cursorAfter, s.highlight]),
+    [
+      ["Hi", "", false, false],
+      [" ", "", true, false],
+      ["", "👋🏽", false, false],
+      ["", " ", false, false],
+      ["", "世界", false, true],
+    ],
+  );
+  const none = typedSegments("abc", 0, () => false);
+  assert.equal(none[0].cursorAfter, true);
+  assert.equal(none[0].shown, "");
+});
+
+test("lower third: built-in wipe starts hidden, rests fully shown, ends hidden; own enter/exit skip it", () => {
+  const span = 120; // 4 s at 30 fps
+  const first = lowerThirdPose(0, span, 30, true, true);
+  assert.equal(first.reveal, 0);
+  assert.equal(first.bar, 0);
+  assert.equal(first.textOpacity, 0);
+  const mid = lowerThirdPose(60, span, 30, true, true);
+  assert.deepEqual(mid, { bar: 1, reveal: 1, textShift: 0, textOpacity: 1 });
+  const last = lowerThirdPose(span - 1, span, 30, true, true);
+  assert.equal(last.reveal, 0);
+  assert.equal(last.textOpacity, 0);
+  // With the layer's own enter and exit, frame 0 and the last frame are at rest.
+  assert.deepEqual(lowerThirdPose(0, span, 30, false, false), mid);
+  assert.deepEqual(lowerThirdPose(span - 1, span, 30, false, false), mid);
+  // A short layer squeezes the built-in animation into 40 % / 30 % of its frames.
+  const short = 10;
+  assert.equal(lowerThirdPose(4, short, 30, true, true).reveal, 1);
+  assert.equal(lowerThirdPose(short - 1, short, 30, true, true).reveal, 0);
+});
+
+test("numbers are formatted without the machine's locale", () => {
+  assert.equal(formatNumber(1234567.891, 2, ",", ".", "$", ""), "$1,234,567.89");
+  assert.equal(formatNumber(1234567, 0, " ", ",", "", " €"), "1 234 567 €");
+  assert.equal(formatNumber(999, 0), "999");
+  assert.equal(formatNumber(1000, 0), "1,000");
+  assert.equal(formatNumber(-1500.26, 1, ".", ",", "", "%"), "-1.500,3%");
+  assert.equal(formatNumber(-0.004, 2), "0.00");
+  assert.equal(formatNumber(0, 0), "0");
+  assert.equal(formatNumber(12345, 0, ""), "12345");
+  assert.equal(formatNumber(1e15, 0), "1,000,000,000,000,000");
+});
+
+test("counts reach their end value on the last counting frame", () => {
+  const counter = { id: "c", kind: "counter", x: 0, y: 0, width: 0.3, to: 100, exit: { kind: "fade", duration_ms: 500 } } as const;
+  // 3 s layer at 30 fps with a 500 ms exit: 75 counting frames.
+  assert.equal(countFrames(counter, undefined, 90, 30), 75);
+  assert.equal(countFrames(counter, 1000, 90, 30), 30);
+  assert.equal(frameProgress(0, 75), 0);
+  assert.equal(frameProgress(74, 75), 1);
+  assert.equal(frameProgress(200, 75), 1);
+  assert.equal(frameProgress(0, 1), 1);
+});
+
+test("bars grow one after another and the chart scale is max or the largest value", () => {
+  // 800 ms growth (24 frames), 120 ms stagger (4 frames) at 30 fps.
+  assert.equal(barProgress(0, 0, 30, 800, 120), 0);
+  assert.equal(barProgress(23, 0, 30, 800, 120), 1);
+  assert.equal(barProgress(3, 1, 30, 800, 120), 0); // bar 1 has not started
+  assert.equal(barProgress(4, 1, 30, 800, 120), 0);
+  assert.equal(barProgress(27, 1, 30, 800, 120), 1);
+  assert.ok(barProgress(10, 2, 30, 800, 120) < barProgress(10, 1, 30, 800, 120));
+  assert.equal(chartMax([10, 40, 25], undefined), 40);
+  assert.equal(chartMax([10, 40, 25], 100), 100);
+  assert.equal(chartMax([0, 0], null), 1);
+});
+
+test("ring fraction goes from `from` to `value` and never past a full ring", () => {
+  assert.equal(ringFraction(0.2, 0.8, 0), 0.2);
+  close(ringFraction(0.2, 0.8, 1), 0.8);
+  close(ringFraction(0, 0.5, 0.5), 0.25);
+  assert.equal(ringFraction(0, 1, 1.37), 1); // elastic overshoot is clamped
+  assert.equal(ringFraction(0.5, 0, 1.37), 0);
 });

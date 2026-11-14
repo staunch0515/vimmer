@@ -80,7 +80,7 @@ export const sortCues = (cues: SubtitleCue[]): SubtitleCue[] =>
 export const TRANSITION_KINDS: TransitionKind[] = [
   "fade", "slide_left", "slide_right", "slide_up", "slide_down", "zoom_in", "wipe_left",
 ];
-export const EASINGS: Easing[] = ["linear", "ease_in", "ease_out", "ease_in_out"];
+export const EASINGS: Easing[] = ["linear", "ease_in", "ease_out", "ease_in_out", "back_out", "elastic_out", "bounce_out"];
 export const DEFAULT_TRANSITION_MS = 500;
 
 /** Mirrors vimmer-dsl validate_transition / validate_keyframes. */

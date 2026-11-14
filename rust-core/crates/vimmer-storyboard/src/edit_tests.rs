@@ -1156,3 +1156,68 @@ fn layer_asset_files_are_checked_in_the_public_dir() {
         out.warnings
     );
 }
+
+#[test]
+fn data_layers_are_guarded_like_other_layers() {
+    // Add a counter, a chart and a ring; patch a bar value; summary names the title/kind.
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/layers", "value": [
+            {"id": "n", "kind": "counter", "x": 0.3, "y": 0.3, "width": 0.4, "to": 1200, "prefix": "$", "ease": "back_out"},
+            {"id": "c", "kind": "bar_chart", "x": 0.1, "y": 0.1, "width": 0.8, "height": 0.6,
+             "bars": [{"label": "a", "value": 1}, {"label": "b", "value": 2}]},
+            {"id": "r", "kind": "progress_ring", "x": 0.4, "y": 0.3, "width": 0.2, "height": 0.356, "value": 0.5},
+            {"id": "lt", "kind": "lower_third", "x": 0.06, "y": 0.66, "width": 0.5, "title": "Ada Lovelace",
+             "enter": {"kind": "slide_right", "duration_ms": 500, "ease": "elastic_out"}}
+        ]}]),
+    );
+    assert!(
+        out.summary
+            .iter()
+            .any(|l| l.contains("layer `lt` added (lower_third \"Ada Lovelace\"")),
+        "{:?}",
+        out.summary
+    );
+    let out = ok(
+        &out.timeline,
+        json!([{"op": "replace", "path": "/scenes/0/layers/1/bars/1/value", "value": 7}]),
+    );
+    assert_eq!(
+        out.timeline["scenes"][0]["layers"][1]["bars"][1]["value"],
+        7
+    );
+    // Unknown keys inside a bar, and a key of another data kind.
+    let r = err(
+        &out.timeline,
+        json!([{"op": "add", "path": "/scenes/0/layers/1/bars/0/width", "value": 3}]),
+    );
+    assert_eq!(r.stage, Stage::Guard);
+    assert!(
+        text(&r).contains("`width` is not a field of a chart bar"),
+        "{}",
+        text(&r)
+    );
+    let r = err(
+        &out.timeline,
+        json!([{"op": "add", "path": "/scenes/0/layers/2/to", "value": 3}]),
+    );
+    assert!(
+        text(&r).contains("unknown field `to` in a progress_ring layer"),
+        "{}",
+        text(&r)
+    );
+    // Model rules still apply: too many bars, a ring value above 1.
+    let bars: Vec<Value> = (0..13)
+        .map(|i| json!({"label": format!("b{i}"), "value": i}))
+        .collect();
+    let r = err(
+        &out.timeline,
+        json!([{"op": "replace", "path": "/scenes/0/layers/1/bars", "value": bars}]),
+    );
+    assert_eq!(r.stage, Stage::Validation);
+    let r = err(
+        &out.timeline,
+        json!([{"op": "replace", "path": "/scenes/0/layers/2/value", "value": 1.5}]),
+    );
+    assert_eq!(r.stage, Stage::Validation);
+}

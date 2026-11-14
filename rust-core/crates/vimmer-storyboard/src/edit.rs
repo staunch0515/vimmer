@@ -589,6 +589,9 @@ enum Kind {
     Layer,
     LayerAnimation,
     TextBackground,
+    /// A bar chart's `bars` list and one bar.
+    Bars,
+    Bar,
     Subtitles,
     Cue,
     Words,
@@ -626,8 +629,9 @@ impl Kind {
             ],
             // Every field any layer kind has; `check_value` narrows it to the value's `kind`.
             Layer => LAYER_FIELDS_ALL,
-            LayerAnimation => &[("kind", Leaf), ("duration_ms", Leaf)],
+            LayerAnimation => &[("kind", Leaf), ("duration_ms", Leaf), ("ease", Leaf)],
             TextBackground => &[("color", Leaf), ("padding", Leaf), ("radius", Leaf)],
+            Bar => &[("label", Leaf), ("value", Leaf), ("color", Leaf)],
             Audio => &[("source", Leaf), ("offset_ms", Leaf)],
             Narration => &[("voice", Leaf)],
             Transition => &[("kind", Leaf), ("duration_ms", Leaf)],
@@ -670,6 +674,7 @@ impl Kind {
             Kind::Highlights => Some(Kind::Leaf),
             Kind::Keyframes => Some(Kind::Keyframe),
             Kind::Layers => Some(Kind::Layer),
+            Kind::Bars => Some(Kind::Bar),
             Kind::Subtitles => Some(Kind::Cue),
             Kind::Words => Some(Kind::Word),
             _ => None,
@@ -692,6 +697,8 @@ impl Kind {
             Kind::Layer => "a layer",
             Kind::LayerAnimation => "a layer enter/exit animation",
             Kind::TextBackground => "a text layer background",
+            Kind::Bars => "a bar list",
+            Kind::Bar => "a chart bar",
             Kind::Subtitles => "the subtitle list",
             Kind::Cue => "a subtitle cue",
             Kind::Words => "a word list",
@@ -744,6 +751,8 @@ const LAYER_KIND_FIELDS: &[(&str, &[(&str, Kind)])] = &[
             ("background", Kind::TextBackground),
             ("highlights", Kind::Highlights),
             ("reveal", Kind::Leaf),
+            ("typing_cps", Kind::Leaf),
+            ("cursor", Kind::Leaf),
         ],
     ),
     (
@@ -757,6 +766,70 @@ const LAYER_KIND_FIELDS: &[(&str, &[(&str, Kind)])] = &[
         ],
     ),
     ("icon", &[("src", Kind::Leaf), ("color", Kind::Leaf)]),
+    (
+        "lower_third",
+        &[
+            ("title", Kind::Leaf),
+            ("subtitle", Kind::Leaf),
+            ("font_size", Kind::Leaf),
+            ("color", Kind::Leaf),
+            ("subtitle_color", Kind::Leaf),
+            ("accent_color", Kind::Leaf),
+            ("background_color", Kind::Leaf),
+        ],
+    ),
+    (
+        "counter",
+        &[
+            ("from", Kind::Leaf),
+            ("to", Kind::Leaf),
+            ("duration_ms", Kind::Leaf),
+            ("ease", Kind::Leaf),
+            ("decimals", Kind::Leaf),
+            ("prefix", Kind::Leaf),
+            ("suffix", Kind::Leaf),
+            ("separator", Kind::Leaf),
+            ("decimal_mark", Kind::Leaf),
+            ("font_size", Kind::Leaf),
+            ("color", Kind::Leaf),
+            ("weight", Kind::Leaf),
+            ("align", Kind::Leaf),
+        ],
+    ),
+    (
+        "bar_chart",
+        &[
+            ("bars", Kind::Bars),
+            ("orientation", Kind::Leaf),
+            ("max", Kind::Leaf),
+            ("color", Kind::Leaf),
+            ("label_color", Kind::Leaf),
+            ("font_size", Kind::Leaf),
+            ("show_values", Kind::Leaf),
+            ("decimals", Kind::Leaf),
+            ("prefix", Kind::Leaf),
+            ("suffix", Kind::Leaf),
+            ("grow_ms", Kind::Leaf),
+            ("stagger_ms", Kind::Leaf),
+            ("ease", Kind::Leaf),
+        ],
+    ),
+    (
+        "progress_ring",
+        &[
+            ("value", Kind::Leaf),
+            ("from", Kind::Leaf),
+            ("duration_ms", Kind::Leaf),
+            ("ease", Kind::Leaf),
+            ("color", Kind::Leaf),
+            ("track_color", Kind::Leaf),
+            ("thickness", Kind::Leaf),
+            ("show_label", Kind::Leaf),
+            ("label", Kind::Leaf),
+            ("decimals", Kind::Leaf),
+            ("label_color", Kind::Leaf),
+        ],
+    ),
 ];
 
 /// The union of [`LAYER_COMMON`] and every kind's fields, for pointers (which do not know the
@@ -789,10 +862,38 @@ const LAYER_FIELDS_ALL: &[(&str, Kind)] = &[
     ("background", Kind::TextBackground),
     ("highlights", Kind::Highlights),
     ("reveal", Kind::Leaf),
+    ("typing_cps", Kind::Leaf),
+    ("cursor", Kind::Leaf),
     ("shape", Kind::Leaf),
     ("fill", Kind::Leaf),
     ("stroke", Kind::Leaf),
     ("stroke_width", Kind::Leaf),
+    ("title", Kind::Leaf),
+    ("subtitle", Kind::Leaf),
+    ("subtitle_color", Kind::Leaf),
+    ("accent_color", Kind::Leaf),
+    ("background_color", Kind::Leaf),
+    ("from", Kind::Leaf),
+    ("to", Kind::Leaf),
+    ("duration_ms", Kind::Leaf),
+    ("ease", Kind::Leaf),
+    ("decimals", Kind::Leaf),
+    ("prefix", Kind::Leaf),
+    ("suffix", Kind::Leaf),
+    ("separator", Kind::Leaf),
+    ("decimal_mark", Kind::Leaf),
+    ("bars", Kind::Bars),
+    ("orientation", Kind::Leaf),
+    ("max", Kind::Leaf),
+    ("label_color", Kind::Leaf),
+    ("show_values", Kind::Leaf),
+    ("grow_ms", Kind::Leaf),
+    ("stagger_ms", Kind::Leaf),
+    ("value", Kind::Leaf),
+    ("track_color", Kind::Leaf),
+    ("thickness", Kind::Leaf),
+    ("show_label", Kind::Leaf),
+    ("label", Kind::Leaf),
 ];
 
 /// The fields a layer object may have: common fields plus those of its `kind`, when the kind is
@@ -1909,7 +2010,11 @@ fn layer_changes(old: &Value, new: &Value) -> Vec<String> {
         let kind = l.get("kind").and_then(Value::as_str).unwrap_or("?");
         let Some(prev) = a.iter().find(|p| id(p) == lid) else {
             let z = l.get("z").and_then(Value::as_i64).unwrap_or(0);
-            let what = match l.get("text").and_then(Value::as_str) {
+            let what = match l
+                .get("text")
+                .or_else(|| l.get("title"))
+                .and_then(Value::as_str)
+            {
                 Some(t) => format!(" \"{}\"", clip(t, 30)),
                 None => l
                     .get("src")
@@ -1961,5 +2066,44 @@ fn keyframe_change(old: &Value, new: &Value) -> String {
         format!("keyframes: {b} keyframes edited")
     } else {
         format!("keyframes {a} -> {b}")
+    }
+}
+
+#[cfg(test)]
+mod layer_field_tables {
+    use super::*;
+
+    /// Every kind's fields appear in the union with the same place kind, the union has nothing
+    /// else, and every `LayerContent` kind has a row.
+    #[test]
+    fn union_matches_the_kind_rows() {
+        let mut expected: Vec<(&str, Kind)> = LAYER_COMMON.to_vec();
+        for (_, fields) in LAYER_KIND_FIELDS {
+            for f in *fields {
+                match expected.iter().find(|(n, _)| *n == f.0) {
+                    Some(e) => assert_eq!(e.1, f.1, "`{}` has two place kinds", f.0),
+                    None => expected.push(*f),
+                }
+            }
+        }
+        let mut union = LAYER_FIELDS_ALL.to_vec();
+        union.sort_by_key(|f| f.0);
+        expected.sort_by_key(|f| f.0);
+        assert_eq!(union, expected);
+        for kind in [
+            "image",
+            "text",
+            "shape",
+            "icon",
+            "lower_third",
+            "counter",
+            "bar_chart",
+            "progress_ring",
+        ] {
+            assert!(
+                LAYER_KIND_FIELDS.iter().any(|(k, _)| *k == kind),
+                "no fields for {kind}"
+            );
+        }
     }
 }
