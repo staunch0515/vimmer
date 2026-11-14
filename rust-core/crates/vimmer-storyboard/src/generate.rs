@@ -3,7 +3,7 @@
 //! The helper (`scripts/generate_storyboard.py`, embedded in this crate together with the prompt
 //! template and the JSON schema) makes one Messages API call per run with structured output, so
 //! the reply is always JSON in the storyboard shape. Every reply is then checked here with
-//! [`convert`]; when that fails, the error goes back to Claude as the next turn of the same
+//! [`convert`](crate::convert()); when that fails, the error goes back to Claude as the next turn of the same
 //! conversation, up to `max_retries` times. Token usage and cost add up over all attempts.
 //!
 //! The API key is read by the helper from `ANTHROPIC_API_KEY` (inherited environment). This
@@ -17,9 +17,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use vimmer_media::transcribe::find_executable;
-use vimmer_media::{run_limited, Limits, MediaError};
+use vimmer_media::{run_limited, Limits, MediaError, TtsEngine};
 
-use crate::convert::{convert, Conversion};
+use crate::convert::{convert_for, Conversion};
 use crate::model::{Language, Orientation, Storyboard, StoryboardMusic};
 
 /// Environment variable holding the Anthropic API key (read by the helper only).
@@ -66,6 +66,8 @@ pub struct GenerateOptions {
     /// Moods of the music library Claude may choose one from for the whole video (becomes
     /// `music.pick`). Empty: no music.
     pub music_moods: Vec<String>,
+    /// Narration engine the render will use; scenes without `duration_ms` are sized for it.
+    pub tts: TtsEngine,
 }
 
 impl GenerateOptions {
@@ -82,6 +84,7 @@ impl GenerateOptions {
             timeout: DEFAULT_TIMEOUT,
             record_dir: None,
             music_moods: Vec::new(),
+            tts: TtsEngine::Say,
         }
     }
 }
@@ -133,7 +136,7 @@ pub struct Attempt {
     pub warnings: Vec<String>,
 }
 
-/// A storyboard that passed [`convert`].
+/// A storyboard that passed [`convert`](crate::convert()).
 #[derive(Debug, Clone)]
 pub struct Generated {
     pub storyboard: Storyboard,
@@ -379,7 +382,7 @@ struct HelperError {
     message: String,
 }
 
-/// Checks a reply: it must parse as a storyboard, match the request and pass [`convert`].
+/// Checks a reply: it must parse as a storyboard, match the request and pass [`convert`](crate::convert()).
 /// The error text is what Claude gets back for a correction. No music may be chosen.
 pub fn validate_reply(
     raw: &str,
@@ -396,6 +399,17 @@ pub fn validate_reply_with_moods(
     language: Language,
     orientation: Orientation,
     moods: &[String],
+) -> Result<(Storyboard, Conversion), String> {
+    validate_reply_for(raw, language, orientation, moods, TtsEngine::Say)
+}
+
+/// [`validate_reply_with_moods`], sizing scenes without `duration_ms` for `engine`.
+pub fn validate_reply_for(
+    raw: &str,
+    language: Language,
+    orientation: Orientation,
+    moods: &[String],
+    engine: TtsEngine,
 ) -> Result<(Storyboard, Conversion), String> {
     let sb: Storyboard =
         serde_json::from_str(raw).map_err(|e| format!("invalid storyboard JSON: {e}"))?;
@@ -451,7 +465,7 @@ pub fn validate_reply_with_moods(
     if !problems.is_empty() {
         return Err(problems.join("\n"));
     }
-    let conversion = convert(&sb).map_err(|e| e.to_string())?;
+    let conversion = convert_for(&sb, engine).map_err(|e| e.to_string())?;
     Ok((sb, conversion))
 }
 
@@ -648,7 +662,13 @@ pub fn generate_with_key_check(
             return Err(fail(kind, message, &attempts, usage));
         }
         let raw = reply.storyboard_json.unwrap_or_default();
-        match validate_reply_with_moods(&raw, opts.language, opts.orientation, &opts.music_moods) {
+        match validate_reply_for(
+            &raw,
+            opts.language,
+            opts.orientation,
+            &opts.music_moods,
+            opts.tts,
+        ) {
             Ok((storyboard, conversion)) => {
                 attempts.push(attempt);
                 return Ok(Generated {

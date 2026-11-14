@@ -28,6 +28,7 @@ use vimmer_dsl::{validate, Scene, VideoTimeline};
 
 use crate::estimate::estimate_duration_ms;
 use crate::model::Language;
+use vimmer_media::TtsEngine;
 
 /// Most ops one patch may have.
 pub const MAX_OPS: usize = 64;
@@ -1974,7 +1975,7 @@ fn edit_warnings(
         let shorter = prev.is_none_or(|p| s.duration_ms < p.duration_ms || p.text != s.text);
         if narrated && shorter {
             if let Some(text) = s.text.as_deref().filter(|t| !t.trim().is_empty()) {
-                let need = estimate_duration_ms(text, guess_language(text));
+                let need = estimate_duration_ms(text, guess_language(text), TtsEngine::from_env());
                 if s.duration_ms * 10 < need * 8 {
                     out.push(format!(
                         "scene `{}`: its narration takes about {:.1} s but the scene is {:.1} s; the render lengthens the scene to fit the narration",

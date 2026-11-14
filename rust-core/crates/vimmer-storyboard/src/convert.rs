@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, fmt, path::Path};
 use serde_json::{json, Value};
 use thiserror::Error;
 use vimmer_dsl::{validate, ValidationError, VideoTimeline, MAX_DURATION_MS, TARGET_FPS};
+use vimmer_media::TtsEngine;
 
 use crate::{
     estimate::estimate_duration_ms,
@@ -139,8 +140,14 @@ fn check_relative(scene: usize, field: &'static str, path: &str) -> Result<(), S
     Ok(())
 }
 
-/// Converts a storyboard into a validated timeline plus warnings and the emphasis map.
+/// Converts a storyboard into a validated timeline plus warnings and the emphasis map. Scenes
+/// without `duration_ms` are sized for `say`, the render's default engine; see [`convert_for`].
 pub fn convert(sb: &Storyboard) -> Result<Conversion, StoryboardError> {
+    convert_for(sb, TtsEngine::Say)
+}
+
+/// [`convert`], sizing scenes without `duration_ms` for the narration of `engine`.
+pub fn convert_for(sb: &Storyboard, engine: TtsEngine) -> Result<Conversion, StoryboardError> {
     if sb.title.trim().is_empty() {
         return Err(StoryboardError::EmptyTitle);
     }
@@ -156,7 +163,7 @@ pub fn convert(sb: &Storyboard) -> Result<Conversion, StoryboardError> {
     for (i, spec) in sb.scenes.iter().enumerate() {
         let n = i + 1;
         let id = format!("scene-{n:02}");
-        let value = convert_scene(sb, spec, n, &id, &mut warnings)?;
+        let value = convert_scene(sb, spec, n, &id, engine, &mut warnings)?;
         total_ms = total_ms.saturating_add(value["duration_ms"].as_u64().unwrap_or(0));
         emphasis.insert(
             id,
@@ -246,6 +253,7 @@ fn convert_scene(
     spec: &SceneSpec,
     n: usize,
     id: &str,
+    engine: TtsEngine,
     warnings: &mut Vec<Warning>,
 ) -> Result<Value, StoryboardError> {
     let text = spec.text.trim();
@@ -263,7 +271,7 @@ fn convert_scene(
             ))
         }
         Some(d) => d,
-        None => estimate_duration_ms(text, sb.language),
+        None => estimate_duration_ms(text, sb.language, engine),
     };
 
     // Emphasis -> DSL `highlights` (only words that occur in the text can be highlighted).

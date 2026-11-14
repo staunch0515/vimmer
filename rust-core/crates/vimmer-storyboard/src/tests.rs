@@ -173,7 +173,18 @@ fn explicit_duration_wins_and_missing_duration_is_estimated() {
     );
     let c = convert(&s).unwrap();
     assert_eq!(c.timeline.scenes[0].duration_ms, 7777);
-    assert_eq!(c.timeline.scenes[1].duration_ms, 400 * 5 + 600);
+    assert_eq!(
+        c.timeline.scenes[1].duration_ms,
+        estimate_duration_ms(
+            "one two three four five",
+            Language::En,
+            vimmer_media::TtsEngine::Say
+        )
+    );
+    // Kokoro reads this more slowly than `say`, so the scene is sized longer for it.
+    let k = convert_for(&s, vimmer_media::TtsEngine::Kokoro).unwrap();
+    assert!(k.timeline.scenes[1].duration_ms > c.timeline.scenes[1].duration_ms);
+    assert_eq!(k.timeline.scenes[0].duration_ms, 7777);
 }
 
 #[test]

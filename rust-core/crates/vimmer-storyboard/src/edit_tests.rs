@@ -282,7 +282,7 @@ fn faster_scene_with_fade_transition() {
         .iter()
         .find(|l| l.starts_with("scene-02:"))
         .unwrap();
-    assert!(line.contains("duration 3.82 s -> 3.00 s"), "{line}");
+    assert!(line.contains("duration 4.11 s -> 3.00 s"), "{line}");
     assert!(
         line.contains("transition in fade 500 ms -> fade 400 ms"),
         "{line}"

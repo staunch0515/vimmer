@@ -506,10 +506,16 @@ The first scene's transition is dropped with a warning.
 
 ### Duration estimate (when `duration_ms` is omitted)
 
-- `zh`: 230 ms per CJK character. `ja`: 200 ms per character. Punctuation and whitespace are free.
-  A run of ASCII letters or digits counts as 2 characters.
-- `en`: 400 ms per word (whitespace-separated tokens with a letter or digit).
-- Then 600 ms of padding is added, and the result is at least 2000 ms.
+- The speech length comes from the shared narration estimator (`vimmer-media/src/estimate.rs`),
+  measured on the engines' default voices: per-engine, per-language costs for CJK characters,
+  kana, Latin letters and words, digits (numbers are read out), a pause per comma and per
+  sentence end, and a fixed lead-in. Roughly zh 250 ms per character, ja 200 ms, en 400 ms per
+  word; on the calibration corpus the mean error is about 3-7% (worst sentence about 20%).
+- It is sized for the engine the render will use: `--tts`, else `$VIMMER_TTS`, else `say`
+  (`vimmer-storyboard` without the CLI: `$VIMMER_TTS`, else `say`).
+- Then 600 ms of padding is added (the 300 ms narration tail plus slack), and the result is at
+  least 2000 ms.
+- Re-measure after a voice or model update: `rust-core/crates/vimmer-media/calibration/README.md`.
 
 The total length must stay within the 200 s limit, or the conversion fails.
 
@@ -1276,6 +1282,8 @@ rust-core/target/debug/vimmer check timeline.json --json --strict
 - `--synth` synthesizes narration with `say` into the render's cache
   (`public/generated/tts/`, same file names, so the render reuses them) and measures it,
   instead of estimating its length from the text.
+- `--tts say|kokoro` says which engine the render will narrate with, for the narration-length
+  estimate (default: `$VIMMER_TTS`, else `say`, as in the render).
 - `--public-dir DIR` sets where image and audio paths point (default `<--remotion-dir>/public`,
   else the nearest `remotion-renderer/public` above the timeline or the current directory).
 - Exit code: 0 without errors, 1 with errors (with `--strict` also with warnings), 2 when the
@@ -1331,7 +1339,7 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | `beats.low_confidence` | warning | beat sync is on but detection is unsure of the music's beat (confidence below 0.5), so the render will not snap; the fix suggests `music.beats` from the best guess |
 | `beats.unsnapped` | warning | a cut that cannot reach a beat (none within `max_shift_ms`, or a scene would get shorter than its narration, audio, clip, layers or effects need), with the reason; computed on the scene lengths as written (with `--synth`, after measured narration) |
 | `beats.summary` | info | how many cuts will land on a beat and the mean shift |
-| `narration.too_long` | warning / info | narration will not fit, so the render stretches the scene and later cues drift. Estimate (calibrated on the default `say` voices): zh 230 ms per character, ja 165 ms, en 250 ms per word, plus the 300 ms tail; a warning when even a 20% faster voice would not fit, info otherwise. With `--synth` the measured length (warning) |
+| `narration.too_long` | warning / info | narration will not fit, so the render stretches the scene and later cues drift. Estimate: the shared narration estimator for the engine (`--tts`, else `$VIMMER_TTS`, else `say`; fitted on the default voices, see Duration estimate), plus the 300 ms tail; a warning when even a 20% faster voice would not fit, info otherwise. With `--synth` the measured length (warning) |
 | `transition.too_long` | warning | `transition_in` longer than the previous scene |
 | `subtitle.too_short` | error / warning | a cue under 400 ms (its 6-frame fades never complete) / under 833 ms |
 | `subtitle.overlap` | error / warning | cues overlap; the renderer shows one cue at a time, so the later one is partly hidden (error when it is hidden completely) |

@@ -13,8 +13,8 @@ pub mod illustrate;
 mod model;
 
 pub use convert::{
-    convert, missing_assets, storyboard_to_timeline, Conversion, EmphasisMap, StoryboardError,
-    Warning, DEFAULT_TRANSITION_MS,
+    convert, convert_for, missing_assets, storyboard_to_timeline, Conversion, EmphasisMap,
+    StoryboardError, Warning, DEFAULT_TRANSITION_MS,
 };
 pub use estimate::{estimate_duration_ms, MIN_ESTIMATED_MS};
 pub use model::{Language, MoodMusic, Orientation, SceneSpec, Storyboard, StoryboardMusic};

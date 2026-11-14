@@ -1,49 +1,25 @@
+use vimmer_media::{estimate_speech_ms, SpeechLang, TtsEngine};
+
 use crate::model::Language;
 
 /// Lower bound for an estimated scene length.
 pub const MIN_ESTIMATED_MS: u64 = 2_000;
 const PADDING_MS: u64 = 600;
 
-/// Estimates how long a scene's text takes to read aloud.
+/// Estimates how long a scene must be for `engine` to read its text aloud.
 ///
-/// * `zh`: 230 ms per CJK character; `ja`: 200 ms per kana/kanji character.
-///   Punctuation and whitespace are free. A run of ASCII letters/digits counts as 2 characters.
-/// * `en`: 400 ms per word (about 150 words/minute); words are whitespace-separated
-///   tokens containing at least one letter or digit.
-///
-/// Then 600 ms of padding is added and the result is at least [`MIN_ESTIMATED_MS`].
-pub fn estimate_duration_ms(text: &str, lang: Language) -> u64 {
-    let speech = match lang {
-        Language::En => 400 * count_words(text),
-        Language::Zh => 230 * count_cjk_units(text),
-        Language::Ja => 200 * count_cjk_units(text),
+/// The speech length comes from the shared, measured estimator
+/// ([`vimmer_media::estimate_speech_ms`]: per-engine, per-language costs for characters,
+/// Latin words, digits and pauses, fitted on the default voices). Then 600 ms of padding is
+/// added (the render's 300 ms narration tail plus 300 ms of slack) and the result is at least
+/// [`MIN_ESTIMATED_MS`].
+pub fn estimate_duration_ms(text: &str, lang: Language, engine: TtsEngine) -> u64 {
+    let lang = match lang {
+        Language::Zh => SpeechLang::Zh,
+        Language::Ja => SpeechLang::Ja,
+        Language::En => SpeechLang::En,
     };
-    (speech + PADDING_MS).max(MIN_ESTIMATED_MS)
-}
-
-fn count_words(text: &str) -> u64 {
-    text.split_whitespace()
-        .filter(|w| w.chars().any(char::is_alphanumeric))
-        .count() as u64
-}
-
-fn count_cjk_units(text: &str) -> u64 {
-    let mut units = 0;
-    let mut in_ascii_run = false;
-    for c in text.chars() {
-        if c.is_ascii_alphanumeric() {
-            if !in_ascii_run {
-                units += 2;
-                in_ascii_run = true;
-            }
-        } else {
-            in_ascii_run = false;
-            if c.is_alphanumeric() {
-                units += 1;
-            }
-        }
-    }
-    units
+    (estimate_speech_ms(text, lang, engine) + PADDING_MS).max(MIN_ESTIMATED_MS)
 }
 
 #[cfg(test)]
@@ -51,31 +27,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn chinese_counts_characters_not_punctuation() {
-        assert_eq!(estimate_duration_ms("西安钟楼，始建于明代。", Language::Zh), 230 * 9 + 600);
-    }
-
-    #[test]
-    fn japanese_counts_kana_and_kanji() {
-        assert_eq!(estimate_duration_ms("こんにちは、世界。", Language::Ja), 200 * 7 + 600);
-    }
-
-    #[test]
-    fn english_counts_words() {
-        assert_eq!(
-            estimate_duration_ms("The quick brown fox jumps over the lazy dog", Language::En),
-            400 * 9 + 600
-        );
-        assert_eq!(estimate_duration_ms("a - b", Language::En), MIN_ESTIMATED_MS);
+    fn adds_padding_to_the_shared_speech_estimate() {
+        for (text, lang, speech_lang) in [
+            (
+                "西安钟楼，始建于明代，是中国现存最大的钟楼。",
+                Language::Zh,
+                SpeechLang::Zh,
+            ),
+            (
+                "京都には千六百以上のお寺があります。",
+                Language::Ja,
+                SpeechLang::Ja,
+            ),
+            (
+                "The quick brown fox jumps over the lazy dog.",
+                Language::En,
+                SpeechLang::En,
+            ),
+        ] {
+            for engine in [TtsEngine::Say, TtsEngine::Kokoro] {
+                let speech = estimate_speech_ms(text, speech_lang, engine);
+                assert!(speech + PADDING_MS > MIN_ESTIMATED_MS, "{text}");
+                assert_eq!(
+                    estimate_duration_ms(text, lang, engine),
+                    speech + PADDING_MS
+                );
+            }
+        }
     }
 
     #[test]
     fn short_text_hits_the_floor() {
-        assert_eq!(estimate_duration_ms("好", Language::Zh), MIN_ESTIMATED_MS);
+        assert_eq!(
+            estimate_duration_ms("好", Language::Zh, TtsEngine::Say),
+            MIN_ESTIMATED_MS
+        );
+        assert_eq!(
+            estimate_duration_ms("a - b", Language::En, TtsEngine::Kokoro),
+            MIN_ESTIMATED_MS
+        );
     }
 
     #[test]
-    fn ascii_run_in_cjk_text_counts_as_two() {
-        assert_eq!(count_cjk_units("用AI做视频"), 1 + 2 + 3);
+    fn the_storyboard_language_decides_how_text_is_read() {
+        // Japanese written without kana is still estimated as Japanese (it gets `Kyoko`).
+        let text = "東京都庁舎展望室";
+        assert_eq!(
+            estimate_duration_ms(text, Language::Ja, TtsEngine::Say),
+            (estimate_speech_ms(text, SpeechLang::Ja, TtsEngine::Say) + PADDING_MS)
+                .max(MIN_ESTIMATED_MS)
+        );
     }
 }
