@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use crate::layer::{
-    is_hex_color, Layer, LayerContent, ShapeKind, MAX_ABS_NUMBER, MAX_AFFIX_CHARS, MAX_BARS,
-    MAX_BAR_LABEL_CHARS, MAX_DECIMALS, MAX_LAYERS, MAX_LAYER_KEYFRAMES, MAX_LAYER_TEXT_CHARS,
-    MAX_LOWER_THIRD_SUBTITLE_CHARS, MAX_LOWER_THIRD_TITLE_CHARS, MAX_RING_LABEL_CHARS,
-    MAX_TYPING_CPS,
+    clip_problems, is_hex_color, Layer, LayerContent, ShapeKind, MAX_ABS_NUMBER, MAX_AFFIX_CHARS,
+    MAX_BARS, MAX_BAR_LABEL_CHARS, MAX_DECIMALS, MAX_LAYERS, MAX_LAYER_KEYFRAMES,
+    MAX_LAYER_TEXT_CHARS, MAX_LOWER_THIRD_SUBTITLE_CHARS, MAX_LOWER_THIRD_TITLE_CHARS,
+    MAX_RING_LABEL_CHARS, MAX_TYPING_CPS, MAX_VIDEO_LAYERS,
 };
 use crate::model::{
     Keyframe, Scene, SubtitleCue, VideoTimeline, MAX_DURATION_MS, MAX_FRAMES, TARGET_FPS,
@@ -26,7 +26,7 @@ pub enum ValidationError {
     DuplicateSceneId(String),
     #[error("scene `{0}` has zero duration")]
     ZeroDuration(String),
-    #[error("scene `{0}` has no text, image or layers")]
+    #[error("scene `{0}` has no text, image, video or layers")]
     EmptyScene(String),
     #[error("scene `{0}` has an empty audio source")]
     EmptyAudioSource(String),
@@ -116,6 +116,12 @@ pub enum ValidationError {
     NonFiniteKeyframe { scene: String, index: usize },
     #[error("scene `{scene}` has {count} layers; the limit is {MAX_LAYERS}")]
     TooManyLayers { scene: String, count: usize },
+    #[error("scene `{0}` has both an image and a video; a scene has one background")]
+    ImageAndVideo(String),
+    #[error("scene `{scene}` video: {message}")]
+    BadSceneVideo { scene: String, message: String },
+    #[error("scene `{scene}` has {count} video layers; the limit is {MAX_VIDEO_LAYERS}")]
+    TooManyVideoLayers { scene: String, count: usize },
     #[error("scene `{scene}` has two layers with id `{layer}`")]
     DuplicateLayerId { scene: String, layer: String },
     #[error("scene `{scene}` layer `{layer}`: {message}")]
@@ -305,6 +311,7 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
         }
     };
     match &layer.content {
+        LayerContent::Video(clip) => out.extend(clip_problems(clip)),
         LayerContent::Image(img) => {
             if let Some(p) = asset_path_problem(&img.src) {
                 out.push(format!("src: {p}"));
@@ -633,6 +640,17 @@ fn validate_layers(scene: &Scene, errors: &mut Vec<ValidationError>) {
             count: scene.layers.len(),
         });
     }
+    let videos = scene
+        .layers
+        .iter()
+        .filter(|l| matches!(l.content, LayerContent::Video(_)))
+        .count();
+    if videos > MAX_VIDEO_LAYERS {
+        errors.push(ValidationError::TooManyVideoLayers {
+            scene: scene.id.clone(),
+            count: videos,
+        });
+    }
     let mut ids = HashSet::new();
     for layer in &scene.layers {
         if !ids.insert(layer.id.as_str()) {
@@ -701,8 +719,19 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
         }
         let has_text = scene.text.as_deref().is_some_and(|t| !t.trim().is_empty());
         let has_image = scene.image.as_deref().is_some_and(|i| !i.trim().is_empty());
-        if !has_text && !has_image && scene.layers.is_empty() {
+        if !has_text && !has_image && scene.video.is_none() && scene.layers.is_empty() {
             errors.push(ValidationError::EmptyScene(scene.id.clone()));
+        }
+        if let Some(video) = &scene.video {
+            if scene.image.is_some() {
+                errors.push(ValidationError::ImageAndVideo(scene.id.clone()));
+            }
+            for message in clip_problems(video) {
+                errors.push(ValidationError::BadSceneVideo {
+                    scene: scene.id.clone(),
+                    message,
+                });
+            }
         }
         if let Some(audio) = &scene.audio {
             if audio.source.trim().is_empty() {
@@ -789,6 +818,7 @@ mod tests {
             highlights: vec![],
             image: None,
             motion: MotionType::Static,
+            video: None,
             audio: None,
             narration: None,
             transition_in: None,
@@ -1425,6 +1455,46 @@ mod tests {
         ] {
             assert!(m.iter().any(|m| m.contains(needle)), "{needle}: {m:?}");
         }
+    }
+
+    #[test]
+    fn video_background_and_layers() {
+        use crate::layer::VideoClip;
+        let mut s = scene("v", 3_000);
+        s.text = None;
+        s.video = Some(VideoClip::new("assets/clips/a.mp4"));
+        assert!(
+            validate(&timeline(vec![s.clone()])).is_ok(),
+            "a video alone fills a scene"
+        );
+        s.image = Some("assets/sample.png".into());
+        s.video.as_mut().unwrap().speed = 9.0;
+        let errs = validate(&timeline(vec![s.clone()])).unwrap_err();
+        assert_eq!(
+            errs,
+            vec![
+                ValidationError::ImageAndVideo("v".into()),
+                ValidationError::BadSceneVideo {
+                    scene: "v".into(),
+                    message: "speed must be between 0.25 and 4, got 9".into()
+                }
+            ]
+        );
+        let mut s = scene("w", 3_000);
+        for i in 0..5 {
+            s.layers.push(layer(&format!(
+                r#"{{"id":"v{i}","kind":"video","x":0,"y":0,"width":0.2,"height":0.2,"src":"a.mp4","trim_start_ms":900,"trim_end_ms":100}}"#
+            )));
+        }
+        let errs = validate(&timeline(vec![s])).unwrap_err();
+        assert!(errs.contains(&ValidationError::TooManyVideoLayers {
+            scene: "w".into(),
+            count: 5
+        }));
+        assert_eq!(
+            layer_messages(&errs, "v0"),
+            ["trim_end_ms (100) must be after trim_start_ms (900)"]
+        );
     }
 
     #[test]

@@ -1160,6 +1160,7 @@ mod tests {
             highlights: vec![],
             image: None,
             motion: MotionType::Static,
+            video: None,
             audio: Some(AudioMapping {
                 source: format!("generated/tts/{id}.wav"),
                 offset_ms: 0,

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::layer::Layer;
+use crate::layer::{Layer, VideoClip};
 
 /// Target frame rate for every render.
 pub const TARGET_FPS: u32 = 30;
@@ -182,6 +182,10 @@ pub struct Scene {
     pub image: Option<String>,
     #[serde(default)]
     pub motion: MotionType,
+    /// A video clip as the background, in the image's place (`motion` / `keyframes` move it the
+    /// same way). A scene has an `image` or a `video`, not both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<VideoClip>,
     #[serde(default)]
     pub audio: Option<AudioMapping>,
     /// When set and `audio` is empty, the scene's text is synthesized as narration at render time.
@@ -485,6 +489,26 @@ mod tests {
             assert!(t.scenes.iter().all(|s| s.layers.is_empty()));
             assert!(!serde_json::to_string(&t).unwrap().contains("\"layers\""));
         }
+    }
+
+    #[test]
+    fn timelines_without_video_write_no_video_key() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fixtures");
+        for name in [
+            "sample-timeline.json",
+            "layers-demo.json",
+            "anim-layers-demo.json",
+        ] {
+            let raw = std::fs::read_to_string(format!("{dir}/{name}")).unwrap();
+            let t: VideoTimeline = serde_json::from_str(&raw).unwrap();
+            assert!(t.scenes.iter().all(|s| s.video.is_none()));
+            assert!(!serde_json::to_string(&t).unwrap().contains("\"video\""));
+        }
+        let s: Scene = serde_json::from_str(
+            r#"{"id":"a","duration_ms":1000,"video":{"src":"assets/clips/a.mp4","speed":2}}"#,
+        )
+        .unwrap();
+        assert_eq!(s.video.as_ref().unwrap().speed, 2.0);
     }
 
     #[test]

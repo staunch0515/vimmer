@@ -184,6 +184,7 @@ mod tests {
             highlights: vec![],
             image: None,
             motion: MotionType::Static,
+            video: None,
             audio: None,
             narration: None,
             transition_in: None,
@@ -378,10 +379,18 @@ mod tests {
         let spans = |c: &SubtitleCue| -> Vec<(u64, u64)> {
             c.words.iter().map(|w| (w.start_ms, w.end_ms)).collect()
         };
-        assert_eq!((a.subtitles[0].start_ms, a.subtitles[0].end_ms), (2_000, 3_000));
+        assert_eq!(
+            (a.subtitles[0].start_ms, a.subtitles[0].end_ms),
+            (2_000, 3_000)
+        );
         assert_eq!(
             spans(&a.subtitles[0]),
-            vec![(2_000, 2_600), (2_600, 3_000), (3_000, 3_000), (3_000, 3_000)],
+            vec![
+                (2_000, 2_600),
+                (2_600, 3_000),
+                (3_000, 3_000),
+                (3_000, 3_000)
+            ],
             "later words wait at the chunk end"
         );
         assert_eq!((b.subtitles[0].start_ms, b.subtitles[0].end_ms), (0, 1_500));

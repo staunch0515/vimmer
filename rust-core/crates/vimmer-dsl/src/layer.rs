@@ -645,6 +645,162 @@ impl ProgressRingLayer {
     }
 }
 
+/// Most video layers one scene may have (each one is decoded for every frame it is shown).
+pub const MAX_VIDEO_LAYERS: usize = 4;
+/// Slowest and fastest clip speed.
+pub const MIN_CLIP_SPEED: f32 = 0.25;
+pub const MAX_CLIP_SPEED: f32 = 4.0;
+/// File extensions a clip may have (lower case).
+pub const CLIP_EXTENSIONS: [&str; 4] = ["mp4", "mov", "m4v", "webm"];
+
+/// What a clip does when, trimmed and at its speed, it is shorter than its scene or layer. When it
+/// is longer it is always cut at the end of the scene or layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FitTime {
+    /// Holds the clip's last frame.
+    #[default]
+    Freeze,
+    /// Starts the clip again from its first (trimmed) frame.
+    Loop,
+    /// Changes the speed so the clip ends exactly with the scene or layer (`speed` is ignored).
+    Stretch,
+}
+
+fn default_speed() -> f32 {
+    1.0
+}
+
+fn is_default_fit_time(v: &FitTime) -> bool {
+    *v == FitTime::Freeze
+}
+
+fn is_default_fit(v: &ImageFit) -> bool {
+    *v == ImageFit::Cover
+}
+
+/// A video file (mp4, mov, m4v or webm) from the public dir, trimmed, at a speed, fitted to the
+/// time of its scene (as `scene.video`) or layer (as a `video` layer). The clip's own frame `n`
+/// (after trim and speed) is shown on scene or layer frame `n`; see [`FitTime`] for the rest.
+///
+/// The renderer always draws it muted. With `volume` above 0 its sound (trimmed, at the speed,
+/// looped with the picture) is mixed into the soundtrack and ducks the music like narration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VideoClip {
+    /// Path relative to the renderer's public dir.
+    pub src: String,
+    /// Where the clip starts in the file, in ms.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub trim_start_ms: u64,
+    /// Where the clip ends in the file, in ms. Absent: the end of the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trim_end_ms: Option<u64>,
+    /// Playback speed, 0.25..=4 (2 = twice as fast). Ignored with `fit_time: stretch`.
+    #[serde(default = "default_speed", skip_serializing_if = "is_one")]
+    pub speed: f32,
+    #[serde(default, skip_serializing_if = "is_default_fit_time")]
+    pub fit_time: FitTime,
+    /// How the picture fills its box (the frame, for a scene background).
+    #[serde(default, skip_serializing_if = "is_default_fit")]
+    pub fit: ImageFit,
+    /// Loudness of the clip's own sound, 0..=1. 0 (the default) is muted.
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub volume: f32,
+}
+
+impl VideoClip {
+    /// A clip of `src` with every other field at its default.
+    pub fn new(src: impl Into<String>) -> Self {
+        Self {
+            src: src.into(),
+            trim_start_ms: 0,
+            trim_end_ms: None,
+            speed: 1.0,
+            fit_time: FitTime::Freeze,
+            fit: ImageFit::Cover,
+            volume: 0.0,
+        }
+    }
+
+    /// The speed the clip plays at when it fills `span_ms` and its trimmed part of the file is
+    /// `source_ms` long: `source_ms / span_ms` for `stretch`, else `speed`.
+    pub fn effective_speed(&self, source_ms: u64, span_ms: u64) -> f64 {
+        match self.fit_time {
+            FitTime::Stretch if span_ms > 0 && source_ms > 0 => source_ms as f64 / span_ms as f64,
+            _ => f64::from(self.speed),
+        }
+    }
+}
+
+/// Frames the clip has on the output timeline: its trimmed part of `source_ms`, at `speed`, at
+/// `fps`, rounded to the nearest frame and at least 1. Mirrors `clipFrames` in
+/// `remotion-renderer/src/motion/video.ts`.
+pub fn clip_frames(source_ms: u64, speed: f64, fps: u32) -> u64 {
+    ((source_ms as f64 / speed * f64::from(fps) / 1000.0).round() as u64).max(1)
+}
+
+/// The clip's own frame shown on frame `frame` of its scene or layer, for a clip `clip_frames`
+/// long (see [`clip_frames`]): held on the last frame (`freeze`, `stretch`) or wrapped around
+/// (`loop`). Mirrors `clipFrameAt` in `remotion-renderer/src/motion/video.ts`.
+pub fn clip_frame_at(frame: u64, clip_frames: u64, fit_time: FitTime) -> u64 {
+    let n = clip_frames.max(1);
+    match fit_time {
+        FitTime::Loop => frame % n,
+        FitTime::Freeze | FitTime::Stretch => frame.min(n - 1),
+    }
+}
+
+/// Why a clip's fields are not valid, as messages (path, extension, trim, speed, volume).
+pub fn clip_problems(clip: &VideoClip) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(p) = crate::validation::asset_path_problem(&clip.src) {
+        out.push(format!("src: {p}"));
+    } else {
+        let ext = clip
+            .src
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        if !CLIP_EXTENSIONS.contains(&ext.as_str()) {
+            out.push(format!(
+                "a video's src must be a .{} file",
+                CLIP_EXTENSIONS.join(", .")
+            ));
+        }
+    }
+    if let Some(end) = clip.trim_end_ms {
+        if end <= clip.trim_start_ms {
+            out.push(format!(
+                "trim_end_ms ({end}) must be after trim_start_ms ({})",
+                clip.trim_start_ms
+            ));
+        }
+    }
+    if clip.trim_start_ms > MAX_CLIP_TRIM_MS
+        || clip.trim_end_ms.is_some_and(|e| e > MAX_CLIP_TRIM_MS)
+    {
+        out.push(format!(
+            "trim times must be at most {MAX_CLIP_TRIM_MS} ms (6 hours)"
+        ));
+    }
+    if !(clip.speed.is_finite() && (MIN_CLIP_SPEED..=MAX_CLIP_SPEED).contains(&clip.speed)) {
+        out.push(format!(
+            "speed must be between {MIN_CLIP_SPEED} and {MAX_CLIP_SPEED}, got {}",
+            clip.speed
+        ));
+    }
+    if !(clip.volume.is_finite() && (0.0..=1.0).contains(&clip.volume)) {
+        out.push(format!(
+            "volume must be between 0 and 1, got {}",
+            clip.volume
+        ));
+    }
+    out
+}
+
+/// Latest trim time accepted, in ms (6 hours).
+pub const MAX_CLIP_TRIM_MS: u64 = 6 * 3_600_000;
+
 /// What a layer draws, tagged by `kind` in the JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -657,6 +813,7 @@ pub enum LayerContent {
     Counter(CounterLayer),
     BarChart(BarChartLayer),
     ProgressRing(ProgressRingLayer),
+    Video(VideoClip),
 }
 
 impl LayerContent {
@@ -671,6 +828,7 @@ impl LayerContent {
             LayerContent::Counter(_) => "counter",
             LayerContent::BarChart(_) => "bar_chart",
             LayerContent::ProgressRing(_) => "progress_ring",
+            LayerContent::Video(_) => "video",
         }
     }
 
@@ -687,6 +845,7 @@ impl LayerContent {
         match self {
             LayerContent::Image(l) => Some(&l.src),
             LayerContent::Icon(l) => Some(&l.src),
+            LayerContent::Video(l) => Some(&l.src),
             _ => None,
         }
     }
@@ -814,9 +973,70 @@ mod tests {
     #[test]
     fn unknown_kind_is_a_parse_error() {
         assert!(serde_json::from_str::<Layer>(
-            r#"{"id":"x","kind":"video","x":0,"y":0,"width":1,"height":1,"src":"a.mp4"}"#
+            r#"{"id":"x","kind":"film","x":0,"y":0,"width":1,"height":1,"src":"a.mp4"}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn video_layers_get_defaults_and_round_trip_without_default_keys() {
+        let json = r#"{"id":"v","x":0.1,"y":0.1,"width":0.3,"height":0.3,"kind":"video","src":"assets/clips/a.mp4"}"#;
+        let l: Layer = serde_json::from_str(json).unwrap();
+        let LayerContent::Video(v) = &l.content else {
+            panic!("video")
+        };
+        assert_eq!(*v, VideoClip::new("assets/clips/a.mp4"));
+        assert_eq!(l.content.asset(), Some("assets/clips/a.mp4"));
+        assert_eq!(serde_json::to_string(&l).unwrap(), json);
+        let full = r#"{"src":"c.mov","trim_start_ms":500,"trim_end_ms":2500,"speed":2.0,"fit_time":"loop","fit":"contain","volume":0.5}"#;
+        let clip: VideoClip = serde_json::from_str(full).unwrap();
+        assert_eq!(clip.fit_time, FitTime::Loop);
+        assert_eq!(clip.fit, ImageFit::Contain);
+        assert_eq!(serde_json::to_string(&clip).unwrap(), full);
+    }
+
+    #[test]
+    fn clip_frame_math() {
+        // 2 s of source at 2x = 1 s = 30 frames; at 0.5x = 120 frames.
+        assert_eq!(clip_frames(2_000, 2.0, 30), 30);
+        assert_eq!(clip_frames(2_000, 0.5, 30), 120);
+        assert_eq!(clip_frames(10, 4.0, 30), 1, "never 0 frames");
+        assert_eq!(clip_frame_at(0, 30, FitTime::Freeze), 0);
+        assert_eq!(clip_frame_at(29, 30, FitTime::Freeze), 29);
+        assert_eq!(clip_frame_at(75, 30, FitTime::Freeze), 29);
+        assert_eq!(clip_frame_at(75, 30, FitTime::Loop), 15);
+        assert_eq!(clip_frame_at(30, 30, FitTime::Loop), 0);
+        let mut c = VideoClip::new("a.mp4");
+        c.speed = 2.0;
+        assert_eq!(c.effective_speed(3_000, 6_000), 2.0);
+        c.fit_time = FitTime::Stretch;
+        assert_eq!(c.effective_speed(3_000, 6_000), 0.5);
+    }
+
+    #[test]
+    fn clip_rules() {
+        assert!(clip_problems(&VideoClip::new("assets/clips/a.MP4")).is_empty());
+        assert!(clip_problems(&VideoClip::new("a.webm")).is_empty());
+        let msgs = clip_problems(&VideoClip::new("a.gif"));
+        assert_eq!(
+            msgs,
+            ["a video's src must be a .mp4, .mov, .m4v, .webm file"]
+        );
+        assert_eq!(clip_problems(&VideoClip::new("../a.mp4")).len(), 1);
+        let bad = VideoClip {
+            trim_start_ms: 1_000,
+            trim_end_ms: Some(1_000),
+            speed: 5.0,
+            volume: 1.5,
+            ..VideoClip::new("a.mp4")
+        };
+        let msgs = clip_problems(&bad);
+        assert_eq!(msgs.len(), 3, "{msgs:?}");
+        let nan = VideoClip {
+            speed: f32::NAN,
+            ..VideoClip::new("a.mp4")
+        };
+        assert_eq!(clip_problems(&nan).len(), 1);
     }
 
     #[test]
