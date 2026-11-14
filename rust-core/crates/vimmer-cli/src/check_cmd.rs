@@ -22,6 +22,9 @@ struct CheckCli {
     /// Print the report as JSON (schema `vimmer-check/1`, see README).
     #[arg(long)]
     json: bool,
+    /// Brand JSON that replaces the timeline's `brand` (as `vimmer --brand`).
+    #[arg(long)]
+    brand: Option<PathBuf>,
     /// Treat warnings as errors for the exit code.
     #[arg(long)]
     strict: bool,
@@ -49,7 +52,13 @@ pub fn main(mut args: Vec<OsString>) -> ExitCode {
     args[0] = "vimmer check".into();
     let cli = CheckCli::parse_from(args);
 
-    let timeline = match load(&cli.timeline) {
+    let loaded = load(&cli.timeline).and_then(|mut t| {
+        if let Some(path) = &cli.brand {
+            t.brand = Some(crate::expand_cmd::load_brand(path)?);
+        }
+        Ok(t)
+    });
+    let timeline = match loaded {
         Ok(t) => t,
         Err(e) => {
             if cli.json {
@@ -80,7 +89,10 @@ pub fn main(mut args: Vec<OsString>) -> ExitCode {
             }
         }
     } else {
-        print!("{}", render_human(&report, &timeline));
+        print!(
+            "{}",
+            render_human(&report, &vimmer_check::expanded(&timeline))
+        );
     }
     ExitCode::from(report.exit_code(cli.strict))
 }

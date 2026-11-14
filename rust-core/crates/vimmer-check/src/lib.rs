@@ -10,6 +10,7 @@
 
 pub mod assets;
 pub mod audio;
+pub mod brand;
 pub mod layers;
 pub mod layout;
 pub mod motion;
@@ -223,8 +224,32 @@ impl Report {
     }
 }
 
-/// Runs every check on `timeline`.
+/// The timeline as it will render: template scenes expanded into layers. Unchanged when a
+/// template's params are wrong (the check then reports that).
+pub fn expanded(timeline: &VideoTimeline) -> VideoTimeline {
+    let mut t = timeline.clone();
+    match vimmer_dsl::expand_templates(&mut t) {
+        Ok(()) => t,
+        Err(_) => timeline.clone(),
+    }
+}
+
+/// Runs every check on `timeline`. Template scenes are checked as they will render (expanded);
+/// findings about template layers point at the template's params.
 pub fn check_timeline(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding> {
+    let templates: Vec<_> = timeline.scenes.iter().map(|s| s.template.clone()).collect();
+    let mut expanded = timeline.clone();
+    if vimmer_dsl::expand_templates(&mut expanded).is_err() {
+        // The template errors come from validation; nothing else can be checked meaningfully.
+        let mut findings = timing::validation(timeline);
+        findings.extend(brand::check(timeline, opts.public_dir.as_deref()));
+        return findings;
+    }
+    let findings = check_expanded(&expanded, opts);
+    brand::template_findings(findings, &expanded, &templates)
+}
+
+fn check_expanded(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding> {
     let mut findings = Vec::new();
     findings.extend(timing::validation(timeline));
     findings.extend(text::check(timeline));
@@ -241,6 +266,8 @@ pub fn check_timeline(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Find
         None
     };
     findings.extend(timing::narration(timeline, measured.as_deref()));
+    findings.extend(brand::contrast(timeline));
+    findings.extend(brand::check(timeline, opts.public_dir.as_deref()));
     match &opts.public_dir {
         Some(dir) => {
             findings.extend(assets::check(timeline, dir));

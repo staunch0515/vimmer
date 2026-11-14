@@ -35,6 +35,8 @@ pub enum SchedulerError {
     Mix(String),
     #[error("{what}: {message}")]
     Video { what: String, message: String },
+    #[error("brand {what}: file not found: {path}")]
+    BrandAssetMissing { what: String, path: String },
     #[error("scene `{scene}` layer `{layer}`: file not found: {path}")]
     LayerAssetMissing {
         scene: String,
@@ -143,6 +145,18 @@ pub async fn render_timeline_with(
     ctx.emit(Progress::Stage {
         name: "Checking timeline".into(),
     });
+    // Template scenes become ordinary layers first; everything below sees the expanded timeline.
+    if let Err(errors) = vimmer_dsl::expand_templates(&mut timeline) {
+        return Err(SchedulerError::Invalid(
+            errors
+                .into_iter()
+                .map(|e| ValidationError::BadTemplate {
+                    scene: e.scene,
+                    message: e.message,
+                })
+                .collect(),
+        ));
+    }
     validate(&timeline).map_err(SchedulerError::Invalid)?;
     tokio::fs::create_dir_all(&cfg.work_dir).await?;
     let mut warnings = Vec::new();
@@ -154,6 +168,8 @@ pub async fn render_timeline_with(
             return Err(SchedulerError::MusicMissing(path.display().to_string()));
         }
     }
+
+    check_brand_assets(&timeline, &cfg.public_dir)?;
 
     // Layer images and icons are drawn as they are (not normalized), so only their presence is
     // checked here; a missing file would otherwise fail inside the renderer.
@@ -265,6 +281,27 @@ pub async fn render_timeline_with(
         encoded_videos,
         warnings,
     })
+}
+
+/// Brand fonts and the logo are loaded by the renderer, so a missing file would only fail there
+/// (a font silently falls back): check them up front, like layer images.
+pub(crate) fn check_brand_assets(
+    timeline: &VideoTimeline,
+    public_dir: &Path,
+) -> Result<(), SchedulerError> {
+    let Some(brand) = &timeline.brand else {
+        return Ok(());
+    };
+    for (what, src) in brand.assets() {
+        let path = public_dir.join(src);
+        if !path.is_file() {
+            return Err(SchedulerError::BrandAssetMissing {
+                what: what.to_string(),
+                path: path.display().to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Runs an external command in its own process group, so cancelling can kill the whole tree.
@@ -517,6 +554,29 @@ fn sanitize(rel: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_brand_files_are_named() {
+        let dir = std::env::temp_dir().join(format!("vimmer-brand-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("assets/logo.png"), b"png").unwrap();
+        let mut t: VideoTimeline = serde_json::from_str(
+            r#"{"fps":30,"resolution":{"width":1920,"height":1080},"scenes":[{"id":"a","duration_ms":1000,"text":"a"}],
+            "brand":{"fonts":{"heading":{"family":"Demo","src":"assets/demo.woff2"}},"logo":{"src":"assets/logo.png"}}}"#,
+        )
+        .unwrap();
+        let err = check_brand_assets(&t, &dir).unwrap_err().to_string();
+        assert!(
+            err.starts_with("brand heading font: file not found:"),
+            "{err}"
+        );
+        assert!(err.ends_with("assets/demo.woff2"), "{err}");
+        t.brand.as_mut().unwrap().fonts.heading = None;
+        check_brand_assets(&t, &dir).unwrap();
+        t.brand = None;
+        check_brand_assets(&t, &dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn relative_paths_are_anchored_at_the_current_dir() {
