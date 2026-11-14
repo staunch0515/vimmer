@@ -34,7 +34,7 @@ pub fn write_project_file(path: String, contents: String) -> Result<(), String> 
     write_atomic(Path::new(&path), contents.as_bytes()).map_err(|e| format!("Could not save {path}: {e}"))
 }
 
-fn write_atomic(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomic(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("project");
     let tmp: PathBuf = dir.join(format!(".{name}.tmp-{}", std::process::id()));
