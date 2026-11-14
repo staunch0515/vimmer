@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPoi
 import type { VideoTimeline } from "../../../src/types/timeline";
 import { timecode, type Selection } from "../model";
 import type { Action } from "../state";
+import type { BeatMark } from "../beats";
 
 const LABEL_W = 116;
 const SNAP_PX = 8;
@@ -15,6 +16,8 @@ type Props = {
   onSeek: (frame: number) => void;
   onSelect: (s: Selection) => void;
   dispatch: Dispatch<Action>;
+  // Beats of the music in video time (after "Detect beats", or from a hand-set tempo).
+  beatMarks?: BeatMark[];
 };
 
 type Drag =
@@ -33,7 +36,7 @@ const snapTo = (ms: number, points: number[], pps: number): { ms: number; guide:
   return best === null ? { ms, guide: null } : { ms: best, guide: best };
 };
 
-export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, dispatch }: Props) => {
+export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, dispatch, beatMarks = [] }: Props) => {
   const [pps, setPps] = useState(60);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [guide, setGuide] = useState<number | null>(null);
@@ -58,8 +61,10 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
       pts.add(c.start_ms);
       pts.add(c.end_ms);
     });
+    // Beats pull scene edges too, so a cut can be dragged onto one.
+    beatMarks.forEach((b) => pts.add(Math.round(b.ms)));
     return [...pts];
-  }, [starts, timeline.scenes, timeline.subtitles, totalMs]);
+  }, [starts, timeline.scenes, timeline.subtitles, totalMs, beatMarks]);
 
   const msFromClientX = (clientX: number): number => {
     const rect = rulerRef.current!.getBoundingClientRect();
@@ -137,6 +142,15 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
                 <div key={s} className={s % 5 === 0 ? "tick major" : "tick"} style={{ left: s * pps }}>
                   {s % 5 === 0 && <span className="tick-label mono">{timecode(s * 1000).slice(0, 5)}</span>}
                 </div>
+              ))}
+              {beatMarks.map((b) => (
+                <div
+                  key={b.ms}
+                  className={b.bar ? "beat-mark bar" : "beat-mark"}
+                  style={{ left: (b.ms / 1000) * pps }}
+                  title={`beat ${timecode(b.ms)}`}
+                  data-beat-mark
+                />
               ))}
             </div>
           </div>

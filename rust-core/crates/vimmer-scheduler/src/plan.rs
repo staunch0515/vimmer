@@ -180,6 +180,7 @@ mod tests {
 
     fn scene(id: &str, ms: u64) -> Scene {
         Scene {
+            sfx: vec![],
             template: None,
             id: id.into(),
             duration_ms: ms,

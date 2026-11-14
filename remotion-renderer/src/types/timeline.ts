@@ -80,6 +80,19 @@ export type Scene = {
   // A built-in template, expanded into layers by the Rust core (vimmer-dsl/src/template.rs)
   // before rendering. The renderer never sees one; the editor previews it through `vimmer expand`.
   template?: SceneTemplate | null;
+  // Short sounds mixed in at moments of this scene (at most 16). Absent or empty: none.
+  sfx?: SoundEffect[];
+};
+
+// Mirrors `SoundEffect` in vimmer-dsl/src/model.rs. Exactly one of `at_ms` / `on`. Mixed into the
+// soundtrack by the Rust core on the frame of its moment; plays to its end (past the scene end).
+export type LayerEvent = "enter" | "exit";
+export type SoundEffect = {
+  src: string; // audio file under public/, e.g. assets/sfx/whoosh.wav
+  at_ms?: number | null; // from the scene start
+  on?: { layer: string; event: LayerEvent } | null; // when a layer enters, or starts its exit
+  volume?: number; // 0..1, default 0.8
+  duck_music?: boolean; // default false: plays over the music without lowering it
 };
 
 export type SceneTemplate = {
@@ -284,6 +297,23 @@ export type Music = {
   fade_in_ms: number;
   fade_out_ms: number;
   duck?: Duck;
+  // A beat grid given by hand (skips detection): a beat every 60000/bpm ms from offset_ms.
+  beats?: BeatGrid | null;
+  // Snap scene cuts to the music's beats at render time (after narration). The preview shows
+  // the cuts where the durations put them.
+  beat_sync?: BeatSync | null;
+};
+
+export type BeatGrid = {
+  bpm: number; // 30..300
+  offset_ms?: number; // first beat, from the start of the file; default 0
+};
+
+export type BeatSync = {
+  enabled?: boolean; // default true
+  every?: 1 | 2 | 4; // beats per step (4 = bar starts); default 1
+  max_shift_ms?: number; // 1..1000, default 250
+  mode?: "nearest" | "later"; // default nearest
 };
 
 // ---- Brand kit. Mirrors rust-core/crates/vimmer-dsl/src/brand.rs (which element uses which color

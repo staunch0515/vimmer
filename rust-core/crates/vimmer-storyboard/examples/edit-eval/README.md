@@ -5,14 +5,16 @@
 cases. `--budget` (USD, default 10) stops starting new cases once a run has spent that much.
 Every run appends its spend to `results/spend.log`.
 
-- `cases.json`: 89 instructions in zh, en and ja, over `examples/*.timeline.json`, the
+- `cases.json`: 95 instructions in zh, en and ja, over `examples/*.timeline.json`, the
   `fixtures/*.json` and `timelines/zh-injected.timeline.json`. The last has a prompt injection
   in a scene's text. Groups: easy, multi (multi-scene and subtitles), ambiguous, impossible,
   hostile, layers (add / move / restyle / remove scene layers, on `fixtures/layers-demo.json` and
   the example timelines), anim (the data and text animation layer kinds and springy easings),
   video (clip backgrounds and video layers: speed, loop, trim, mute, add, replace an image, an
   absolute path; mostly on `fixtures/video-clips-demo.json`), brand (brand kit and scene
-  templates, on `fixtures/brand-templates-demo.json` and `en`).
+  templates, on `fixtures/brand-templates-demo.json` and `en`), sound (beat sync settings, a
+  hand-set tempo, sound effects at a time or on a layer event, a download request; mostly on
+  `fixtures/beats-sfx-demo.json`).
 - `run_eval.py`: runs each case through `vimmer edit --dry-run --json` (4 at a time). A case
   passes when:
   - the status is one of the expected ones;
@@ -49,3 +51,6 @@ Runs in `results/`, in order:
   new title-card and outro template scenes, a brand added to a timeline without one, a web font
   that must not be downloaded; mostly on `fixtures/brand-templates-demo.json`): 8/8 first try,
   $0.14.
+- `sound-r1-sonnet-low`: the 6 `sound-*` cases (bar-start beat sync with a larger shift, a whoosh
+  at a scene start, a click on a layer's enter, a tempo given by hand in Japanese, a quieter ding
+  that ducks the music, a sound to download from the web): 6/6 first try, $0.15.

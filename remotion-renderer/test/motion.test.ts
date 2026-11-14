@@ -8,7 +8,8 @@ import { barProgress, chartMax, countFrames, formatNumber, frameProgress, ringFr
 import { lowerThirdPose } from "../src/motion/lowerThird.ts";
 import { clipFrameAt, clipFrames, clipSourceMs, clipTimeAt } from "../src/motion/video.ts";
 import { cursorVisible, typedCount, typedSegments, typingUnits } from "../src/motion/typewriter.ts";
-import type { Easing, Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
+import { sfxFrame } from "../src/motion/sfx.ts";
+import type { Easing, Keyframe, Scene, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
 
 const kf = (at_ms: number, extra: Partial<Keyframe> = {}): Keyframe => ({ at_ms, ...extra });
 const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`);
@@ -420,4 +421,18 @@ test("brand colors, fonts and the logo box", () => {
   assert.equal(logoShownOn(brand, "intro"), false);
   assert.equal(logoShownOn(brand, "body"), true);
   assert.equal(logoShownOn({}, "body"), false);
+});
+
+test("sound effects play on the frames of their layer events (as SoundEffect::frame_in)", () => {
+  const scene = {
+    id: "b", duration_ms: 2000, text: null, highlights: [], image: null, motion: "static", audio: null,
+    layers: [{ id: "t", kind: "text", x: 0.1, y: 0.1, width: 0.5, text: "hi", start_ms: 520, end_ms: 1800, exit: { kind: "fade", duration_ms: 300 } }],
+  } as unknown as Scene;
+  assert.equal(sfxFrame({ src: "a.wav", on: { layer: "t", event: "enter" } }, scene, 30), 16);
+  assert.equal(sfxFrame({ src: "a.wav", on: { layer: "t", event: "exit" } }, scene, 30), 45);
+  assert.equal(sfxFrame({ src: "a.wav", at_ms: 1990 }, scene, 30), 59, "rounds onto the cut: plays on the last frame");
+  assert.equal(sfxFrame({ src: "a.wav", on: { layer: "nope", event: "enter" } }, scene, 30), null);
+  // Without an exit animation the exit is the layer's end frame.
+  const plain = { ...scene, layers: [{ ...scene.layers![0], exit: null }] } as Scene;
+  assert.equal(sfxFrame({ src: "a.wav", on: { layer: "t", event: "exit" } }, plain, 30), 54);
 });

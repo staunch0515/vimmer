@@ -12,6 +12,8 @@ import { useEffect, useState } from "react";
 import { AssistantPanel } from "./AssistantPanel";
 import { LayerPanel } from "./LayerPanel";
 import { BrandEditor, TemplateParams } from "./BrandPanel";
+import { BeatSyncFields, SfxList, type BeatStatus } from "./SoundPanel";
+import type { DetectedBeats } from "../beats";
 
 export type InspectorTab = "scene" | "subtitles" | "music" | "brand" | "assistant";
 
@@ -24,6 +26,9 @@ type Props = {
   dispatch: Dispatch<Action>;
   onSelect: (s: Selection) => void;
   onAddSubtitle: () => void;
+  beats: DetectedBeats | null;
+  beatStatus: BeatStatus;
+  onDetectBeats: () => void;
 };
 
 const MOTIONS: Scene["motion"][] = ["static", "zoom_in", "zoom_out", "pan_left", "pan_right"];
@@ -240,6 +245,8 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
       ) : (
         <button className="btn ghost small" onClick={() => patch({ audio: { source: "", offset_ms: 0 } })}>Add audio</button>
       )}
+      <div className="section-title">Sound effects</div>
+      <SfxList scene={scene} index={index} dispatch={dispatch} />
       <div className="section-title">Arrange</div>
       <div className="button-row">
         <button className="btn ghost small" disabled={index === 0} onClick={() => dispatch({ type: "moveScene", index, delta: -1 })}>Move up</button>
@@ -359,7 +366,7 @@ export const MediaInput = ({
   );
 };
 
-const MusicEditor = ({ timeline, dispatch }: Props) => {
+const MusicEditor = ({ timeline, dispatch, beats, beatStatus, onDetectBeats }: Props) => {
   const music = timeline.music;
   if (!music) {
     return (
@@ -401,6 +408,7 @@ const MusicEditor = ({ timeline, dispatch }: Props) => {
           <input type="number" min={0} step={100} value={music.fade_out_ms} onChange={(e) => patch({ fade_out_ms: Math.max(0, Number(e.target.value) || 0) })} />
         </Field>
       </div>
+      <BeatSyncFields music={music} patch={patch} detected={beats} status={beatStatus} onDetect={onDetectBeats} />
       <button className="btn danger small" onClick={() => dispatch({ type: "setMusic", music: null })}>Remove music</button>
     </div>
   );

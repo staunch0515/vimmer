@@ -3,6 +3,7 @@
 
 mod assets;
 mod assistant;
+mod beats;
 mod project;
 mod render;
 
@@ -18,6 +19,7 @@ fn main() {
             project::read_project_file,
             project::write_project_file,
             project::expand_timeline,
+            beats::detect_beats,
             render::start_render,
             render::cancel_render,
             render::reveal_in_finder,

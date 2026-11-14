@@ -233,6 +233,12 @@ textarea { resize: vertical; width: 100%; }
 }
 .tick { position: absolute; top: 0; height: 6px; width: 1px; background: #3f3f46; }
 .tick.major { height: 14px; background: #52525b; }
+.beat-mark { position: absolute; bottom: 0; height: 8px; width: 2px; margin-left: -1px; background: #f59e0b; opacity: 0.75; pointer-events: none; }
+.beat-mark.bar { height: 16px; opacity: 1; }
+.sfx-list { display: flex; flex-direction: column; gap: 8px; }
+.sfx-row { border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.sfx-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sfx-name { font-weight: 600; font-size: 12px; }
 .tick-label { position: absolute; top: 12px; left: 4px; font-size: 10px; color: var(--text-3); white-space: nowrap; }
 .track-row { border-bottom: 1px solid var(--border); }
 .track-content { position: relative; flex: 1; background-image: linear-gradient(to right, rgba(255,255,255,0.025) 1px, transparent 1px); background-size: 60px 100%; }

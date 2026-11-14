@@ -42,6 +42,7 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
     if (s.video) problems.push(...checkClip(`Scene “${s.id}” background`, s.video));
     problems.push(...checkSceneMotion(s, t.scenes.indexOf(s)));
     problems.push(...checkLayers(s));
+    problems.push(...checkSfx(s));
   }
   const total = totalMs(t);
   if (total > MAX_DURATION_MS) problems.push(`Timeline is ${(total / 1000).toFixed(1)} s; the limit is 200 s.`);
@@ -49,6 +50,12 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
     if (!t.music.source.trim()) problems.push("Background music has no file.");
     if (t.music.volume < 0 || t.music.volume > 1) problems.push("Music volume must be between 0 and 1.");
     if (t.music.fade_in_ms + t.music.fade_out_ms > total) problems.push("Music fades are longer than the video.");
+    const b = t.music.beats;
+    if (b && !(b.bpm >= 30 && b.bpm <= 300)) problems.push("Music tempo must be between 30 and 300 BPM.");
+    const sync = t.music.beat_sync;
+    if (sync && sync.max_shift_ms != null && !(sync.max_shift_ms >= 1 && sync.max_shift_ms <= 1000)) {
+      problems.push("Beat sync max shift must be between 1 and 1000 ms.");
+    }
   }
   t.subtitles?.forEach((c, i) => {
     if (c.start_ms >= c.end_ms) problems.push(`Subtitle ${i + 1} must start before it ends.`);
@@ -116,3 +123,20 @@ export const keyframeFieldError = (field: "scale" | "x" | "y" | "opacity" | "rot
 };
 
 export const sortedKeyframes = (s: Scene): Keyframe[] => s.keyframes ?? [];
+
+// Mirrors `sfx_problems` in rust-core/crates/vimmer-dsl/src/validation.rs.
+const checkSfx = (s: Scene): string[] => {
+  const out: string[] = [];
+  const list = s.sfx ?? [];
+  if (list.length > 16) out.push(`Scene “${s.id}” has ${list.length} sound effects; the limit is 16.`);
+  list.forEach((fx, k) => {
+    const name = `Scene “${s.id}” sound ${k + 1}`;
+    if (!fx.src.trim()) out.push(`${name} has no file.`);
+    else if (!/\.(wav|mp3|m4a|aac|ogg|flac|opus)$/i.test(fx.src)) out.push(`${name} must be an audio file.`);
+    if ((fx.at_ms != null) === !!fx.on) out.push(`${name} needs either a time or a layer event.`);
+    if (fx.at_ms != null && fx.at_ms >= s.duration_ms) out.push(`${name} is after the scene ends.`);
+    if (fx.on && !(s.layers ?? []).some((l) => l.id === fx.on!.layer)) out.push(`${name} plays on layer “${fx.on.layer}”, which does not exist.`);
+    if (fx.volume != null && !(fx.volume >= 0 && fx.volume <= 1)) out.push(`${name} volume must be between 0 and 1.`);
+  });
+  return out;
+};

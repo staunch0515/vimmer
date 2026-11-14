@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+mod beats_cmd;
 mod check_cmd;
 mod edit_cmd;
 mod expand_cmd;
@@ -271,6 +272,8 @@ async fn main() -> ExitCode {
         return check_cmd::main(args);
     } else if args.get(1).is_some_and(|a| a == "expand") {
         return expand_cmd::main(args);
+    } else if args.get(1).is_some_and(|a| a == "beats") {
+        return beats_cmd::main(args);
     } else {
         run(Cli::parse_from(args)).await
     };
@@ -326,6 +329,9 @@ async fn render(
     .await?;
     for warning in &report.warnings {
         eprintln!("warning: {warning}");
+    }
+    for note in &report.notes {
+        println!("{note}");
     }
     println!(
         "rendered {} chunk(s), normalized {} image(s) -> {}",

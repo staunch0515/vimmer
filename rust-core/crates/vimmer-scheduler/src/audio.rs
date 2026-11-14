@@ -9,6 +9,12 @@
 //! Video clips with a `volume` add their sound (prepared by `video.rs`, already trimmed, at the
 //! clip's speed and looped with the picture) as more placed clips, with that volume as their gain.
 //! They count as scene audio for ducking. Without such clips the graph is exactly as before.
+//!
+//! Sound effects (`scene.sfx`) come last: each starts on the frame of its moment (scene start
+//! plus its time rounded to a frame, like scene audio) and plays to its end, cut only by the end
+//! of the video. They duck the music only with `duck_music`. With at least one effect the mix
+//! goes through a lookahead limiter (delay-compensated, so nothing moves in time) that keeps
+//! peaks under [`LIMIT`]; without effects there is no limiter and the graph is unchanged.
 
 use std::path::Path;
 
@@ -25,6 +31,9 @@ const AUDIO_BITRATE: &str = "320k";
 /// Audio frames are cut this small before the ducking `volume` filter, which evaluates its
 /// expression once per frame: 128 samples (2.7 ms) makes the ramps smooth.
 const DUCK_FRAME_SAMPLES: u32 = 128;
+
+/// Peak ceiling of the limiter used when sound effects are mixed in (about -0.9 dBFS).
+pub const LIMIT: f64 = 0.9;
 
 /// Where one scene's audio clip lands in the output, in samples at [`SAMPLE_RATE`].
 #[derive(Debug, Clone, PartialEq)]
@@ -131,6 +140,42 @@ pub fn place_clip_sounds(
         .unzip()
 }
 
+/// Places every sound effect: on the frame of its moment in its scene, playing until the end of
+/// the video at most, with its volume as gain. In scene order, then list order. Each comes with
+/// its `duck_music`.
+pub fn place_sfx(timeline: &VideoTimeline) -> Vec<(Placement, bool)> {
+    let fps = timeline.fps;
+    let total = total_samples(timeline);
+    let mut out = Vec::new();
+    for (index, (scene, from)) in timeline
+        .scenes
+        .iter()
+        .zip(timeline.scene_start_frames())
+        .enumerate()
+    {
+        for fx in &scene.sfx {
+            let Some(frame) = fx.frame_in(scene, fps) else {
+                continue;
+            };
+            let start = frame_to_sample(u64::from(from) + frame, fps);
+            if start >= total {
+                continue;
+            }
+            out.push((
+                Placement {
+                    scene: index,
+                    source: fx.src.clone(),
+                    start,
+                    end: total,
+                    gain: fx.volume,
+                },
+                fx.duck_music,
+            ));
+        }
+    }
+    out
+}
+
 /// Total length of the soundtrack in samples: exactly the video's frame count.
 pub fn total_samples(timeline: &VideoTimeline) -> u64 {
     frame_to_sample(u64::from(timeline.total_frames()), timeline.fps)
@@ -157,6 +202,7 @@ pub fn filter_graph(
     music: Option<&Music>,
     duck_expr: Option<&str>,
     total: u64,
+    limit: bool,
 ) -> Option<String> {
     let format = format!(
         "aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB"
@@ -207,7 +253,12 @@ pub fn filter_graph(
     if labels.is_empty() {
         return None;
     }
-    let tail = format!("apad=whole_len={total},atrim=end_sample={total}[a]");
+    let limiter = if limit {
+        format!("alimiter=limit={LIMIT}:attack=5:release=50:level=disabled:latency=1,")
+    } else {
+        String::new()
+    };
+    let tail = format!("{limiter}apad=whole_len={total},atrim=end_sample={total}[a]");
     chains.push(if labels.len() == 1 {
         format!("{}{tail}", labels[0])
     } else {
@@ -221,13 +272,16 @@ pub fn filter_graph(
 }
 
 /// Mixes the soundtrack for `timeline` and muxes it onto `video` (video only) into `out`.
-/// `durations_ms[i]` is the probed length of `placements[i]`. Returns false, writing nothing,
-/// when the timeline has no audio at all; the caller then keeps the silent video.
+/// `durations_ms[i]` is how long `placements[i]` ducks the music (its probed length; 0 for a
+/// sound effect without `duck_music`). `limit` puts the limiter on the mix (when there are sound
+/// effects). Returns false, writing nothing, when the timeline has no audio at all; the caller
+/// then keeps the silent video.
 #[allow(clippy::too_many_arguments)]
 pub async fn mux_soundtrack(
     timeline: &VideoTimeline,
     placements: &[Placement],
     durations_ms: &[u64],
+    limit: bool,
     video: &Path,
     out: &Path,
     cfg: &SchedulerConfig,
@@ -244,6 +298,7 @@ pub async fn mux_soundtrack(
         timeline.music.as_ref(),
         duck_expr.as_deref(),
         total,
+        limit,
     ) else {
         return Ok(false);
     };
@@ -280,6 +335,7 @@ mod tests {
 
     fn scene(id: &str, ms: u64, audio: Option<(&str, u64)>) -> Scene {
         Scene {
+            sfx: vec![],
             template: None,
             id: id.into(),
             duration_ms: ms,
@@ -315,6 +371,8 @@ mod tests {
 
     fn music(duck: Duck) -> Music {
         Music {
+            beats: None,
+            beat_sync: None,
             source: "assets/m.m4a".into(),
             volume: 0.5,
             fade_in_ms: 500,
@@ -391,7 +449,7 @@ mod tests {
         ]);
         let placed = place_scene_audio(&t);
         let m = music(Duck::default());
-        let g = filter_graph(&placed, Some(&m), Some("EXPR"), total_samples(&t)).unwrap();
+        let g = filter_graph(&placed, Some(&m), Some("EXPR"), total_samples(&t), false).unwrap();
         assert_eq!(
             g,
             "[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB,\
@@ -436,7 +494,7 @@ mod tests {
         );
         let mut all = place_scene_audio(&t);
         all.extend(placed);
-        let g = filter_graph(&all, None, None, total_samples(&t)).unwrap();
+        let g = filter_graph(&all, None, None, total_samples(&t), false).unwrap();
         assert!(g.contains("[2:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB,atrim=end_sample=96000,volume=0.5,adelay=delays=72000S:all=1[c1]"), "{g}");
         assert!(
             g.contains("atrim=end_sample=48000,adelay=delays=0S:all=1[c0]"),
@@ -449,19 +507,66 @@ mod tests {
     }
 
     #[test]
+    fn sound_effects_land_on_their_frames_and_play_to_the_video_end() {
+        let mut t = timeline(vec![
+            scene("a", 1_000, Some(("a.wav", 0))),
+            scene("b", 2_000, None),
+        ]);
+        t.scenes[1].layers = vec![serde_json::from_value(serde_json::json!({
+            "id": "t", "kind": "text", "x": 0.1, "y": 0.1, "width": 0.5, "text": "hi",
+            "start_ms": 520, "end_ms": 1_800, "exit": {"kind": "fade", "duration_ms": 300}
+        }))
+        .unwrap()];
+        let fx = |json: serde_json::Value| serde_json::from_value(json).unwrap();
+        t.scenes[1].sfx = vec![
+            fx(serde_json::json!({"src": "pop.wav", "on": {"layer": "t", "event": "enter"}})),
+            fx(
+                serde_json::json!({"src": "swoosh.wav", "on": {"layer": "t", "event": "exit"}, "volume": 1.0, "duck_music": true}),
+            ),
+            fx(serde_json::json!({"src": "ding.wav", "at_ms": 1_990, "volume": 0.5})),
+        ];
+        let placed = place_sfx(&t);
+        let starts: Vec<u64> = placed.iter().map(|(p, _)| p.start).collect();
+        // Scene b starts at frame 30. Enter: 520 ms -> frame 16. Exit: end frame 54 minus 9
+        // frames of exit -> 45. 1990 ms rounds to frame 60, the cut: it plays on the scene's
+        // last frame (59) instead.
+        assert_eq!(starts, vec![46 * 1_600, 75 * 1_600, 89 * 1_600]);
+        assert!(placed.iter().all(|(p, _)| p.end == total_samples(&t)));
+        assert_eq!(
+            placed.iter().map(|(p, d)| (p.gain, *d)).collect::<Vec<_>>(),
+            vec![(0.8, false), (1.0, true), (0.5, false)]
+        );
+
+        let mut all = place_scene_audio(&t);
+        all.extend(placed.into_iter().map(|(p, _)| p));
+        let g = filter_graph(&all, None, None, total_samples(&t), true).unwrap();
+        assert!(
+            g.contains("atrim=end_sample=70400,volume=0.8,adelay=delays=73600S:all=1[c1]"),
+            "{g}"
+        );
+        assert!(
+            g.ends_with("amix=inputs=4:duration=longest:normalize=0,alimiter=limit=0.9:attack=5:release=50:level=disabled:latency=1,apad=whole_len=144000,atrim=end_sample=144000[a]"),
+            "{g}"
+        );
+        // Without effects: no limiter, the graph is as before.
+        let g = filter_graph(&place_scene_audio(&t), None, None, total_samples(&t), false).unwrap();
+        assert!(!g.contains("alimiter"));
+    }
+
+    #[test]
     fn graph_without_music_or_clips() {
         let t = timeline(vec![scene("a", 1_000, Some(("a.wav", 0)))]);
         assert_eq!(
-            filter_graph(&place_scene_audio(&t), None, None, 48_000).unwrap(),
+            filter_graph(&place_scene_audio(&t), None, None, 48_000, false).unwrap(),
             "[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB,\
              atrim=end_sample=48000,adelay=delays=0S:all=1[c0];[c0]apad=whole_len=48000,atrim=end_sample=48000[a]"
         );
         // Music alone (no scene audio): no duck filter, exactly as loud as before.
         let m = music(Duck::default());
-        let g = filter_graph(&[], Some(&m), None, 48_000).unwrap();
+        let g = filter_graph(&[], Some(&m), None, 48_000, false).unwrap();
         assert!(g.starts_with("[1:a]"));
         assert!(!g.contains("volume=eval"));
         assert!(!g.contains("amix"));
-        assert_eq!(filter_graph(&[], None, None, 48_000), None);
+        assert_eq!(filter_graph(&[], None, None, 48_000, false), None);
     }
 }

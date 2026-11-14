@@ -22,6 +22,8 @@ import {
 } from "./render";
 import { inTauri } from "./project";
 import { loadAssetRoot } from "./media";
+import { beatMarks, detectBeats, type DetectedBeats } from "./beats";
+import type { BeatStatus } from "./components/SoundPanel";
 
 // Unsaved work is mirrored here so a crash or reload does not lose it. Cleared on save.
 const DRAFT_KEY = "vimmer-studio-draft";
@@ -63,8 +65,23 @@ export const App = () => {
   const [error, setError] = useState<string | null>(null);
   const [render, setRender] = useState<RenderView>({ status: "idle" });
   const [assetRoot, setAssetRoot] = useState<string | null>(null);
+  const [beats, setBeats] = useState<DetectedBeats | null>(null);
+  const [beatStatus, setBeatStatus] = useState<BeatStatus>({ busy: false, error: null });
   const playerRef = useRef<PlayerRef>(null);
   const { timeline } = state;
+  const marks = useMemo(() => beatMarks(timeline.music, beats, totalMs(timeline)), [timeline, beats]);
+  const onDetectBeats = () => {
+    const source = timeline.music?.source;
+    if (!source) return;
+    setBeatStatus({ busy: true, error: null });
+    void detectBeats(source).then((r) => {
+      if ("error" in r) setBeatStatus({ busy: false, error: r.error });
+      else {
+        setBeats(r);
+        setBeatStatus({ busy: false, error: null });
+      }
+    });
+  };
   const problems = useMemo(() => checkTimeline(timeline), [timeline]);
   const fps = timeline.fps;
   const text = serialize(timeline);
@@ -303,6 +320,9 @@ export const App = () => {
           dispatch={dispatch}
           onSelect={select}
           onAddSubtitle={addSubtitleAtPlayhead}
+          beats={beats}
+          beatStatus={beatStatus}
+          onDetectBeats={onDetectBeats}
         />
       </main>
       <EditorTimeline
@@ -312,6 +332,7 @@ export const App = () => {
         onSeek={seek}
         onSelect={select}
         dispatch={dispatch}
+        beatMarks={marks}
       />
     </div>
   );

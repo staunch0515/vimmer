@@ -134,6 +134,98 @@ pub enum ValidationError {
     BadTemplate { scene: String, message: String },
     #[error("brand: {0}")]
     BadBrand(String),
+    #[error("scene `{scene}` sfx {index}: {message}")]
+    BadSfx {
+        scene: String,
+        index: usize,
+        message: String,
+    },
+    #[error("scene `{scene}` has {count} sound effects; the limit is {MAX_SFX_PER_SCENE}")]
+    TooManySfx { scene: String, count: usize },
+    #[error("music beats: {0}")]
+    BadBeatGrid(String),
+    #[error("music beat_sync: {0}")]
+    BadBeatSync(String),
+}
+
+/// Most sound effects one scene may have.
+pub const MAX_SFX_PER_SCENE: usize = 16;
+/// File types a sound effect may be.
+pub const SFX_EXTENSIONS: [&str; 7] = ["wav", "mp3", "m4a", "aac", "ogg", "flac", "opus"];
+
+/// Every problem of a scene's sound effects: path and type, one of `at_ms` / `on`, a time inside
+/// the scene, an existing layer, volume. `(index, message)` pairs.
+pub fn sfx_problems(scene: &Scene) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (index, fx) in scene.sfx.iter().enumerate() {
+        let mut push = |m: String| out.push((index, m));
+        if let Some(p) = asset_path_problem(&fx.src) {
+            push(format!("src: {p}"));
+        } else {
+            let ext = fx
+                .src
+                .rsplit_once('.')
+                .map(|(_, e)| e.to_ascii_lowercase())
+                .unwrap_or_default();
+            if !SFX_EXTENSIONS.contains(&ext.as_str()) {
+                push(format!(
+                    "src must be an audio file (.{})",
+                    SFX_EXTENSIONS.join(", .")
+                ));
+            }
+        }
+        match (&fx.at_ms, &fx.on) {
+            (Some(_), Some(_)) => push("give at_ms or on, not both".into()),
+            (None, None) => {
+                push("give at_ms (ms from the scene start) or on (a layer event)".into())
+            }
+            (Some(at), None) => {
+                if *at >= scene.duration_ms {
+                    push(format!(
+                        "at_ms ({at}) must be inside the scene (0..{} ms)",
+                        scene.duration_ms
+                    ));
+                }
+            }
+            (None, Some(on)) => match scene.layers.iter().find(|l| l.id == on.layer) {
+                None => push(format!("on: the scene has no layer `{}`", on.layer)),
+                Some(_) => {
+                    let at = fx.time_in(scene).unwrap_or(0);
+                    if at >= scene.duration_ms {
+                        push(format!(
+                            "on: layer `{}` {} at {at} ms, at or after the scene ends ({} ms); give it an end_ms or an exit animation",
+                            on.layer,
+                            match on.event {
+                                crate::model::LayerEvent::Enter => "enters",
+                                crate::model::LayerEvent::Exit => "exits",
+                            },
+                            scene.duration_ms
+                        ));
+                    }
+                }
+            },
+        }
+        if !in_range(fx.volume, 0.0, 1.0) {
+            push(format!("volume {} must be between 0 and 1", fx.volume));
+        }
+    }
+    out
+}
+
+fn validate_sfx(scene: &Scene, errors: &mut Vec<ValidationError>) {
+    if scene.sfx.len() > MAX_SFX_PER_SCENE {
+        errors.push(ValidationError::TooManySfx {
+            scene: scene.id.clone(),
+            count: scene.sfx.len(),
+        });
+    }
+    for (index, message) in sfx_problems(scene) {
+        errors.push(ValidationError::BadSfx {
+            scene: scene.id.clone(),
+            index,
+            message,
+        });
+    }
 }
 
 fn validate_transition(scene: &Scene, index: usize, errors: &mut Vec<ValidationError>) {
@@ -791,6 +883,7 @@ fn validate_expanded(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError
         validate_transition(scene, i, &mut errors);
         validate_keyframes(scene, &mut errors);
         validate_layers(scene, &mut errors);
+        validate_sfx(scene, &mut errors);
     }
 
     let total_ms = timeline.total_duration_ms();
@@ -846,6 +939,34 @@ fn validate_expanded(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError
                 release_ms: duck.release_ms,
             });
         }
+        if let Some(grid) = &music.beats {
+            if !in_range(grid.bpm, 30.0, 300.0) {
+                errors.push(ValidationError::BadBeatGrid(format!(
+                    "bpm {} must be between 30 and 300",
+                    grid.bpm
+                )));
+            }
+            if grid.offset_ms > 60_000 {
+                errors.push(ValidationError::BadBeatGrid(format!(
+                    "offset_ms {} must be at most 60000",
+                    grid.offset_ms
+                )));
+            }
+        }
+        if let Some(sync) = &music.beat_sync {
+            if ![1, 2, 4].contains(&sync.every) {
+                errors.push(ValidationError::BadBeatSync(format!(
+                    "every must be 1, 2 or 4 (got {})",
+                    sync.every
+                )));
+            }
+            if !(1..=1_000).contains(&sync.max_shift_ms) {
+                errors.push(ValidationError::BadBeatSync(format!(
+                    "max_shift_ms must be between 1 and 1000 (got {})",
+                    sync.max_shift_ms
+                )));
+            }
+        }
     }
 
     if errors.is_empty() {
@@ -862,6 +983,7 @@ mod tests {
 
     fn scene(id: &str, ms: u64) -> Scene {
         Scene {
+            sfx: vec![],
             template: None,
             id: id.into(),
             duration_ms: ms,
@@ -1040,10 +1162,119 @@ mod tests {
     }
 
     #[test]
+    fn checks_sound_effects() {
+        let mut s = scene("a", 2_000);
+        s.layers = vec![serde_json::from_value(serde_json::json!({
+            "id": "t", "kind": "text", "x": 0.1, "y": 0.1, "width": 0.5, "text": "hi",
+            "start_ms": 300, "end_ms": 1_500, "exit": {"kind": "fade", "duration_ms": 300}
+        }))
+        .unwrap()];
+        let fx = |json: serde_json::Value| -> crate::model::SoundEffect {
+            serde_json::from_value(json).unwrap()
+        };
+        s.sfx = vec![
+            fx(serde_json::json!({"src": "assets/sfx/pop.wav", "at_ms": 1_999})),
+            fx(
+                serde_json::json!({"src": "assets/sfx/pop.wav", "on": {"layer": "t", "event": "exit"}}),
+            ),
+        ];
+        assert!(validate(&timeline(vec![s.clone()])).is_ok());
+        assert_eq!(s.sfx[1].time_in(&s), Some(1_200));
+        assert_eq!(s.sfx[0].volume, 0.8);
+
+        let bad = [
+            (
+                serde_json::json!({"src": "assets/sfx/pop.wav", "at_ms": 2_000}),
+                "inside the scene",
+            ),
+            (
+                serde_json::json!({"src": "assets/sfx/pop.wav"}),
+                "give at_ms",
+            ),
+            (
+                serde_json::json!({"src": "assets/sfx/pop.wav", "at_ms": 1, "on": {"layer": "t", "event": "enter"}}),
+                "not both",
+            ),
+            (
+                serde_json::json!({"src": "assets/sfx/pop.wav", "on": {"layer": "x", "event": "enter"}}),
+                "no layer `x`",
+            ),
+            (
+                serde_json::json!({"src": "/etc/pop.wav", "at_ms": 0}),
+                "relative",
+            ),
+            (
+                serde_json::json!({"src": "assets/pop.png", "at_ms": 0}),
+                "audio file",
+            ),
+            (
+                serde_json::json!({"src": "assets/sfx/pop.wav", "at_ms": 0, "volume": 1.5}),
+                "volume 1.5",
+            ),
+        ];
+        for (json, want) in bad {
+            let mut t = s.clone();
+            t.sfx = vec![fx(json.clone())];
+            let errs = validate(&timeline(vec![t])).unwrap_err();
+            assert!(
+                errs.iter().any(|e| e.to_string().contains(want)),
+                "{json}: {errs:?}"
+            );
+        }
+        // A layer without an end or exit "exits" at the scene end: not a moment inside it.
+        let mut t = s.clone();
+        t.layers[0].end_ms = None;
+        t.layers[0].exit = None;
+        t.sfx = vec![fx(
+            serde_json::json!({"src": "assets/sfx/pop.wav", "on": {"layer": "t", "event": "exit"}}),
+        )];
+        let errs = validate(&timeline(vec![t])).unwrap_err();
+        assert!(
+            errs[0].to_string().contains("give it an end_ms"),
+            "{errs:?}"
+        );
+        let mut t = s.clone();
+        t.sfx = vec![s.sfx[0].clone(); MAX_SFX_PER_SCENE + 1];
+        let errs = validate(&timeline(vec![t])).unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ValidationError::TooManySfx { count: 17, .. })));
+    }
+
+    #[test]
+    fn checks_beat_settings() {
+        use crate::model::Music;
+        let mut t = timeline(vec![scene("a", 5_000)]);
+        let mut music: Music = serde_json::from_value(serde_json::json!({
+            "source": "m.m4a", "beat_sync": {}, "beats": {"bpm": 96, "offset_ms": 750}
+        }))
+        .unwrap();
+        let sync = music.beat_sync.unwrap();
+        assert!(sync.enabled && sync.every == 1 && sync.max_shift_ms == 250);
+        t.music = Some(music.clone());
+        assert!(validate(&t).is_ok());
+        music.beats.as_mut().unwrap().bpm = 20.0;
+        music.beat_sync.as_mut().unwrap().every = 3;
+        music.beat_sync.as_mut().unwrap().max_shift_ms = 0;
+        t.music = Some(music);
+        let errs: Vec<String> = validate(&t)
+            .unwrap_err()
+            .iter()
+            .map(|e| e.to_string())
+            .collect();
+        assert_eq!(errs.len(), 3, "{errs:?}");
+        assert!(errs[0].contains("bpm 20"));
+        assert!(errs[1].contains("every must be 1, 2 or 4"));
+        assert!(errs[2].contains("max_shift_ms"));
+    }
+
+    #[test]
     fn checks_music() {
         use crate::model::Music;
         let mut t = timeline(vec![scene("a", 5_000)]);
         t.music = Some(Music {
+            beats: None,
+            beat_sync: None,
             source: " ".into(),
             volume: 1.5,
             fade_in_ms: 4_000,
@@ -1058,6 +1289,8 @@ mod tests {
             fade_out_ms: 4_000
         }));
         t.music = Some(Music {
+            beats: None,
+            beat_sync: None,
             source: "assets/m.mp3".into(),
             volume: 0.3,
             fade_in_ms: 500,
@@ -1072,6 +1305,8 @@ mod tests {
         use crate::model::{Duck, Music};
         let mut t = timeline(vec![scene("a", 5_000)]);
         let music = |duck: Duck| Music {
+            beats: None,
+            beat_sync: None,
             source: "assets/m.mp3".into(),
             volume: 0.3,
             fade_in_ms: 0,

@@ -12,7 +12,8 @@
     "layers": "../../../fixtures/layers-demo.json",
     "anim": "../../../fixtures/anim-layers-demo.json",
     "video": "../../../fixtures/video-clips-demo.json",
-    "brand": "../../../fixtures/brand-templates-demo.json"
+    "brand": "../../../fixtures/brand-templates-demo.json",
+    "beats": "../../../fixtures/beats-sfx-demo.json"
   },
   "cases": [
     {"id": "zh-fast-fade", "group": "easy", "timeline": "zh", "instruction": "第二段节奏快一点，加一个淡入转场",
@@ -196,6 +197,18 @@
     {"id": "brand-en-add-brand", "group": "brand", "timeline": "en", "instruction": "Use our brand colors everywhere: primary #e11d48 and accent #fbbf24",
      "status": ["edited"], "checks": [["/brand/colors/primary", "eq", "#e11d48"], ["/brand/colors/accent", "eq", "#fbbf24"]], "only": ["/brand"]},
     {"id": "brand-en-webfont", "group": "brand", "timeline": "brand", "instruction": "Download Comic Sans from Google Fonts and use it for the headings",
+     "status": ["refused", "clarify"], "checks": []},
+    {"id": "sound-en-bars", "group": "sound", "timeline": "beats", "instruction": "Only cut on the first beat of each bar, and let the cuts move up to 400 ms",
+     "status": ["edited"], "checks": [["/music/beat_sync/every", "eq", 4], ["/music/beat_sync/max_shift_ms", "eq", 400]], "only": ["/music"]},
+    {"id": "sound-zh-whoosh", "group": "sound", "timeline": "zh", "instruction": "在第三段开头加一个“嗖”的转场音效",
+     "status": ["edited"], "checks": [["/scenes/2/sfx/0/src", "includes", "whoosh"]], "only": ["/scenes/2/sfx"]},
+    {"id": "sound-en-click-on-layer", "group": "sound", "timeline": "beats", "instruction": "In the quote scene, play a click when the quote text appears",
+     "status": ["edited"], "checks": [["/scenes/4/sfx/1/src", "includes", "click"], ["/scenes/4/sfx/1/on/layer", "eq", "q"], ["/scenes/4/sfx/1/on/event", "eq", "enter"]], "only": ["/scenes/4/sfx"]},
+    {"id": "sound-ja-tempo", "group": "sound", "timeline": "beats", "instruction": "この曲は128 BPMで、最初の拍は200ミリ秒のところです。そのテンポでカットを拍に合わせてください",
+     "status": ["edited"], "checks": [["/music/beats/bpm", "eq", 128], ["/music/beats/offset_ms", "eq", 200]], "only": ["/music"]},
+    {"id": "sound-en-ding-quieter", "group": "sound", "timeline": "beats", "instruction": "Make the ding in the count scene quieter and let the music dip under it",
+     "status": ["edited"], "checks": [["/scenes/1/sfx/1/volume", "lt", 0.5], ["/scenes/1/sfx/1/duck_music", "eq", true]], "only": ["/scenes/1/sfx"]},
+    {"id": "sound-en-download", "group": "sound", "timeline": "en", "instruction": "Download a cinematic boom from freesound.org and put it at the start of the video",
      "status": ["refused", "clarify"], "checks": []}
   ]
 }
