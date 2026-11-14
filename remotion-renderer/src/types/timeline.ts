@@ -77,6 +77,14 @@ export type Scene = {
   keyframes?: Keyframe[];
   // Extra graphics, in list order. Absent or empty: the scene renders exactly as before.
   layers?: Layer[];
+  // A built-in template, expanded into layers by the Rust core (vimmer-dsl/src/template.rs)
+  // before rendering. The renderer never sees one; the editor previews it through `vimmer expand`.
+  template?: SceneTemplate | null;
+};
+
+export type SceneTemplate = {
+  name: string; // intro | outro | title_card | quote | list (editor/src/template-catalog.json)
+  params?: Record<string, string | number | boolean | string[]>;
 };
 
 // ---- Layers. Mirrors rust-core/crates/vimmer-dsl/src/layer.rs (units and stacking are documented
@@ -126,7 +134,8 @@ export type TextLayer = LayerCommon & {
   kind: "text";
   text: string;
   font_size?: number; // fraction of the frame height, default 0.06
-  color?: string; // default #fafafa
+  color?: string; // default: brand text, else #fafafa
+  font?: FontRole; // brand font, default body
   weight?: number; // default 600
   align?: "left" | "center" | "right"; // default center
   line_height?: number; // default 1.2
@@ -161,9 +170,9 @@ export type LowerThirdLayer = LayerCommon & {
   title: string; // at most 120 characters
   subtitle?: string | null; // at most 160 characters
   font_size?: number; // title, fraction of the frame height, default 0.045; subtitle 0.62 of it
-  color?: string; // title, default #fafafa
-  subtitle_color?: string; // default #d4d4d8
-  accent_color?: string; // default #6366f1
+  color?: string; // title, default: brand text, else #fafafa
+  subtitle_color?: string; // default: brand muted_text, else #d4d4d8
+  accent_color?: string; // default: brand primary, else #6366f1
   background_color?: string | null; // default #09090bd9; null = no box
 };
 
@@ -180,7 +189,7 @@ export type CounterLayer = LayerCommon & {
   separator?: string; // thousands, default ","; "" for none
   decimal_mark?: string; // default "."
   font_size?: number; // fraction of the frame height, default 0.12
-  color?: string; // default #fafafa
+  color?: string; // default: brand text, else #fafafa
   weight?: number; // default 700
   align?: "left" | "center" | "right"; // default center
 };
@@ -193,8 +202,8 @@ export type BarChartLayer = LayerCommon & {
   bars: ChartBar[]; // 1..12, values >= 0
   orientation?: "vertical" | "horizontal"; // default vertical
   max?: number | null; // default the largest value
-  color?: string; // bars, default #6366f1
-  label_color?: string; // default #e4e4e7
+  color?: string; // bars, default: brand primary, else #6366f1
+  label_color?: string; // default: brand muted_text, else #e4e4e7
   font_size?: number; // labels and values, fraction of the frame height, default 0.032
   show_values?: boolean; // default true
   decimals?: number; // value labels, 0..6
@@ -212,13 +221,13 @@ export type ProgressRingLayer = LayerCommon & {
   from?: number; // 0..1, default 0
   duration_ms?: number | null; // default: until the exit begins
   ease?: Easing; // default ease_out
-  color?: string; // default #6366f1
+  color?: string; // default: brand primary, else #6366f1
   track_color?: string; // default #ffffff26
   thickness?: number; // fraction of the ring's diameter, 0.02..0.5, default 0.12
   show_label?: boolean; // default true
   label?: string | null; // custom center text (at most 24 characters); default the percentage
   decimals?: number; // of the percentage, default 0
-  label_color?: string; // default #fafafa
+  label_color?: string; // default: brand text, else #fafafa
 };
 
 // A video clip in a box (at most 4 per scene). Drawn muted; its sound is mixed by the Rust core.
@@ -277,10 +286,48 @@ export type Music = {
   duck?: Duck;
 };
 
+// ---- Brand kit. Mirrors rust-core/crates/vimmer-dsl/src/brand.rs (which element uses which color
+// is documented there; the built-in values are in src/brand.ts). Every field is optional.
+
+export type FontRole = "heading" | "body";
+
+export type BrandColors = {
+  primary?: string; // lower-third bars, chart bars, rings, template shapes
+  accent?: string; // highlighted words
+  text?: string;
+  muted_text?: string; // lower-third subtitles, chart labels, template sub-lines
+  background?: string; // behind scenes without an image or video
+  subtitle_background?: string;
+};
+
+export type BrandFont = {
+  family: string;
+  src?: string | null; // .ttf/.otf/.woff/.woff2 under public/, loaded before the first frame
+};
+
+export type LogoCorner = "top_left" | "top_right" | "bottom_left" | "bottom_right";
+
+export type Logo = {
+  src: string; // .png/.jpg/.jpeg under public/
+  corner?: LogoCorner; // default top_right
+  size?: number; // height, fraction of the frame height, default 0.08
+  margin?: number; // fraction of the frame width (x) and height (y), default 0.05
+  opacity?: number; // default 1
+  hide_on?: string[]; // scene ids
+};
+
+export type Brand = {
+  colors?: BrandColors;
+  fonts?: { heading?: BrandFont | null; body?: BrandFont | null };
+  logo?: Logo | null;
+};
+
 export type VideoTimeline = {
   fps: number;
   resolution: Resolution;
   scenes: Scene[];
   subtitles: SubtitleCue[];
   music?: Music | null;
+  // Absent: the built-in look, exactly as before brands existed.
+  brand?: Brand | null;
 };

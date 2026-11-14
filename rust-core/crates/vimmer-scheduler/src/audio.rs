@@ -280,6 +280,7 @@ mod tests {
 
     fn scene(id: &str, ms: u64, audio: Option<(&str, u64)>) -> Scene {
         Scene {
+            template: None,
             id: id.into(),
             duration_ms: ms,
             text: None,
@@ -300,6 +301,7 @@ mod tests {
 
     fn timeline(scenes: Vec<Scene>) -> VideoTimeline {
         VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,

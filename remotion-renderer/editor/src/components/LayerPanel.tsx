@@ -194,6 +194,12 @@ const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, 
               </select>
             </Field>
           </div>
+          <Field label="Brand font">
+            <select value={layer.font ?? "body"} onChange={(e) => patch({ font: e.target.value === "body" ? undefined : e.target.value })}>
+              <option value="body">body</option>
+              <option value="heading">heading</option>
+            </select>
+          </Field>
           <div className="two-col">
             <Field label="Reveal">
               <select value={layer.reveal ?? "none"} onChange={(e) => patch({ reveal: e.target.value === "none" ? undefined : e.target.value })}>

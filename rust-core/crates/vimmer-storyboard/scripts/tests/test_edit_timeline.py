@@ -122,6 +122,14 @@ class EditHelperTest(unittest.TestCase):
         self.assertIn("layers=[0:logo(icon),1:note(text)]", lines[1])
         self.assertNotIn("layers=", lines[0])
 
+    def test_scene_table_shows_templates_and_brand(self):
+        t = {"resolution": {"width": 1920, "height": 1080}, "brand": {"colors": {"primary": "#f00"}},
+             "scenes": [{"id": "q", "duration_ms": 5000, "template": {"name": "quote", "params": {"quote": "Hi"}}}]}
+        lines, _ = et.scene_table(t)
+        self.assertIn('template=quote params={"quote": "Hi"}', lines[0])
+        msg = et.build_user_message({"timeline": t, "instruction": "x"})
+        self.assertIn("brand: yes.", msg)
+
     def test_scene_table_names_a_background_video(self):
         t = timeline()
         t["scenes"][0]["image"] = None

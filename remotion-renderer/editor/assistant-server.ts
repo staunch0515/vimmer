@@ -120,9 +120,55 @@ const run = (bin: string, args: string[], stdin: string): Promise<{ code: number
     child.stdin.end(stdin);
   });
 
+const EXPAND_ENDPOINT = "/__vimmer/expand";
+
+/** Runs `vimmer expand -` (template scenes into layers, no network, no key) on a timeline. */
+const runExpand = (bin: string, timelineJson: string): Promise<{ code: number | null; stdout: string; stderr: string }> =>
+  new Promise((ok) => {
+    const child = spawn(bin, ["expand", "-"], { stdio: "pipe" });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => child.kill("SIGTERM"), 20_000);
+    child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      ok({ code: -1, stdout, stderr: String(e) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      ok({ code, stdout, stderr });
+    });
+    child.stdin.end(timelineJson);
+  });
+
 export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
   name: "vimmer-edit-assistant",
   configureServer(server) {
+    // Template preview: the editor sends its timeline, the Rust core expands the template scenes
+    // exactly as a render would and sends back {ok, timeline} or {ok: false, errors}.
+    server.middlewares.use(EXPAND_ENDPOINT, (req: IncomingMessage, res: ServerResponse) => {
+      void (async () => {
+        if (req.method !== "POST") return send(res, 405, { ok: false, errors: ["POST only"] });
+        if (!isLocalRequest(req)) return send(res, 403, { ok: false, errors: ["local requests only"] });
+        let body: { timelineJson?: unknown };
+        try {
+          body = JSON.parse(await readBody(req)) as { timelineJson?: unknown };
+        } catch (e) {
+          return send(res, 400, { ok: false, errors: [`bad request: ${String(e)}`] });
+        }
+        if (typeof body.timelineJson !== "string") return send(res, 400, { ok: false, errors: ["timelineJson must be a string"] });
+        const bin = findVimmer(repo);
+        if (!bin) return send(res, 200, { ok: false, errors: ["Build the CLI to preview templates: cd rust-core && cargo build -p vimmer-cli"] });
+        const out = await runExpand(bin, body.timelineJson);
+        const line = out.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
+        try {
+          return send(res, 200, JSON.parse(line));
+        } catch {
+          return send(res, 200, { ok: false, errors: [`vimmer expand failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}`] });
+        }
+      })();
+    });
     server.middlewares.use(ENDPOINT, (req: IncomingMessage, res: ServerResponse) => {
       void (async () => {
         if (req.method !== "POST") return fail(res, 405, "method", "POST only");

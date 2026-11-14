@@ -5,6 +5,8 @@ import { Subtitles } from "../components/Subtitles";
 import { KenBurnsImage, KenBurnsVideo } from "../components/KenBurnsImage";
 import { LayerStack } from "../components/LayerStack";
 import { AssetUrlContext, resolveAsset } from "../assets";
+import { BUILTIN, brandColor } from "../brand";
+import { BrandContext, BrandOverlay } from "../components/Brand";
 import { layoutScenes, msToFrames, totalFrames, type SceneLayout } from "../layout";
 import { transitionPose } from "../motion/transitions";
 import type { Music, Scene, SubtitleCue, Transition, VideoTimeline } from "../types/timeline";
@@ -74,8 +76,10 @@ type ChunkSubtitles = { start_frame: number; subtitles: SubtitleCue[] };
 export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null }> = (timeline) => {
   const assetUrl = useContext(AssetUrlContext);
   const layouts = layoutScenes(timeline);
+  const brand = timeline.brand ?? null;
   return (
-    <AbsoluteFill style={{ backgroundColor: "#09090b" }}>
+    <BrandContext.Provider value={brand}>
+    <AbsoluteFill style={{ backgroundColor: brandColor(brand, "background", BUILTIN.background) }}>
       {layouts.map((layout: SceneLayout, index) => {
         const { scene, from, durationInFrames } = layout;
         const transition = index > 0 ? scene.transition_in : null;
@@ -109,6 +113,8 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
           </Fragment>
         );
       })}
+      {/* The brand logo sits above every scene's layers and below the subtitles. */}
+      <BrandOverlay timeline={timeline} />
       {timeline.chunk ? (
         <Subtitles cues={timeline.chunk.subtitles} frameOffset={timeline.chunk.start_frame} />
       ) : (
@@ -119,5 +125,6 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
         <Audio src={resolveAsset(timeline.music.source, assetUrl)} loop volume={musicVolume(timeline.music, timeline)} />
       ) : null}
     </AbsoluteFill>
+    </BrandContext.Provider>
   );
 };

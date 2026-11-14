@@ -1,4 +1,5 @@
-import type { Keyframe, Layer, LayerKind, Music, Scene, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import type { Brand, Keyframe, Layer, LayerKind, Music, Scene, SceneTemplate, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import { templateScene } from "./templates";
 import { emptyScene, type Selection } from "./model";
 import { clampLayers, moveInStack, newLayer } from "./layers";
 import { patchCue } from "../../src/subtitles/words";
@@ -34,6 +35,11 @@ export type Action =
   | { type: "setResolution"; width: number; height: number }
   | { type: "setMusic"; music: Music | null }
   | { type: "patchMusic"; patch: Partial<Music> }
+  // The whole brand (null removes it). Brand edits are undoable like any other edit.
+  | { type: "setBrand"; brand: Brand | null }
+  // A new scene made from a template, after scene `after` (-1: at the start).
+  | { type: "insertTemplate"; name: string; after: number; params?: SceneTemplate["params"] }
+  | { type: "patchTemplate"; index: number; params: SceneTemplate["params"] }
   // A whole timeline proposed by the editing assistant and accepted by the user: one undo step.
   | { type: "applyAssistant"; timeline: VideoTimeline }
   | { type: "undo" }
@@ -233,6 +239,24 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
     case "patchMusic": {
       if (!t.music) return state;
       return commit(state, { ...t, music: { ...t.music, ...action.patch } });
+    }
+    case "setBrand": {
+      const { brand: _old, ...rest } = t;
+      return commit(state, action.brand ? { ...rest, brand: action.brand } : rest);
+    }
+    case "insertTemplate": {
+      const scene = templateScene(action.name, t, action.params);
+      const at = Math.max(0, Math.min(action.after + 1, t.scenes.length));
+      // Fade in from the previous scene like the demo; the first scene cannot have a transition.
+      if (at > 0) scene.transition_in = { kind: "fade", duration_ms: 400 };
+      const scenes = [...t.scenes.slice(0, at), scene, ...t.scenes.slice(at)];
+      return commit(state, { ...t, scenes: normalizeScenes(scenes) }, { kind: "scene", index: at });
+    }
+    case "patchTemplate": {
+      const scene = t.scenes[action.index];
+      if (!scene?.template) return state;
+      const params = Object.fromEntries(Object.entries(action.params ?? {}).filter(([, v]) => v !== undefined && v !== ""));
+      return commit(state, withScene(t, action.index, (s) => ({ ...s, template: { ...scene.template!, params } })));
     }
     case "applyAssistant": {
       const next = { ...action.timeline, subtitles: action.timeline.subtitles ?? [] };

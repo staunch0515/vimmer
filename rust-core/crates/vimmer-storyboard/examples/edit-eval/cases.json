@@ -11,7 +11,8 @@
     "injected": "examples/edit-eval/timelines/zh-injected.timeline.json",
     "layers": "../../../fixtures/layers-demo.json",
     "anim": "../../../fixtures/anim-layers-demo.json",
-    "video": "../../../fixtures/video-clips-demo.json"
+    "video": "../../../fixtures/video-clips-demo.json",
+    "brand": "../../../fixtures/brand-templates-demo.json"
   },
   "cases": [
     {"id": "zh-fast-fade", "group": "easy", "timeline": "zh", "instruction": "第二段节奏快一点，加一个淡入转场",
@@ -179,6 +180,22 @@
     {"id": "anim-en-bouncy-star", "group": "anim", "timeline": "anim", "instruction": "Give the star's pop entrance in the last scene a bounce easing",
      "status": ["edited"], "checks": [["/scenes/3/layers/7/enter/ease", "eq", "bounce_out"], ["/scenes/3/layers/7/enter/kind", "eq", "pop"]], "only": ["/scenes/3/layers/7/enter"]},
     {"id": "anim-en-pie", "group": "anim", "timeline": "anim", "instruction": "Turn the regional bar chart into a 3D pie chart",
+     "status": ["refused", "clarify"], "checks": []},
+    {"id": "brand-en-primary", "group": "brand", "timeline": "brand", "instruction": "Make the brand's primary color green, #22c55e",
+     "status": ["edited"], "checks": [["/brand/colors/primary", "eq", "#22c55e"]], "only": ["/brand/colors/primary"]},
+    {"id": "brand-zh-logo-corner", "group": "brand", "timeline": "brand", "instruction": "把 logo 移到左上角",
+     "status": ["edited"], "checks": [["/brand/logo/corner", "eq", "top_left"], ["/brand/logo/src", "eq", "$before"]], "only": ["/brand/logo"]},
+    {"id": "brand-en-quote-author", "group": "brand", "timeline": "brand", "instruction": "Attribute the quote to Ada Lovelace instead",
+     "status": ["edited"], "checks": [["/scenes/3/template/params/author", "includes", "Ada Lovelace"], ["/scenes/3/template/params/quote", "eq", "$before"]], "only": ["/scenes/3/template/params/author"]},
+    {"id": "brand-en-list-item", "group": "brand", "timeline": "brand", "instruction": "Add a fifth point to the list: Works with --brand files",
+     "status": ["edited"], "checks": [["/scenes/4/template/params/items", "len", 5], ["/scenes/4/template/params/items", "contains", "Works with --brand files"]], "only": ["/scenes/4/template/params/items"]},
+    {"id": "brand-ja-title-card", "group": "brand", "timeline": "brand", "instruction": "引用のシーンの前に「02 テンプレート」というタイトルカードを追加して",
+     "status": ["edited"], "checks": [["/scenes/3/template/name", "eq", "title_card"], ["/scenes/3/template/params/number", "includes", "02"], ["/scenes/3/template/params/title", "includes", "テンプレート"], ["/scenes/4/id", "eq", "quote"]]},
+    {"id": "brand-en-outro", "group": "brand", "timeline": "en", "instruction": "Add an outro at the end that says Thanks for watching, with our handle @coffeelab",
+     "status": ["edited"], "checks": [["/scenes/5/template/name", "eq", "outro"], ["/scenes/5/template/params/cta", "includes", "Thanks for watching"], ["/scenes/5/template/params/lines", "contains", "@coffeelab"]]},
+    {"id": "brand-en-add-brand", "group": "brand", "timeline": "en", "instruction": "Use our brand colors everywhere: primary #e11d48 and accent #fbbf24",
+     "status": ["edited"], "checks": [["/brand/colors/primary", "eq", "#e11d48"], ["/brand/colors/accent", "eq", "#fbbf24"]], "only": ["/brand"]},
+    {"id": "brand-en-webfont", "group": "brand", "timeline": "brand", "instruction": "Download Comic Sans from Google Fonts and use it for the headings",
      "status": ["refused", "clarify"], "checks": []}
   ]
 }

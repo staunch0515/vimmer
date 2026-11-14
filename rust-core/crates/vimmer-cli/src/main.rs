@@ -11,6 +11,7 @@ use std::{
 
 mod check_cmd;
 mod edit_cmd;
+mod expand_cmd;
 
 use clap::{Args, Parser, ValueEnum};
 use serde_json::json;
@@ -46,6 +47,10 @@ struct Cli {
     /// SubRip file whose cues replace the timeline's subtitle track.
     #[arg(long)]
     subtitles: Option<PathBuf>,
+    /// Brand JSON (colors, fonts, logo; see fixtures/brand.example.json) that replaces the
+    /// timeline's `brand`, so one brand file can serve many timelines.
+    #[arg(long)]
+    brand: Option<PathBuf>,
     #[command(flatten)]
     render: RenderArgs,
 }
@@ -264,6 +269,8 @@ async fn main() -> ExitCode {
         run_illustrate(IllustrateCli::parse_from(rest)).await
     } else if args.get(1).is_some_and(|a| a == "check") {
         return check_cmd::main(args);
+    } else if args.get(1).is_some_and(|a| a == "expand") {
+        return expand_cmd::main(args);
     } else {
         run(Cli::parse_from(args)).await
     };
@@ -282,6 +289,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(srt_path) = &cli.subtitles {
         let srt = tokio::fs::read_to_string(srt_path).await?;
         timeline.subtitles = vimmer_dsl::parse_srt(&srt)?;
+    }
+    if let Some(path) = &cli.brand {
+        timeline.brand = Some(expand_cmd::load_brand(path)?);
     }
     render(timeline, cli.render, cli.output).await
 }

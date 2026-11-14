@@ -1,0 +1,27 @@
+{
+  "colors": {
+    "primary": "#ff6b35",
+    "accent": "#ffd166",
+    "text": "#fff8f0",
+    "muted_text": "#c9b8a8",
+    "background": "#1a1423",
+    "subtitle_background": "#1a1423d9"
+  },
+  "fonts": {
+    "heading": {
+      "family": "Vimmer Demo Thin",
+      "src": "assets/fonts/FiraSans-Thin.ttf"
+    }
+  },
+  "logo": {
+    "src": "assets/brand/vimmer-logo.png",
+    "corner": "top_right",
+    "size": 0.06,
+    "margin": 0.05,
+    "opacity": 0.95,
+    "hide_on": [
+      "intro",
+      "outro"
+    ]
+  }
+}

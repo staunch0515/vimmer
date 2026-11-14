@@ -4,6 +4,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Expands the template scenes of a timeline (the same Rust code a render runs), for the editor's
+/// preview. Returns `{"ok": true, "timeline": ...}` or `{"ok": false, "errors": [...]}`.
+#[tauri::command]
+pub fn expand_timeline(timeline_json: String) -> serde_json::Value {
+    let mut timeline: vimmer_dsl::VideoTimeline = match serde_json::from_str(&timeline_json) {
+        Ok(t) => t,
+        Err(e) => return serde_json::json!({ "ok": false, "errors": [format!("the timeline does not parse: {e}")] }),
+    };
+    match vimmer_dsl::expand_templates(&mut timeline) {
+        Ok(()) => serde_json::json!({ "ok": true, "timeline": timeline }),
+        Err(errors) => {
+            let errors: Vec<String> = errors.iter().map(ToString::to_string).collect();
+            serde_json::json!({ "ok": false, "errors": errors })
+        }
+    }
+}
+
 /// Reads a UTF-8 text file.
 #[tauri::command]
 pub fn read_project_file(path: String) -> Result<String, String> {
@@ -35,6 +52,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vimmer-project-test-{}-{name}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn templates_are_expanded_for_the_preview() {
+        let raw = r#"{"fps":30,"resolution":{"width":1920,"height":1080},"scenes":[{"id":"q","duration_ms":5000,"template":{"name":"quote","params":{"quote":"Q"}}}]}"#;
+        let out = expand_timeline(raw.into());
+        assert_eq!(out["ok"], true);
+        assert!(out["timeline"]["scenes"][0]["layers"].as_array().unwrap().len() >= 3);
+        assert!(out["timeline"]["scenes"][0].get("template").is_none());
+        let bad = expand_timeline(raw.replace(r#""quote":"Q""#, r#""colour":"red""#));
+        assert_eq!(bad["ok"], false);
+        assert!(bad["errors"][0].as_str().unwrap().contains("unknown param `colour`"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import type { VideoTimeline } from "../../src/types/timeline";
+import { templateInfo } from "./templates";
 
 // Desktop (Tauri) and browser differ only in file access. Both paths live here,
 // so the rest of the editor deals with one API.
@@ -22,7 +23,11 @@ export const isTimeline = (v: unknown): v is VideoTimeline => {
 export const parseTimeline = (text: string): VideoTimeline => {
   const parsed: unknown = JSON.parse(text);
   if (!isTimeline(parsed)) throw new Error("This file is not a timeline (missing fps, resolution or scenes).");
-  return { ...parsed, subtitles: parsed.subtitles ?? [] };
+  // Template scenes may leave out their length (the template's default applies, as in the render).
+  const scenes = parsed.scenes.map((s) =>
+    s.template && !s.duration_ms ? { ...s, duration_ms: templateInfo(s.template.name)?.default_ms ?? 4000 } : s,
+  );
+  return { ...parsed, scenes, subtitles: parsed.subtitles ?? [] };
 };
 
 /** Asks the user for a timeline to open. Resolves to null when the dialog is cancelled. */

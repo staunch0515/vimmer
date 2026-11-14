@@ -99,6 +99,8 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
         .collect();
 
     VideoTimeline {
+        // The brand draws the logo and sets fonts and default colors in every chunk.
+        brand: timeline.brand.clone(),
         fps,
         resolution: timeline.resolution,
         scenes: timeline.scenes[chunk.scenes.clone()].to_vec(),
@@ -178,6 +180,7 @@ mod tests {
 
     fn scene(id: &str, ms: u64) -> Scene {
         Scene {
+            template: None,
             id: id.into(),
             duration_ms: ms,
             text: Some("x".into()),
@@ -195,6 +198,7 @@ mod tests {
 
     fn timeline(durations: &[u64]) -> VideoTimeline {
         VideoTimeline {
+            brand: None,
             fps: 30,
             resolution: Resolution {
                 width: 1920,

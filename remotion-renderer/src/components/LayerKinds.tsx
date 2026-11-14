@@ -21,6 +21,8 @@ import {
 import { lowerThirdPose } from "../motion/lowerThird";
 import type { BarChartLayer, CounterLayer, ProgressRingLayer, IconLayer, ImageLayer, LowerThirdLayer, ShapeLayer, TextLayer } from "../types/timeline";
 import { AnimatedWords, highlightKeys, highlightStyle, normalize, splitWords } from "./AnimatedText";
+import { BASE_FONT_STACK, BUILTIN, brandColor, fontStack, hasFont } from "../brand";
+import { useBrand } from "./Brand";
 
 // What each layer kind draws inside its box. The box itself (position, size, transform, opacity,
 // timing) is set by LayerStack. `frameHeight` is the composition height: font sizes, strokes and
@@ -45,8 +47,9 @@ export const ImageLayerView: React.FC<{ layer: ImageLayer } & Ctx> = ({ layer, f
   );
 };
 
-// Same face as the scene text, so text layers and scene text match.
-export const LAYER_FONT_FAMILY = "Inter, 'Geist', system-ui, sans-serif";
+// Same face as the scene text, so text layers and scene text match. With a brand, text layers use
+// its body font (or heading font with `font: heading`); see fontStack in ../brand.ts.
+export const LAYER_FONT_FAMILY = BASE_FONT_STACK;
 export const LAYER_LETTER_SPACING_EM = -0.02;
 
 export const TextLayerView: React.FC<{ layer: TextLayer; boxHeight: number | null } & Ctx> = ({
@@ -55,6 +58,7 @@ export const TextLayerView: React.FC<{ layer: TextLayer; boxHeight: number | nul
   frameHeight,
   frame,
 }) => {
+  const brand = useBrand();
   const fontSize = (layer.font_size ?? 0.06) * frameHeight;
   const align = layer.align ?? "center";
   const bg = layer.background;
@@ -64,12 +68,12 @@ export const TextLayerView: React.FC<{ layer: TextLayer; boxHeight: number | nul
       style={{
         width: "100%",
         boxSizing: "border-box",
-        fontFamily: LAYER_FONT_FAMILY,
+        fontFamily: fontStack(brand, layer.font ?? "body"),
         fontSize,
         fontWeight: layer.weight ?? 600,
         lineHeight: layer.line_height ?? 1.2,
         letterSpacing: `${LAYER_LETTER_SPACING_EM}em`,
-        color: layer.color ?? "#fafafa",
+        color: layer.color ?? brandColor(brand, "text", BUILTIN.text),
         textAlign: align,
         overflowWrap: "break-word",
         ...(bg
@@ -103,6 +107,7 @@ export const TextLayerView: React.FC<{ layer: TextLayer; boxHeight: number | nul
 // placed bar inside an empty inline span: it takes no width and adds no line-break opportunity.
 const TypedText: React.FC<{ layer: TextLayer; frame: number }> = ({ layer, frame }) => {
   const { fps } = useVideoConfig();
+  const brand = useBrand();
   const cps = layer.typing_cps ?? DEFAULT_TYPING_CPS;
   const total = typingUnits(layer.text).length;
   const count = typedCount(frame, fps, cps, total);
@@ -112,7 +117,7 @@ const TypedText: React.FC<{ layer: TextLayer; frame: number }> = ({ layer, frame
   return (
     <>
       {segments.map((seg, i) => (
-        <span key={i} style={seg.highlight ? highlightStyle(1) : undefined}>
+        <span key={i} style={seg.highlight ? highlightStyle(1, brand) : undefined}>
           {seg.shown}
           {seg.cursorAfter && showCursor ? (
             <span style={{ position: "relative" }}>
@@ -123,7 +128,7 @@ const TypedText: React.FC<{ layer: TextLayer; frame: number }> = ({ layer, frame
                   top: "0.08em",
                   bottom: "0.08em",
                   width: "0.07em",
-                  background: layer.color ?? "#fafafa",
+                  background: layer.color ?? brandColor(brand, "text", BUILTIN.text),
                 }}
               />
             </span>
@@ -221,6 +226,7 @@ export const LowerThirdView: React.FC<{ layer: LowerThirdLayer; boxHeight: numbe
   span,
   fps,
 }) => {
+  const brand = useBrand();
   const fontSize = (layer.font_size ?? 0.045) * frameHeight;
   const pose = lowerThirdPose(frame, span, fps, !layer.enter, !layer.exit);
   const bg = layer.background_color === undefined ? "#09090bd9" : layer.background_color;
@@ -232,7 +238,7 @@ export const LowerThirdView: React.FC<{ layer: LowerThirdLayer; boxHeight: numbe
         alignItems: "stretch",
         width: "100%",
         height: boxHeight == null ? undefined : "100%",
-        fontFamily: LAYER_FONT_FAMILY,
+        fontFamily: fontStack(brand, "body"),
         fontSize,
         letterSpacing: `${LAYER_LETTER_SPACING_EM}em`,
       }}
@@ -241,7 +247,7 @@ export const LowerThirdView: React.FC<{ layer: LowerThirdLayer; boxHeight: numbe
         style={{
           flex: "0 0 auto",
           width: `${LOWER_THIRD_BAR_EM}em`,
-          background: layer.accent_color ?? "#6366f1",
+          background: layer.accent_color ?? brandColor(brand, "primary", BUILTIN.primary),
           transform: `scaleY(${pose.bar})`,
           transformOrigin: "bottom",
         }}
@@ -259,12 +265,22 @@ export const LowerThirdView: React.FC<{ layer: LowerThirdLayer; boxHeight: numbe
           overflowWrap: "break-word",
         }}
       >
-        <div style={{ ...textStyle, color: layer.color ?? "#fafafa", fontWeight: 700, lineHeight: 1.15 }}>{layer.title}</div>
+        <div
+          style={{
+            ...textStyle,
+            ...(hasFont(brand, "heading") ? { fontFamily: fontStack(brand, "heading") } : {}),
+            color: layer.color ?? brandColor(brand, "text", BUILTIN.text),
+            fontWeight: 700,
+            lineHeight: 1.15,
+          }}
+        >
+          {layer.title}
+        </div>
         {layer.subtitle ? (
           <div
             style={{
               ...textStyle,
-              color: layer.subtitle_color ?? "#d4d4d8",
+              color: layer.subtitle_color ?? brandColor(brand, "muted_text", BUILTIN.lowerThirdSubtitle),
               fontWeight: 500,
               fontSize: `${LOWER_THIRD_SUBTITLE_SCALE}em`,
               lineHeight: 1.3,
@@ -288,6 +304,7 @@ export const CounterView: React.FC<{ layer: CounterLayer; boxHeight: number | nu
   span,
   fps,
 }) => {
+  const brand = useBrand();
   const n = countFrames(layer, layer.duration_ms, span, fps);
   const value = lerpValue(layer.from ?? 0, layer.to, applyEasing(layer.ease ?? "ease_out", frameProgress(frame, n)));
   const text = formatNumber(value, layer.decimals ?? 0, layer.separator ?? ",", layer.decimal_mark ?? ".", layer.prefix ?? "", layer.suffix ?? "");
@@ -299,12 +316,12 @@ export const CounterView: React.FC<{ layer: CounterLayer; boxHeight: number | nu
         justifyContent: { left: "flex-start", center: "center", right: "flex-end" }[layer.align ?? "center"],
         width: "100%",
         height: boxHeight == null ? undefined : "100%",
-        fontFamily: LAYER_FONT_FAMILY,
+        fontFamily: fontStack(brand, "heading"),
         fontSize: (layer.font_size ?? 0.12) * frameHeight,
         fontWeight: layer.weight ?? 700,
         letterSpacing: `${LAYER_LETTER_SPACING_EM}em`,
         lineHeight: 1.2,
-        color: layer.color ?? "#fafafa",
+        color: layer.color ?? brandColor(brand, "text", BUILTIN.text),
         fontVariantNumeric: "tabular-nums",
         whiteSpace: "nowrap",
       }}
@@ -325,16 +342,17 @@ export const BarChartView: React.FC<{ layer: BarChartLayer; width: number; heigh
   frame,
   fps,
 }) => {
+  const brand = useBrand();
   const f = (layer.font_size ?? 0.032) * frameHeight;
   const bars = layer.bars.slice(0, 12);
   const n = Math.max(1, bars.length);
   const max = chartMax(bars.map((b) => b.value), layer.max);
   const showValues = layer.show_values ?? true;
   const ease = layer.ease ?? "ease_out";
-  const labelColor = layer.label_color ?? "#e4e4e7";
+  const labelColor = layer.label_color ?? brandColor(brand, "muted_text", BUILTIN.chartLabel);
   const text = (extra: React.CSSProperties): React.CSSProperties => ({
     position: "absolute",
-    fontFamily: LAYER_FONT_FAMILY,
+    fontFamily: fontStack(brand, "body"),
     fontSize: f,
     lineHeight: 1.2,
     letterSpacing: `${LAYER_LETTER_SPACING_EM}em`,
@@ -353,7 +371,7 @@ export const BarChartView: React.FC<{ layer: BarChartLayer; width: number; heigh
       fade: Math.min(1, p * 4),
     };
   });
-  const color = (b: (typeof bars)[number]) => b.color ?? layer.color ?? "#6366f1";
+  const color = (b: (typeof bars)[number]) => b.color ?? layer.color ?? brandColor(brand, "primary", BUILTIN.primary);
   const axis = { position: "absolute" as const, background: labelColor, opacity: 0.35 };
 
   if (layer.orientation === "horizontal") {
@@ -445,6 +463,7 @@ export const ProgressRingView: React.FC<{ layer: ProgressRingLayer; width: numbe
   span,
   fps,
 }) => {
+  const brand = useBrand();
   const d = Math.min(width, height);
   const stroke = (layer.thickness ?? 0.12) * d;
   const r = Math.max(0, (d - stroke) / 2);
@@ -467,7 +486,7 @@ export const ProgressRingView: React.FC<{ layer: ProgressRingLayer; width: numbe
             cy={cy}
             r={r}
             fill="none"
-            stroke={layer.color ?? "#6366f1"}
+            stroke={layer.color ?? brandColor(brand, "primary", BUILTIN.primary)}
             strokeWidth={stroke}
             strokeLinecap={frac >= 1 ? "butt" : "round"}
             strokeDasharray={`${frac * c} ${c}`}
@@ -483,11 +502,11 @@ export const ProgressRingView: React.FC<{ layer: ProgressRingLayer; width: numbe
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontFamily: LAYER_FONT_FAMILY,
+            fontFamily: fontStack(brand, "body"),
             fontSize: d * (custom != null ? RING_LABEL_SCALE : RING_PERCENT_SCALE),
             fontWeight: 700,
             letterSpacing: `${LAYER_LETTER_SPACING_EM}em`,
-            color: layer.label_color ?? "#fafafa",
+            color: layer.label_color ?? brandColor(brand, "text", BUILTIN.text),
             fontVariantNumeric: "tabular-nums",
             whiteSpace: "nowrap",
           }}
