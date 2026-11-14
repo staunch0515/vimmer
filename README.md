@@ -251,9 +251,10 @@ the clip's first frame with its volume, and counts as scene audio for ducking; t
 clip sound mix exactly as before.
 
 **Cost.** `<OffthreadVideo>` extracts a frame per clip per output frame. On the Intel CPU here
-`fixtures/video-clips-demo.json` (12.5 s, one clip on screen most of the time, a PiP over an image
-in one scene) renders in about 90 s with a cold cache, against about 30-40 s for an image-only
-timeline of that length; `vimmer check` warns (`video.heavy`) when more than 2 clips play at once
+`fixtures/video-clips-demo.json` (12.5 s, a clip on screen almost all the time) renders in about
+90 s with a cold cache (8 clip files encoded) and about 137 s with `--chunk-ms 3000` (6 chunks,
+each with its own Remotion start-up); `fixtures/video-clips-frames.json` (10 s, a background clip
+throughout) in about 75 s. `vimmer check` warns (`video.heavy`) when more than 2 clips play at once
 or the clips add up to more than twice the video's frames.
 
 **Studio.** The scene inspector has a Background choice (Image / Video clip) and the clip fields;
