@@ -404,18 +404,19 @@ npm run render:test      # writes out/test-scene.mp4
 
 ## Rust crates
 
-- `vimmer-dsl`: schema, validation, frame math.
+- `vimmer-dsl`: schema, validation, frame math, beat-sync snapping (`beatsync.rs`).
 - `vimmer-media`: image normalization (blurred-background letterboxing), audio
   duration probing via `ffmpeg`, narration (`say`, or Kokoro through
   `scripts/kokoro_tts.py`), speech recognition, and the SVG sanitizer / Chrome rasterizer
-  for illustrations (`svg.rs`).
+  for illustrations (`svg.rs`), and beat detection (`beats.rs`).
 - `vimmer-scheduler`: chunk planner (whole scenes, ≤ 30 s per chunk) and a tokio
-  pipeline: preprocess images → check audio → render silent chunks through Remotion with
-  bounded concurrency → concatenate with ffmpeg `-c copy` → mix the whole soundtrack once
-  (`audio.rs`, ducking in `duck.rs`).
+  pipeline: narrate → snap cuts to the beat (`beatsync.rs`) → preprocess images → check
+  audio → render silent chunks through Remotion with bounded concurrency → concatenate with ffmpeg `-c copy` → mix the whole soundtrack once
+  (`audio.rs`, with sound effects; ducking in `duck.rs`).
 - `vimmer-cli`: `vimmer <timeline.json> -o out.mp4` (`--tts kokoro` for Kokoro narration), and
   `vimmer generate <input.txt> --lang zh -o out.mp4` (text → Claude storyboard → MP4, with
-  `--illustrate` for Claude-drawn pictures), and `vimmer illustrate <storyboard.json>`.
+  `--illustrate` for Claude-drawn pictures), `vimmer illustrate <storyboard.json>`, and
+  `vimmer beats <audio>` (tempo and beats of a music file).
 - `vimmer-storyboard`: converter from a storyboard JSON (the format an LLM writes, see
   below) to a validated timeline JSON (offline, bin `vimmer-storyboard`), and the Claude
   generation behind `vimmer generate` (Python helpers `scripts/generate_storyboard.py` and
@@ -876,6 +877,119 @@ level as before. Ranges: `depth_db` −40..0, `attack_ms` and `release_ms` 10..5
 no scene audio under it sounds exactly as before. `fixtures/music-ducking.json` demonstrates it
 with `assets/pad-loop.m4a`, a short synthesized chord loop made for the fixture.
 
+## Beat sync
+
+Scene cuts can snap to the beats of the background music:
+
+```json
+"music": {
+  "source": "assets/music/beat-120bpm.m4a", "volume": 0.5, "fade_in_ms": 0, "fade_out_ms": 800,
+  "beat_sync": { "enabled": true, "every": 1, "max_shift_ms": 250, "mode": "nearest" }
+}
+```
+
+- `every`: beats per step: `1` any beat, `2` every other beat, `4` bar starts (counted from the
+  detected downbeat).
+- `max_shift_ms` (1..1000, default 250): how far a cut may move.
+- `mode`: `nearest` (default) moves a cut to the closest beat either way; `later` only moves it
+  later, so no scene ends sooner than written.
+
+The render snaps after narration (when every scene has its final length) and before anything
+reads scene start times (word-by-word subtitles, clip fitting, audio placement, chunks). Each cut
+moves to the frame nearest a beat, trading time between the two scenes it separates, so the
+video's length never changes. A move is refused when either scene would get shorter than 500 ms,
+its narration plus the 300 ms tail, its `audio`, a `freeze` clip's natural length, its
+transition, or anything timed inside it (keyframes, layer times, sound effects); then the next
+beat in reach is tried, and a cut with none stays where it is with a warning. Transitions stay as
+they are (they start on the cut). Subtitle cues you wrote move with the start of the scene they
+begin in; word timings of narration are measured after snapping, so they match the speech. The
+render prints one line per cut:
+
+```text
+beat sync: 5 of 5 cuts on a beat, mean shift 120 ms
+  cut into `count`: 2367 -> 2500 ms (beat 2500 ms, +133 ms)
+  ...
+```
+
+**Detection** (`vimmer-media/src/beats.rs`, no dependencies beyond ffmpeg for decoding): the
+music is decoded to mono 22050 Hz; an onset envelope is the spectral flux of log-compressed
+magnitudes in 24 log-spaced bands (a hand-written FFT, 1024-sample Hann window every 128
+samples), so a broadband hi-hat does not outweigh a kick; the tempo is the autocorrelation peak
+between 60 and 200 BPM, weighted toward 120 BPM so the octave a listener would tap wins; beats
+come from Ellis-style dynamic programming (onset strength plus the best predecessor about one
+period back, penalised by the squared log of the gap ratio), weak or off-period beats at either
+end are dropped, and each beat is moved onto the attack under it (the steepest energy rise
+within 30 ms, which removes the ~13 ms early bias of a 46 ms window). The downbeat is the phase
+of four with the most low-band onset energy. Confidence (0..1) combines how periodic the onsets
+are at the tempo and how many beats sit on an onset; below 0.5 the render does not snap and
+warns. Results are cached in `public/generated/beats/` by a hash of the file's bytes, so a file
+is analysed once. The same file always gives the same beats.
+
+When detection is wrong (rubato, a beatless intro, swing), give the grid by hand; detection is
+then skipped:
+
+```json
+"beats": { "bpm": 96, "offset_ms": 750 }
+```
+
+A beat every `60000 / bpm` ms from `offset_ms` (from the start of the file). Detected and
+hand-set beats repeat each time the music loops.
+
+```bash
+# Tempo, confidence and the first beats (or --json for everything; --cache-dir to cache)
+rust-core/target/release/vimmer beats remotion-renderer/public/assets/music/beat-96bpm-intro.m4a
+```
+
+```text
+tempo: 96.00 BPM
+confidence: 0.94
+beats: 32 in 20750 ms
+first beats (ms, | = bar start): |750 1375 2000 2625 |3250 3875 4500 5125
+```
+
+On the bundled test tracks (`public/assets/music/`, synthesized with a known grid) detection is
+exact to the BPM and within 1 ms of every beat; `assets/pad-loop.m4a`, a chord pad without a
+beat, reports confidence 0.11 instead of a confident wrong tempo. In the editor, the Music tab has
+the beat sync settings and **Detect beats**, which draws the beats on the timeline ruler (bar
+starts taller) and lets scene edges snap to them while dragging. The preview shows the cuts where
+the durations put them; the render moves them.
+
+## Sound effects
+
+Any number (up to 16 per scene) of short sounds, each at a moment of its scene:
+
+```json
+"sfx": [
+  { "src": "assets/sfx/pop.wav", "on": { "layer": "title", "event": "enter" } },
+  { "src": "assets/sfx/whoosh.wav", "at_ms": 1800, "volume": 0.6 },
+  { "src": "assets/sfx/ding.wav", "at_ms": 200, "volume": 0.8, "duck_music": true }
+]
+```
+
+- `at_ms`: from the scene start, inside the scene; or `on`: when a layer of the scene enters
+  (its `start_ms`) or starts to exit (the first frame of its exit animation, or its `end_ms`
+  without one). Exactly one of the two.
+- `volume` 0..1 (default 0.8). `duck_music` (default false) lowers the music under the effect the
+  way narration does; otherwise effects play over the music without ducking it.
+- `src`: an audio file under `public/` (`.wav`, `.mp3`, `.m4a`, `.aac`, `.ogg`, `.flac`, `.opus`).
+
+Effects are mixed into the soundtrack with the scene audio: each starts on its frame (the scene's
+start frame plus its time rounded to a frame, the same rule as scene audio; a layer event uses the
+frames the renderer animates) at an exact sample, and plays to its end, past the scene if it is
+long (only the video's end cuts it). When a timeline has at least one effect, the mix goes through
+a lookahead limiter (`alimiter`, ceiling 0.9, delay-compensated so nothing moves in time; below
+the ceiling it changes nothing) so stacked effects cannot clip. Timelines without effects mix
+exactly as before. The editor preview plays them too.
+
+Bundled effects, synthesized with ffmpeg (see `public/assets/sfx/README.md`): `whoosh`,
+`swoosh-down`, `pop`, `click`, `ding`, `riser` (a 2 s build-up). In the editor, each scene has a
+**Sound effects** list: add one from the bundled set, play it at a time or on a layer's enter or
+exit, set its volume and ducking; every change is one undo step.
+
+`fixtures/beats-sfx-demo.json` uses both: six scenes of uneven length over the 120 BPM test
+track with beat sync on (all five cuts snap, mean shift 120 ms), a narrated scene, a wipe, and
+nine effects, six of them on layer events.
+
 ## Images and audio
 
 In the Inspector, the Image and Audio source fields have a **Choose** button (desktop app).
@@ -1152,6 +1266,12 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | `audio.quiet`, `audio.silent` | warning | integrated loudness below -35 LUFS; no signal above -60 dBFS |
 | `audio.music_inaudible`, `audio.music_too_loud` | warning | music after its `volume` below -45 LUFS, or above -22 LUFS while scenes have speech; the fix sets a volume for about -30 LUFS |
 | `audio.narration_ignored` | info | a scene has both `audio` and `narration` |
+| `sfx.missing`, `sfx.unreadable` | error | a sound effect's file is missing or not decodable (one timed outside its scene, on a missing layer or with a non-audio file is `dsl.invalid`) |
+| `sfx.past_video_end` | warning | a sound effect is still playing when the video ends, so its tail is cut |
+| `sfx.clipping` | warning | two or more sound effects overlap and their peaks (times volume) plus the music's and the scene audio's add up above full scale; the limiter would squash them. A worst case (peaks rarely coincide); the fix lowers the later effect's volume |
+| `beats.low_confidence` | warning | beat sync is on but detection is unsure of the music's beat (confidence below 0.5), so the render will not snap; the fix suggests `music.beats` from the best guess |
+| `beats.unsnapped` | warning | a cut that cannot reach a beat (none within `max_shift_ms`, or a scene would get shorter than its narration, audio, clip, layers or effects need), with the reason; computed on the scene lengths as written (with `--synth`, after measured narration) |
+| `beats.summary` | info | how many cuts will land on a beat and the mean shift |
 | `narration.too_long` | warning / info | narration will not fit, so the render stretches the scene and later cues drift. Estimate (calibrated on the default `say` voices): zh 230 ms per character, ja 165 ms, en 250 ms per word, plus the 300 ms tail; a warning when even a 20% faster voice would not fit, info otherwise. With `--synth` the measured length (warning) |
 | `transition.too_long` | warning | `transition_in` longer than the previous scene |
 | `subtitle.too_short` | error / warning | a cue under 400 ms (its 6-frame fades never complete) / under 833 ms |

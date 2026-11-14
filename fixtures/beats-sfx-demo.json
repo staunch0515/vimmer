@@ -1,0 +1,321 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "scenes": [
+    {
+      "id": "intro",
+      "duration_ms": 2380,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#0f172a",
+          "z": -10
+        },
+        {
+          "id": "title",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.36,
+          "width": 0.84,
+          "text": "Cuts on the beat",
+          "font_size": 0.1,
+          "weight": 700,
+          "align": "center",
+          "start_ms": 300,
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 400
+          }
+        }
+      ],
+      "sfx": [
+        {
+          "src": "assets/sfx/pop.wav",
+          "on": {
+            "layer": "title",
+            "event": "enter"
+          }
+        },
+        {
+          "src": "assets/sfx/whoosh.wav",
+          "at_ms": 1800,
+          "volume": 0.6
+        }
+      ]
+    },
+    {
+      "id": "count",
+      "duration_ms": 2780,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#7c2d12",
+          "z": -10
+        },
+        {
+          "id": "num",
+          "kind": "counter",
+          "x": 0.2,
+          "y": 0.3,
+          "width": 0.6,
+          "from": 0,
+          "to": 120,
+          "suffix": " BPM",
+          "duration_ms": 1600,
+          "font_size": 0.14,
+          "start_ms": 400,
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 200
+          }
+        }
+      ],
+      "sfx": [
+        {
+          "src": "assets/sfx/click.wav",
+          "on": {
+            "layer": "num",
+            "event": "enter"
+          },
+          "volume": 0.9
+        },
+        {
+          "src": "assets/sfx/ding.wav",
+          "at_ms": 2000,
+          "volume": 0.5
+        }
+      ]
+    },
+    {
+      "id": "narrated",
+      "duration_ms": 3000,
+      "text": "Every cut lands on a beat.",
+      "highlights": [
+        "beat"
+      ],
+      "image": "assets/sample.png",
+      "motion": "zoom_in",
+      "audio": null,
+      "narration": {
+        "voice": "Samantha"
+      }
+    },
+    {
+      "id": "list",
+      "duration_ms": 2240,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#14532d",
+          "z": -10
+        },
+        {
+          "id": "one",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.18,
+          "width": 0.84,
+          "text": "Kick",
+          "font_size": 0.09,
+          "weight": 700,
+          "align": "center",
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 250
+          }
+        },
+        {
+          "id": "two",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.4,
+          "width": 0.84,
+          "text": "Snare",
+          "font_size": 0.09,
+          "weight": 700,
+          "align": "center",
+          "start_ms": 500,
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 250
+          }
+        },
+        {
+          "id": "three",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.62,
+          "width": 0.84,
+          "text": "Hat",
+          "font_size": 0.09,
+          "weight": 700,
+          "align": "center",
+          "start_ms": 1000,
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 250
+          }
+        }
+      ],
+      "sfx": [
+        {
+          "src": "assets/sfx/pop.wav",
+          "on": {
+            "layer": "one",
+            "event": "enter"
+          }
+        },
+        {
+          "src": "assets/sfx/pop.wav",
+          "on": {
+            "layer": "two",
+            "event": "enter"
+          }
+        },
+        {
+          "src": "assets/sfx/pop.wav",
+          "on": {
+            "layer": "three",
+            "event": "enter"
+          }
+        }
+      ]
+    },
+    {
+      "id": "quote",
+      "duration_ms": 2700,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "transition_in": {
+        "kind": "wipe_left",
+        "duration_ms": 300
+      },
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#312e81",
+          "z": -10
+        },
+        {
+          "id": "q",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.38,
+          "width": 0.84,
+          "text": "“The picture moves with the music.”",
+          "font_size": 0.07,
+          "weight": 700,
+          "align": "center",
+          "end_ms": 2300,
+          "exit": {
+            "kind": "fade",
+            "duration_ms": 300
+          }
+        }
+      ],
+      "sfx": [
+        {
+          "src": "assets/sfx/swoosh-down.wav",
+          "on": {
+            "layer": "q",
+            "event": "exit"
+          },
+          "volume": 0.7
+        }
+      ]
+    },
+    {
+      "id": "outro",
+      "duration_ms": 2810,
+      "text": null,
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "zoom_out",
+      "audio": null,
+      "layers": [
+        {
+          "id": "end",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.4,
+          "width": 0.84,
+          "text": "Thanks for watching",
+          "font_size": 0.09,
+          "weight": 700,
+          "align": "center",
+          "start_ms": 200,
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          },
+          "color": "#ffffff"
+        }
+      ],
+      "sfx": [
+        {
+          "src": "assets/sfx/ding.wav",
+          "on": {
+            "layer": "end",
+            "event": "enter"
+          },
+          "volume": 0.8,
+          "duck_music": true
+        }
+      ]
+    }
+  ],
+  "subtitles": [],
+  "music": {
+    "source": "assets/music/beat-120bpm.m4a",
+    "volume": 0.5,
+    "fade_in_ms": 0,
+    "fade_out_ms": 800,
+    "beat_sync": {
+      "enabled": true,
+      "every": 1,
+      "max_shift_ms": 250,
+      "mode": "nearest"
+    }
+  }
+}
