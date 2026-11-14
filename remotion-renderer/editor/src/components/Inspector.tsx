@@ -1,11 +1,13 @@
 import type { Dispatch } from "react";
-import type { Keyframe, Scene, SubtitleCue, TransitionKind, VideoTimeline } from "../../../src/types/timeline";
+import type { Keyframe, Scene, SubtitleCue, TransitionKind, VideoClip, VideoTimeline } from "../../../src/types/timeline";
 import {
   DEFAULT_TRANSITION_MS, EASINGS, TRANSITION_KINDS, keyframeFieldError, timecode, type Selection, sortCues,
 } from "../model";
 import { sampleKeyframes } from "../../../src/motion/keyframes";
 import type { Action } from "../state";
 import { canChooseMedia, chooseAndImport, type MediaKind } from "../media";
+import { ClipFields } from "./ClipFields";
+import { DEFAULT_CLIP } from "../layers";
 import { useEffect, useState } from "react";
 import { AssistantPanel } from "./AssistantPanel";
 import { LayerPanel } from "./LayerPanel";
@@ -90,14 +92,40 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
           onChange={(e) => patch({ highlights: e.target.value.split(",").map((w) => w.trim()).filter(Boolean) })}
         />
       </Field>
-      <Field label="Image" hint="Path relative to public/">
-        <MediaInput
-          kind="image"
-          value={scene.image ?? ""}
-          placeholder="assets/sample.png"
-          onChange={(v) => patch({ image: v || null })}
-        />
+      <Field label="Background">
+        <select
+          value={scene.video ? "video" : "image"}
+          data-scene-background
+          onChange={(e) => {
+            // One background at a time; an undefined key is left out of the saved JSON.
+            if (e.target.value === "video") patch({ image: null, video: { src: DEFAULT_CLIP } });
+            else patch({ video: undefined });
+          }}
+        >
+          <option value="image">Image</option>
+          <option value="video">Video clip</option>
+        </select>
       </Field>
+      {scene.video ? (
+        <ClipFields
+          clip={scene.video}
+          patch={(p) => {
+            const merged = Object.fromEntries(
+              Object.entries({ ...scene.video, ...p }).filter(([, v]) => v !== undefined),
+            ) as unknown as VideoClip;
+            patch({ video: merged });
+          }}
+        />
+      ) : (
+        <Field label="Image" hint="Path relative to public/">
+          <MediaInput
+            kind="image"
+            value={scene.image ?? ""}
+            placeholder="assets/sample.png"
+            onChange={(v) => patch({ image: v || null })}
+          />
+        </Field>
+      )}
       <Field label="Motion">
         <select value={scene.motion} onChange={(e) => patch({ motion: e.target.value as Scene["motion"] })}>
           {MOTIONS.map((m) => (

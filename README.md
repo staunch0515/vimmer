@@ -199,6 +199,74 @@ In the Studio, the Scene tab lists the
 selected scene's layers (top first, with the scene text's place marked) and adds, edits,
 reorders and deletes them; the selected layer is outlined on the canvas and can be dragged.
 
+### Video clips (`scene.video`, `video` layers)
+
+A scene can use a clip as its background instead of an image, and a `video` layer puts a clip in a
+box (picture-in-picture). Both take the same clip fields:
+
+```json
+"video": {
+  "src": "assets/clips/counter-6s.mp4",
+  "trim_start_ms": 1000, "trim_end_ms": 4000,
+  "speed": 2, "fit_time": "freeze", "fit": "cover", "volume": 0
+}
+```
+
+- `src`: a `.mp4`, `.mov`, `.m4v` or `.webm` under `public/` (same path rules as images).
+- `trim_start_ms` (default 0), `trim_end_ms` (default the end of the file; must be after the
+  start): the part of the file used.
+- `speed`: 0.25..4 (default 1). 2 plays twice as fast; the sound keeps its pitch.
+- `fit_time`: what happens when the trimmed clip, at its speed, is shorter than its scene (or
+  layer): `freeze` holds its last frame (default), `loop` starts it again, `stretch` changes the
+  speed so it ends exactly with the scene (`speed` is then ignored). A longer clip is cut.
+- `fit`: `cover` (fill and crop, default) or `contain` (whole picture; the dark scene background
+  shows around it). A background clip has no blurred padding (that would decode it twice).
+- `volume`: 0..1, default 0 (muted). Above 0 the clip's sound is mixed into the soundtrack and the
+  music ducks under it like narration.
+
+`scene.image` and `scene.video` are exclusive (validation error). The background clip sits where
+the image does (under every layer) and `motion` / `keyframes` move it the same way. A `video` layer
+has the common layer box, timing, keyframes and enter/exit; at most 4 per scene.
+
+**Frame mapping.** Clip frame *n* (after trim and speed) shows on frame *n* of its scene or
+layer: with `freeze` frame min(*n*, *N*-1), with `loop` *n* mod *N*, where *N* is the clip's
+length in frames (`clip_frames` / `clipFrames`, mirrored in Rust and `motion/video.ts`).
+Everything is computed from the scene- or layer-relative frame, so chunks (which never split a
+scene) match full renders. A clip that should continue across scenes, and so across a chunk seam,
+is the same file in each scene with the next scene's `trim_start_ms` where the previous one
+ended (`seam-a` / `seam-b` in the demo).
+
+**How it renders.** Before rendering, the scheduler normalizes every clip once
+(`vimmer-media/src/video_norm.rs`, `vimmer-scheduler/src/video.rs`): it probes the file with
+`ffmpeg -i` (missing or undecodable files fail with the scene and layer named), then writes
+exactly the frames shown, trimmed, at the speed (`setpts`), at a constant 30 fps, scaled down to
+at most the timeline size, as H.264 yuv420p with a 15-frame GOP and no B-frames, to
+`public/generated/videos/<key>.mp4`. Sound, when `volume > 0`, goes to a WAV next to it
+(`atempo` chain, looped with the picture for `loop`). The key is a fingerprint of the source bytes
+and every parameter, so a second render reuses the files. The render copy of the timeline points
+at the normalized file with a trivial clip (trim 0..its length, speed 1), and the renderer
+(`components/ClipVideo.tsx`) holds the chosen frame with `<Freeze>` around a muted
+`<OffthreadVideo>`: the player clock never runs the clip. Clip sound is placed in `audio.rs` at
+the clip's first frame with its volume, and counts as scene audio for ducking; timelines without
+clip sound mix exactly as before.
+
+**Cost.** `<OffthreadVideo>` extracts a frame per clip per output frame. On the Intel CPU here
+`fixtures/video-clips-demo.json` (12.5 s, a clip on screen almost all the time) renders in about
+90 s with a cold cache (8 clip files encoded) and about 137 s with `--chunk-ms 3000` (6 chunks,
+each with its own Remotion start-up); `fixtures/video-clips-frames.json` (10 s, a background clip
+throughout) in about 75 s. `vimmer check` warns (`video.heavy`) when more than 2 clips play at once
+or the clips add up to more than twice the video's frames.
+
+**Studio.** The scene inspector has a Background choice (Image / Video clip) and the clip fields;
+`+ video` adds a picture-in-picture layer. The preview plays the original file with the same frame
+math (it learns a file's length from the browser for `loop` and `freeze` without `trim_end_ms`).
+
+`fixtures/video-clips-demo.json` (16:9, 12.5 s) has a trimmed 2x background with a zoom, a looping
+clip, a freezing clip, a webm PiP layer with enter/exit after a fade transition, a clip with sound
+at 0.5 over ducked music, and a clip continued across the `--chunk-ms 3000` seam.
+`fixtures/video-clips-frames.json` checks frame accuracy with a clip that carries its frame number
+as a bit strip (`public/assets/clips/README.md`).
+
 ## Commands
 
 ```bash
@@ -948,7 +1016,12 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | `chart.cramped` | warning | a vertical chart leaves under 2 font sizes for its bars, or a horizontal chart's rows are shorter than 1.25 font sizes |
 | `ring.label_overflow` | warning | a progress ring's center text (custom label, or 100 % with its decimals) is wider than 92 % of the ring's hole |
 | `assets.aspect_ratio` | warning / info | the picture fills under 40% / 60% of the frame; the rest is blurred padding (the renderer fits, never crops) |
-| `assets.low_resolution` | warning / info | the image is enlarged more than 2.0x / 1.5x on screen (fit factor times the largest zoom; for an image layer, the factor that fits it to its box) |
+| `assets.low_resolution` | warning / info | the image (or clip) is enlarged more than 2.0x / 1.5x on screen (fit factor times the largest zoom; for an image or video layer, the factor that fits it to its box) |
+| `video.missing`, `video.undecodable` | error | a background or layer clip is missing, or ffmpeg finds no video stream with a duration in it |
+| `video.trim_past_end` | error | `trim_start_ms` is at or after the end of the file |
+| `video.freezes` | info | with `fit_time: freeze`, the clip (trimmed, at its speed) ends before its scene or layer, so its last frame holds |
+| `video.fast` | warning | a clip plays faster than 3x (its `speed`, or the speed `stretch` needs) |
+| `video.heavy` | warning | more than 2 clips on screen at once in a scene, or the clips add up to more than 2x the video's frames (each clip frame is extracted for every output frame) |
 | `audio.missing`, `audio.unreadable` | error | `scene.audio` or `music` file missing or not decodable |
 | `audio.cut_off` | error / warning | the clip is longer than the scene after `offset_ms`: error when more than 250 ms is cut |
 | `audio.offset_past_end` | error | `offset_ms` at or past the scene end; the clip never plays |
@@ -1018,7 +1091,7 @@ Loudness and clipping of `http(s)` assets are not checked.
 - **Building a `SubtitleCue`**: use `SubtitleCue::new(start_ms, end_ms, text)` or
   `SubtitleCue { ..Default::default() }`. A struct literal with every field listed breaks
   whenever a field is added (as `words` was).
-- **Adding a layer kind** (video, ...): add a variant to `LayerContent`
+- **Adding a layer kind**: add a variant to `LayerContent`
   (`vimmer-dsl/src/layer.rs`, plus `kind()` and, if it may leave out `height`, `auto_height()`)
   with its fields and checks in `layer_problems` (`validation.rs`), the TS type in
   `types/timeline.ts`, a view in `components/LayerKinds.tsx` and a case in `LayerStack.tsx`
@@ -1028,7 +1101,8 @@ Loudness and clipping of `http(s)` assets are not checked.
   `prompts/edit.md`, a default in the editor (`editor/src/layers.ts` `newLayer`, `LAYER_KINDS`,
   `checkLayers`, `AUTO_HEIGHT`) and fields in `components/LayerPanel.tsx` `KindFields`, and its
   `vimmer check` rules (`vimmer-check/src/layers.rs`). Box, timing, stacking and animation come
-  for free.
+  for free. A kind that needs a file prepared before render (like `video`) also needs a step in
+  `vimmer-scheduler/src/run.rs` (see `video.rs`).
 - **Building a `Scene` or `VideoTimeline`**: neither implements `Default`. Build them from JSON
   with `serde_json::from_value` (as `vimmer-storyboard` does) so that new DSL fields take their
   serde defaults. A literal would fail to compile when a field is added.

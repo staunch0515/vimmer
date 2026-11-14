@@ -5,6 +5,10 @@
 //! encoder priming, which `concat -c copy` keeps, so the audio of a chunked render fell another
 //! 43 ms behind the picture at every seam. Building the track once from the timeline makes a
 //! chunked render sound exactly like a one-chunk render.
+//!
+//! Video clips with a `volume` add their sound (prepared by `video.rs`, already trimmed, at the
+//! clip's speed and looped with the picture) as more placed clips, with that volume as their gain.
+//! They count as scene audio for ducking. Without such clips the graph is exactly as before.
 
 use std::path::Path;
 
@@ -23,15 +27,32 @@ const AUDIO_BITRATE: &str = "320k";
 const DUCK_FRAME_SAMPLES: u32 = 128;
 
 /// Where one scene's audio clip lands in the output, in samples at [`SAMPLE_RATE`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Placement {
     pub scene: usize,
     /// Path relative to the public dir.
     pub source: String,
     /// First sample of the clip on the output timeline.
     pub start: u64,
-    /// The clip is cut here: the end of its scene.
+    /// The clip is cut here: the end of its scene (or of its video layer).
     pub end: u64,
+    /// Linear gain; 1.0 (scene audio) adds no filter.
+    pub gain: f32,
+}
+
+/// The sound of a video clip, prepared by `video.rs`: a WAV that starts on the clip's first frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipSound {
+    pub scene: usize,
+    /// WAV path relative to the public dir.
+    pub source: String,
+    /// The clip's frames in its scene: [from, to).
+    pub from_frame: u64,
+    pub to_frame: u64,
+    /// The clip's `volume`.
+    pub gain: f32,
+    /// Samples of sound in the WAV (one pass, or the whole span when looped).
+    pub samples: u64,
 }
 
 impl Placement {
@@ -43,6 +64,11 @@ impl Placement {
 
 fn frame_to_sample(frame: u64, fps: u32) -> u64 {
     (frame * SAMPLE_RATE + u64::from(fps) / 2) / u64::from(fps)
+}
+
+/// Samples in `frames` frames at `fps` (rounded like every frame-to-sample conversion here).
+pub fn frames_to_samples(frames: u64, fps: u32) -> u64 {
+    frame_to_sample(frames, fps)
 }
 
 fn ms_to_frames(ms: u64, fps: u32) -> u64 {
@@ -69,9 +95,40 @@ pub fn place_scene_audio(timeline: &VideoTimeline) -> Vec<Placement> {
                 source: audio.source.clone(),
                 start: frame_to_sample(start, fps),
                 end: frame_to_sample(end, fps),
+                gain: 1.0,
             })
         })
         .collect()
+}
+
+/// Places video clip sounds on the output timeline: from the clip's first frame to its last, in
+/// its scene. Returns the placements and how long each one is audible, in ms (for ducking).
+pub fn place_clip_sounds(
+    timeline: &VideoTimeline,
+    sounds: &[ClipSound],
+) -> (Vec<Placement>, Vec<u64>) {
+    let fps = timeline.fps;
+    let starts = timeline.scene_start_frames();
+    sounds
+        .iter()
+        .filter(|c| c.from_frame < c.to_frame)
+        .map(|c| {
+            let scene_start = u64::from(starts[c.scene]);
+            let start = frame_to_sample(scene_start + c.from_frame, fps);
+            let end = frame_to_sample(scene_start + c.to_frame, fps);
+            let audible_ms = (c.samples.min(end - start) * 1000).div_ceil(SAMPLE_RATE);
+            (
+                Placement {
+                    scene: c.scene,
+                    source: c.source.clone(),
+                    start,
+                    end,
+                    gain: c.gain,
+                },
+                audible_ms,
+            )
+        })
+        .unzip()
 }
 
 /// Total length of the soundtrack in samples: exactly the video's frame count.
@@ -107,8 +164,13 @@ pub fn filter_graph(
     let mut chains = Vec::new();
     let mut labels = Vec::new();
     for (k, p) in clips.iter().enumerate() {
+        let gain = if p.gain == 1.0 {
+            String::new()
+        } else {
+            format!(",volume={}", p.gain)
+        };
         chains.push(format!(
-            "[{input}:a]{format},atrim=end_sample={room},adelay=delays={start}S:all=1[c{k}]",
+            "[{input}:a]{format},atrim=end_sample={room}{gain},adelay=delays={start}S:all=1[c{k}]",
             input = k + 1,
             room = p.room(),
             start = p.start,
@@ -224,6 +286,7 @@ mod tests {
             highlights: vec![],
             image: None,
             motion: MotionType::Static,
+            video: None,
             audio: audio.map(|(source, offset_ms)| AudioMapping {
                 source: source.into(),
                 offset_ms,
@@ -276,12 +339,14 @@ mod tests {
                     source: "a.wav".into(),
                     start: 0,
                     end: 30 * 1_600,
+                    gain: 1.0,
                 },
                 Placement {
                     scene: 2,
                     source: "c.wav".into(),
                     start: (120 + 16) * 1_600,
                     end: 210 * 1_600,
+                    gain: 1.0,
                 },
             ],
             "an offset at the scene's end plays nothing"
@@ -310,6 +375,7 @@ mod tests {
             source: "x".into(),
             start,
             end,
+            gain: 1.0,
         };
         let iv = speech_intervals(&[p(48_000, 144_000), p(144_000, 192_000)], &[1_500, 5_000]);
         assert_eq!(iv, vec![(1_000.0, 2_500.0), (3_000.0, 4_000.0)]);
@@ -332,6 +398,51 @@ mod tests {
              atrim=end_sample=144000,volume=0.5,afade=t=in:st=0:d=0.5,afade=t=out:st=2:d=1,\
              asetnsamples=n=128,volume=eval=frame:volume='EXPR'[m];\
              [c0][m]amix=inputs=2:duration=longest:normalize=0,apad=whole_len=144000,atrim=end_sample=144000[a]"
+        );
+    }
+
+    #[test]
+    fn clip_sounds_land_on_their_layer_frames_with_their_volume() {
+        let t = timeline(vec![
+            scene("a", 1_000, Some(("a.wav", 0))),
+            scene("b", 3_000, None),
+        ]);
+        let sounds = [
+            ClipSound {
+                scene: 1,
+                source: "generated/videos/k.wav".into(),
+                from_frame: 15,
+                to_frame: 75,
+                gain: 0.5,
+                samples: 48_000,
+            },
+            ClipSound {
+                scene: 1,
+                source: "generated/videos/l.wav".into(),
+                from_frame: 0,
+                to_frame: 30,
+                gain: 1.0,
+                samples: 480_000,
+            },
+        ];
+        let (placed, ms) = place_clip_sounds(&t, &sounds);
+        assert_eq!((placed[0].start, placed[0].end), (45 * 1_600, 105 * 1_600));
+        assert_eq!(
+            ms,
+            vec![1_000, 1_000],
+            "one pass of 1 s; a long sound is cut at its end"
+        );
+        let mut all = place_scene_audio(&t);
+        all.extend(placed);
+        let g = filter_graph(&all, None, None, total_samples(&t)).unwrap();
+        assert!(g.contains("[2:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB,atrim=end_sample=96000,volume=0.5,adelay=delays=72000S:all=1[c1]"), "{g}");
+        assert!(
+            g.contains("atrim=end_sample=48000,adelay=delays=0S:all=1[c0]"),
+            "scene audio unchanged: {g}"
+        );
+        assert!(
+            g.contains("atrim=end_sample=48000,adelay=delays=48000S:all=1[c2]"),
+            "gain 1 adds no filter: {g}"
         );
     }
 

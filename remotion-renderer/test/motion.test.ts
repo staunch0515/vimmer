@@ -6,6 +6,7 @@ import { transitionPose } from "../src/motion/transitions.ts";
 import { animationPose, layerFrames, layerStateAt, splitLayers } from "../src/motion/layers.ts";
 import { barProgress, chartMax, countFrames, formatNumber, frameProgress, ringFraction } from "../src/motion/data.ts";
 import { lowerThirdPose } from "../src/motion/lowerThird.ts";
+import { clipFrameAt, clipFrames, clipSourceMs, clipTimeAt } from "../src/motion/video.ts";
 import { cursorVisible, typedCount, typedSegments, typingUnits } from "../src/motion/typewriter.ts";
 import type { Easing, Keyframe, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
 
@@ -328,4 +329,47 @@ test("ring fraction goes from `from` to `value` and never past a full ring", () 
   close(ringFraction(0, 0.5, 0.5), 0.25);
   assert.equal(ringFraction(0, 1, 1.37), 1); // elastic overshoot is clamped
   assert.equal(ringFraction(0.5, 0, 1.37), 0);
+});
+
+test("clip frames match the Rust clip_frames / clip_frame_at", () => {
+  // Same cases as rust-core/crates/vimmer-dsl/src/layer.rs clip_frame_math.
+  assert.equal(clipFrames(2000, 2, 30), 30);
+  assert.equal(clipFrames(2000, 0.5, 30), 120);
+  assert.equal(clipFrames(10, 4, 30), 1);
+  assert.equal(clipFrameAt(0, 30, "freeze"), 0);
+  assert.equal(clipFrameAt(29, 30, "freeze"), 29);
+  assert.equal(clipFrameAt(75, 30, "freeze"), 29);
+  assert.equal(clipFrameAt(75, 30, "loop"), 15);
+  assert.equal(clipFrameAt(30, 30, "loop"), 0);
+  assert.equal(clipSourceMs({ src: "a.mp4", trim_start_ms: 500 }, 6000), 5500);
+  assert.equal(clipSourceMs({ src: "a.mp4", trim_start_ms: 500, trim_end_ms: 9000 }, 6000), 5500);
+  assert.equal(clipSourceMs({ src: "a.mp4" }), null);
+});
+
+test("a normalized clip (trim 0..N frames, speed 1) shows exactly frame g of its file", () => {
+  // The scheduler rewrites a 45-frame clip to trim_end_ms = round(45 * 1000 / 30) = 1500.
+  for (const [n, fit] of [[45, "freeze"], [37, "loop"], [83, "freeze"]] as const) {
+    const clip = { src: "generated/videos/k.mp4", trim_end_ms: Math.round((n * 1000) / 30), fit_time: fit };
+    for (let f = 0; f < 120; f++) {
+      const t = clipTimeAt(clip, f, 120, 30);
+      const want = fit === "loop" ? f % n : Math.min(f, n - 1);
+      assert.equal(t.clipFrame, want);
+      assert.ok(Math.abs((t.fileMs * 30) / 1000 - want) < 1e-9, `${n} ${fit} ${f}`);
+    }
+  }
+});
+
+test("trim, speed and stretch map scene frames to file times", () => {
+  // From 1.5 s at 2x: scene frame f shows file time 1.5 s + f * 2 / 30 s, held after 3 s of file.
+  const clip = { src: "a.mp4", trim_start_ms: 1500, trim_end_ms: 4500, speed: 2 };
+  close(clipTimeAt(clip, 10, 90, 30).fileMs, 1500 + (10 * 2000) / 30);
+  assert.equal(clipTimeAt(clip, 80, 90, 30).clipFrame, 44); // 3 s / 2 = 45 frames, then frozen
+  // Stretch: 3 s of file over a 60-frame (2 s) scene plays at 1.5x and ends on the last frame.
+  const s = clipTimeAt({ ...clip, fit_time: "stretch" }, 59, 60, 30);
+  close(s.speed, 1.5);
+  assert.equal(s.clipFrame, 59);
+  // Length unknown (editor, no trim_end, file length not loaded yet): plays straight on.
+  assert.equal(clipTimeAt({ src: "a.mp4", fit_time: "loop" }, 200, 60, 30).clipFrame, 200);
+  // Known file length: loops.
+  assert.equal(clipTimeAt({ src: "a.mp4", fit_time: "loop" }, 70, 120, 30, 2000).clipFrame, 10);
 });

@@ -6,6 +6,7 @@ import { ANIMATION_KINDS, LAYER_KINDS } from "../layers";
 import { EASINGS } from "../model";
 import type { Action } from "../state";
 import { Field, MediaInput, NumField } from "./Inspector";
+import { ClipFields } from "./ClipFields";
 
 type Props = {
   scene: Scene;
@@ -299,6 +300,8 @@ const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, 
           <ColorField label="Color" value={layer.color ?? "#fafafa"} onChange={(c) => patch({ color: c })} />
         </>
       );
+    case "video":
+      return <ClipFields clip={layer} patch={patch} />;
     case "lower_third":
       return <LowerThirdFields layer={layer} patch={patch} />;
     case "counter":

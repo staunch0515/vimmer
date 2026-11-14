@@ -7,6 +7,7 @@ pub mod duck;
 pub mod narrate;
 pub mod plan;
 pub mod run;
+pub mod video;
 pub mod wordsubs;
 
 pub use control::{CancelHandle, Progress, ProgressFn, RenderContext};

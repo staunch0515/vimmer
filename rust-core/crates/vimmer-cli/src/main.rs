@@ -323,6 +323,9 @@ async fn render(
         report.normalized_images,
         report.output.display()
     );
+    if report.encoded_videos > 0 {
+        println!("encoded {} video clip file(s)", report.encoded_videos);
+    }
     Ok(())
 }
 
@@ -361,10 +364,9 @@ async fn run_generate(cli: GenerateCli) -> Result<(), Box<dyn std::error::Error>
     );
     let helper_for_illustrations = helper.clone();
     let generate_limits = limits.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
-        generate(&helper, &opts, &llm_work, &generate_limits)
-    })
-    .await?;
+    let outcome =
+        tokio::task::spawn_blocking(move || generate(&helper, &opts, &llm_work, &generate_limits))
+            .await?;
 
     let mut generated = match outcome {
         Ok(g) => g,
@@ -484,7 +486,11 @@ async fn run_illustrations(
     record_dir: Option<PathBuf>,
     limits: Limits,
 ) -> Result<IllustrationReport, Box<dyn std::error::Error>> {
-    let todo = storyboard.scenes.iter().filter(|s| s.image.is_none()).count();
+    let todo = storyboard
+        .scenes
+        .iter()
+        .filter(|s| s.image.is_none())
+        .count();
     let model = args.illustrate_model.clone();
     match estimate_cost(&model, &args.illustrate_effort, todo) {
         Some((typical, worst)) => eprintln!(
@@ -689,10 +695,7 @@ fn save_artifacts(
         ))?,
     )?;
     if let Some(report) = illustrations {
-        write(
-            "illustrations.json",
-            serde_json::to_string_pretty(report)?,
-        )?;
+        write("illustrations.json", serde_json::to_string_pretty(report)?)?;
     }
     Ok(())
 }

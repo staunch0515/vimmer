@@ -1,0 +1,61 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1920, "height": 1080 },
+  "scenes": [
+    {
+      "id": "trim-speed-freeze",
+      "duration_ms": 3000,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "video": { "src": "assets/clips/counter-6s.mp4", "trim_start_ms": 1500, "trim_end_ms": 4500, "speed": 2 },
+      "audio": null
+    },
+    {
+      "id": "loop-and-pip",
+      "duration_ms": 3000,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "video": { "src": "assets/clips/counter-6s.mp4", "trim_end_ms": 1000, "fit_time": "loop" },
+      "audio": null,
+      "layers": [
+        {
+          "id": "pip",
+          "kind": "video",
+          "x": 0.5,
+          "y": 0.5,
+          "width": 0.5,
+          "height": 0.5,
+          "start_ms": 500,
+          "end_ms": 2500,
+          "src": "assets/clips/counter-6s.mp4",
+          "trim_start_ms": 3000
+        }
+      ]
+    },
+    {
+      "id": "stretch",
+      "duration_ms": 2000,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "video": { "src": "assets/clips/counter-6s.mp4", "trim_end_ms": 3000, "fit_time": "stretch" },
+      "audio": null
+    },
+    {
+      "id": "slow",
+      "duration_ms": 2000,
+      "text": null,
+      "highlights": [],
+      "image": null,
+      "motion": "static",
+      "video": { "src": "assets/clips/counter-6s.mp4", "trim_start_ms": 3000, "speed": 0.5 },
+      "audio": null
+    }
+  ],
+  "subtitles": []
+}

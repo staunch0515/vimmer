@@ -340,6 +340,7 @@ mod tests {
             highlights: vec![],
             image: None,
             motion: MotionType::Static,
+            video: None,
             audio: None,
             narration: narration.then(Narration::default),
             transition_in: None,

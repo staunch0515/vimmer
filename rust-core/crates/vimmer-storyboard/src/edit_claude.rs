@@ -196,9 +196,12 @@ pub fn check_reply(
 
 /// Media files under the public dir, relative and sorted, for Claude to choose from.
 pub fn list_assets(public_dir: &Path) -> Vec<String> {
-    const EXT: [&str; 11] = [
-        "png", "jpg", "jpeg", "webp", "gif", "svg", "mp3", "wav", "m4a", "aac", "ogg",
+    const EXT: [&str; 15] = [
+        "png", "jpg", "jpeg", "webp", "gif", "svg", "mp3", "wav", "m4a", "aac", "ogg", "mp4",
+        "mov", "m4v", "webm",
     ];
+    // Normalized clips and their sound, written by the renderer: not assets to choose.
+    let skip = public_dir.join("generated").join("videos");
     let mut out = Vec::new();
     let mut stack = vec![(public_dir.to_path_buf(), 0usize)];
     while let Some((dir, depth)) = stack.pop() {
@@ -212,7 +215,7 @@ pub fn list_assets(public_dir: &Path) -> Vec<String> {
             }
             let path = entry.path();
             let Ok(ft) = entry.file_type() else { continue };
-            if ft.is_dir() && depth < 4 {
+            if ft.is_dir() && depth < 4 && path != skip {
                 stack.push((path, depth + 1));
             } else if ft.is_file() {
                 let ext = path

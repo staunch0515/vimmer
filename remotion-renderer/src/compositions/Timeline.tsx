@@ -2,7 +2,7 @@ import { Fragment, useContext } from "react";
 import { AbsoluteFill, Audio, Freeze, Sequence, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { AnimatedText } from "../components/AnimatedText";
 import { Subtitles } from "../components/Subtitles";
-import { KenBurnsImage } from "../components/KenBurnsImage";
+import { KenBurnsImage, KenBurnsVideo } from "../components/KenBurnsImage";
 import { LayerStack } from "../components/LayerStack";
 import { AssetUrlContext, resolveAsset } from "../assets";
 import { layoutScenes, msToFrames, totalFrames, type SceneLayout } from "../layout";
@@ -22,7 +22,7 @@ const musicVolume = (music: Music, timeline: VideoTimeline) => {
   };
 };
 
-// The visual content of one scene, bottom to top: the scene image, layers with z < 0, the scene
+// The visual content of one scene, bottom to top: the scene image (or video), layers with z < 0, the scene
 // text, layers with z >= 0 (subtitles are drawn over every scene). No audio, which stays with the
 // scene. Without layers the DOM is exactly what it was before layers existed.
 const SceneBody: React.FC<{ scene: Scene; durationInFrames: number }> = ({ scene, durationInFrames }) => (
@@ -34,9 +34,18 @@ const SceneBody: React.FC<{ scene: Scene; durationInFrames: number }> = ({ scene
         keyframes={scene.keyframes}
         durationInFrames={durationInFrames}
       />
+    ) : scene.video ? (
+      <KenBurnsVideo
+        clip={scene.video}
+        motion={scene.motion}
+        keyframes={scene.keyframes}
+        durationInFrames={durationInFrames}
+      />
     ) : null}
     <LayerStack layers={scene.layers} side="below" sceneFrames={durationInFrames} />
-    {scene.text ? <AnimatedText text={scene.text} highlights={scene.highlights} onImage={Boolean(scene.image)} /> : null}
+    {scene.text ? (
+      <AnimatedText text={scene.text} highlights={scene.highlights} onImage={Boolean(scene.image || scene.video)} />
+    ) : null}
     <LayerStack layers={scene.layers} side="above" sceneFrames={durationInFrames} />
   </AbsoluteFill>
 );

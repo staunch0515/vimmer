@@ -9,6 +9,8 @@ remotion-renderer/build/
 # Render outputs and scratch
 renders/
 *.mp4
+# Generated test clips (see remotion-renderer/public/assets/clips/README.md)
+!remotion-renderer/public/assets/clips/*.mp4
 
 # OS / editor
 .DS_Store

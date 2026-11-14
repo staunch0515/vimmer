@@ -598,6 +598,8 @@ enum Kind {
     Word,
     Music,
     Duck,
+    /// A scene's background `video` clip.
+    Video,
     /// A number, string, bool or enum value: no children.
     Leaf,
 }
@@ -621,6 +623,7 @@ impl Kind {
                 ("highlights", Highlights),
                 ("image", Leaf),
                 ("motion", Leaf),
+                ("video", Video),
                 ("audio", Audio),
                 ("narration", Narration),
                 ("transition_in", Transition),
@@ -634,6 +637,7 @@ impl Kind {
             Bar => &[("label", Leaf), ("value", Leaf), ("color", Leaf)],
             Audio => &[("source", Leaf), ("offset_ms", Leaf)],
             Narration => &[("voice", Leaf)],
+            Video => VIDEO_CLIP_FIELDS,
             Transition => &[("kind", Leaf), ("duration_ms", Leaf)],
             Keyframe => &[
                 ("at_ms", Leaf),
@@ -705,6 +709,7 @@ impl Kind {
             Kind::Word => "a word timing",
             Kind::Music => "the music settings",
             Kind::Duck => "the music ducking settings",
+            Kind::Video => "a scene background video",
             Kind::Leaf => "a plain value",
         }
     }
@@ -730,7 +735,19 @@ const LAYER_COMMON: &[(&str, Kind)] = &[
 ];
 
 /// Kind-specific layer fields (`vimmer_dsl::LayerContent`), by `kind`.
+/// The fields of a video clip: a scene's `video` and a `video` layer.
+const VIDEO_CLIP_FIELDS: &[(&str, Kind)] = &[
+    ("src", Kind::Leaf),
+    ("trim_start_ms", Kind::Leaf),
+    ("trim_end_ms", Kind::Leaf),
+    ("speed", Kind::Leaf),
+    ("fit_time", Kind::Leaf),
+    ("fit", Kind::Leaf),
+    ("volume", Kind::Leaf),
+];
+
 const LAYER_KIND_FIELDS: &[(&str, &[(&str, Kind)])] = &[
+    ("video", VIDEO_CLIP_FIELDS),
     (
         "image",
         &[
@@ -894,6 +911,11 @@ const LAYER_FIELDS_ALL: &[(&str, Kind)] = &[
     ("thickness", Kind::Leaf),
     ("show_label", Kind::Leaf),
     ("label", Kind::Leaf),
+    ("trim_start_ms", Kind::Leaf),
+    ("trim_end_ms", Kind::Leaf),
+    ("speed", Kind::Leaf),
+    ("fit_time", Kind::Leaf),
+    ("volume", Kind::Leaf),
 ];
 
 /// The fields a layer object may have: common fields plus those of its `kind`, when the kind is
@@ -1660,6 +1682,9 @@ fn asset_refs(t: &VideoTimeline) -> Vec<(String, String)> {
         if let Some(image) = &s.image {
             out.push((format!("scene `{}` image", s.id), image.clone()));
         }
+        if let Some(video) = &s.video {
+            out.push((format!("scene `{}` video.src", s.id), video.src.clone()));
+        }
         if let Some(audio) = &s.audio {
             out.push((
                 format!("scene `{}` audio.source", s.id),
@@ -1820,6 +1845,28 @@ fn show_field(key: &str, v: &Value) -> String {
                 None => "on".into(),
             },
             _ => "off".into(),
+        },
+        "video" => match serde_json::from_value::<vimmer_dsl::VideoClip>(v.clone()) {
+            Ok(c) => {
+                let mut parts = Vec::new();
+                if c.trim_start_ms > 0 || c.trim_end_ms.is_some() {
+                    parts.push(format!(
+                        "trim {}..{} ms",
+                        c.trim_start_ms,
+                        c.trim_end_ms.map_or("end".into(), |e| e.to_string())
+                    ));
+                }
+                if c.speed != 1.0 {
+                    parts.push(format!("{}x", c.speed));
+                }
+                parts.push(format!("{:?}", c.fit_time).to_lowercase());
+                if c.volume > 0.0 {
+                    parts.push(format!("volume {}", c.volume));
+                }
+                format!("{} ({})", clip(&c.src, 40), parts.join(", "))
+            }
+            Err(_) if v.is_null() => "none".into(),
+            Err(_) => show(v),
         },
         "highlights" => match v {
             Value::Array(a) if a.is_empty() => "none".into(),
@@ -2099,6 +2146,7 @@ mod layer_field_tables {
             "counter",
             "bar_chart",
             "progress_ring",
+            "video",
         ] {
             assert!(
                 LAYER_KIND_FIELDS.iter().any(|(k, _)| *k == kind),

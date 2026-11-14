@@ -3,12 +3,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { inTauri } from "./project";
 import type { AssetUrl } from "../../src/assets";
 
-export type MediaKind = "image" | "audio" | "icon";
+export type MediaKind = "image" | "audio" | "icon" | "video";
 
 const FILTERS: Record<MediaKind, { name: string; extensions: string[] }> = {
   image: { name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] },
   audio: { name: "Audio", extensions: ["wav", "mp3", "m4a", "aac", "aif", "aiff"] },
   icon: { name: "SVG icons", extensions: ["svg"] },
+  video: { name: "Video clips", extensions: ["mp4", "mov", "m4v", "webm"] },
 };
 
 export const canChooseMedia = (): boolean => inTauri();

@@ -17,6 +17,7 @@ pub mod rendered;
 pub mod report;
 pub mod text;
 pub mod timing;
+pub mod video;
 
 use std::path::{Path, PathBuf};
 
@@ -230,6 +231,7 @@ pub fn check_timeline(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Find
     findings.extend(layout::check(timeline));
     findings.extend(layers::check(timeline));
     findings.extend(motion::check(timeline));
+    findings.extend(video::check_cost(timeline));
     findings.extend(timing::check(timeline));
     let measured = if opts.synth {
         let (measured, notes) = timing::synthesize_narration(timeline, opts);
@@ -244,6 +246,7 @@ pub fn check_timeline(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Find
             findings.extend(assets::check(timeline, dir));
             findings.extend(layers::check_assets(timeline, dir));
             findings.extend(audio::check_sources(timeline, dir, &opts.ffmpeg));
+            findings.extend(video::check(timeline, dir, &opts.ffmpeg));
         }
         None => findings.push(Finding::new(
             Severity::Warning,
