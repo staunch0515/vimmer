@@ -1,0 +1,65 @@
+# Narration-length calibration corpus: one sentence per line, `id<TAB>lang<TAB>text`.
+# Mix of short and long sentences, numbers, heavy punctuation, Latin words inside CJK text.
+# Re-measure with `cargo run -p vimmer-media --example measure_tts --release` (see calibration/README.md).
+zh01	zh	你好。
+zh02	zh	西安钟楼，始建于明代。
+zh03	zh	今天我们来聊一聊人工智能如何改变视频制作的流程。
+zh04	zh	长城全长超过两万一千公里，是世界上最长的军事防御工程之一，也是中华民族的象征。
+zh05	zh	第一，准备材料；第二，搅拌均匀；第三，放进烤箱。
+zh06	zh	2024年，全球智能手机出货量约为12亿部。
+zh07	zh	用AI做视频，真的有那么简单吗？
+zh08	zh	这款App支持iOS和Android两个平台。
+zh09	zh	等等……你说什么？真的吗？！
+zh10	zh	春天来了，花开了，鸟儿在枝头欢快地歌唱。
+zh11	zh	熊猫每天要花十几个小时吃竹子，一只成年熊猫一天可以吃掉超过十二公斤的竹子。
+zh12	zh	价格从199元降到了99元，降幅超过50%。
+zh13	zh	“慢慢来，比较快。”这是很多手艺人的座右铭。
+zh14	zh	我们的大脑大约有八百六十亿个神经元。
+zh15	zh	欢迎收看本期节目！
+zh16	zh	在接下来的三分钟里，你将了解光合作用的基本原理：植物如何利用阳光、水和二氧化碳制造养分。
+zh17	zh	GPU的并行计算能力，让深度学习成为可能。
+zh18	zh	记住：每天喝水，早睡早起，多运动。
+zh19	zh	珠穆朗玛峰海拔8848.86米。
+zh20	zh	谢谢观看，我们下期再见。
+ja01	ja	こんにちは。
+ja02	ja	こんにちは、世界。
+ja03	ja	今日は、人工知能が動画制作をどう変えるのかについてお話しします。
+ja04	ja	富士山は日本で最も高い山で、標高は三千七百七十六メートルです。
+ja05	ja	まず材料を準備し、次によく混ぜて、最後にオーブンで焼きます。
+ja06	ja	2024年の訪日外国人旅行者数は、約3600万人でした。
+ja07	ja	AIで動画を作るのは、本当に簡単なのでしょうか？
+ja08	ja	このアプリはiPhoneとAndroidの両方で使えます。
+ja09	ja	えっ……本当ですか？！
+ja10	ja	桜が咲き、春の訪れを感じる季節になりました。
+ja11	ja	京都には千六百以上のお寺があり、毎年たくさんの観光客が訪れます。
+ja12	ja	値段は1980円から980円に下がりました。
+ja13	ja	「急がば回れ」ということわざを知っていますか。
+ja14	ja	コーヒーを一杯どうぞ。
+ja15	ja	ご視聴ありがとうございました。
+ja16	ja	光合成とは、植物が太陽の光と水と二酸化炭素を使って、栄養を作り出す仕組みのことです。
+ja17	ja	東京スカイツリーの高さは634メートルです。
+ja18	ja	ポイントは三つ：早寝、早起き、そして朝ごはん。
+ja19	ja	新幹線は、時速三百キロ以上で走ります。
+ja20	ja	それでは、また次回お会いしましょう。
+en01	en	Hello.
+en02	en	The quick brown fox jumps over the lazy dog.
+en03	en	Today we'll look at how artificial intelligence is changing the way videos are made.
+en04	en	The Great Wall stretches for more than twenty-one thousand kilometers, making it one of the longest structures ever built by human hands.
+en05	en	First, gather your ingredients; second, mix them well; third, bake for twenty minutes.
+en06	en	In 2024, about 1.2 billion smartphones were shipped worldwide.
+en07	en	Is making videos with AI really that easy?
+en08	en	The app runs on iOS, Android, and the web.
+en09	en	Wait... what? Really?!
+en10	en	Spring is here: the flowers are blooming, and the birds are singing.
+en11	en	Pandas spend up to fourteen hours a day eating bamboo.
+en12	en	The price dropped from $199 to $99, a cut of more than 50%.
+en13	en	"Slow is smooth, and smooth is fast," as the saying goes.
+en14	en	Your brain has roughly 86 billion neurons.
+en15	en	Welcome back to the channel!
+en16	en	Photosynthesis is the process by which plants use sunlight, water, and carbon dioxide to make sugar and release oxygen into the air.
+en17	en	GPUs made deep learning practical.
+en18	en	Remember: drink water, sleep early, and keep moving.
+en19	en	Mount Everest is 8,848.86 meters tall.
+en20	en	Thanks for watching, and see you next time.
+en21	en	Unbelievable.
+en22	en	It's not magic, it's math.
