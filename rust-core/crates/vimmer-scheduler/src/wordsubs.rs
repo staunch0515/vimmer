@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vimmer_dsl::{SubtitleCue, VideoTimeline, WordTiming};
+use vimmer_dsl::{LayerContent, Scene, SubtitleCue, VideoTimeline, WordTiming};
 use vimmer_media::{
     align_words, guess_language, split_units, AlignedWord, AudioProbe, Limits, MediaError,
     RecognizedToken, TranscribeRequest, Transcriber, WhisperCli,
@@ -33,10 +33,35 @@ pub struct WordSubtitleConfig {
     /// Recognition language: a whisper code (`zh`, `en`, `ja`, ...) or `auto` to let whisper
     /// detect it. `None` guesses it from each scene's text.
     pub language: Option<String>,
-    /// Create subtitle cues from the narration text where no cue covers a narrated scene.
-    /// Off by default, so a timeline renders the same subtitles it always did: word timing
-    /// is only added to cues the timeline already has.
-    pub auto_subtitles: bool,
+    /// Whether to create subtitle cues from the narration text where no cue covers a narrated
+    /// scene. Off by default, so a timeline renders the same subtitles it always did: word
+    /// timing is only added to cues the timeline already has.
+    pub auto_subtitles: AutoSubtitles,
+}
+
+/// Which narrated scenes get generated subtitle cues (only where no cue covers the narration;
+/// cues already in the timeline are never removed and always get word timing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AutoSubtitles {
+    /// None.
+    #[default]
+    Off,
+    /// Only narration that is not already on screen as text: a scene whose scene text or text
+    /// layers show the whole narration gets no cue, so the sentence is not shown twice.
+    On,
+    /// Every narrated scene, even when the narration is on screen (captions for accessibility).
+    All,
+}
+
+impl AutoSubtitles {
+    /// Whether cues may be generated for `clip`.
+    pub(crate) fn generates(self, clip: &NarrationClip) -> bool {
+        match self {
+            AutoSubtitles::Off => false,
+            AutoSubtitles::On => !clip.on_screen,
+            AutoSubtitles::All => true,
+        }
+    }
 }
 
 impl Default for WordSubtitleConfig {
@@ -46,7 +71,7 @@ impl Default for WordSubtitleConfig {
             whisper_cli: None,
             model: None,
             language: None,
-            auto_subtitles: false,
+            auto_subtitles: AutoSubtitles::Off,
         }
     }
 }
@@ -61,6 +86,8 @@ pub(crate) struct NarrationClip {
     pub start_ms: u64,
     /// The latest a cue for this clip may end: the end of its scene.
     pub scene_end_ms: u64,
+    /// The whole narration is shown as text while it plays (see [`narration_on_screen`]).
+    pub on_screen: bool,
 }
 
 /// Synthesized narration clips: scenes with `narration` whose audio is the generated file.
@@ -89,6 +116,7 @@ pub(crate) fn narration_clips(
             let scene_end = frame_ms(starts[i] + scene.duration_frames(timeline.fps)).min(ms_end);
             Some(NarrationClip {
                 scene_index: i,
+                on_screen: narration_on_screen(scene, &text, audio.offset_ms),
                 text,
                 wav: cfg.public_dir.join(&audio.source),
                 start_ms: scene_start + audio.offset_ms,
@@ -96,6 +124,59 @@ pub(crate) fn narration_clips(
             })
         })
         .collect()
+}
+
+/// Text for comparing what is said with what is shown: letters and digits only, lowercased,
+/// full-width forms folded to ASCII (`ＡＢＣ１` → `abc1`). Case, punctuation (ASCII or CJK),
+/// whitespace and character width therefore never decide whether two texts match.
+pub(crate) fn visible_key(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            _ => c,
+        })
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// The text a scene shows while its narration plays, in drawing order: text layers under the
+/// scene text, the scene text, text layers over it. A layer counts when it is on screen at any
+/// time from `from_ms` (scene-relative, where the narration starts) to the scene end.
+fn visible_texts(scene: &Scene, from_ms: u64) -> Vec<&str> {
+    let layer_texts = |above: bool| {
+        scene
+            .layers
+            .iter()
+            .filter(move |l| {
+                (l.z >= 0) == above
+                    && l.opacity > 0.0
+                    && l.start_ms < scene.duration_ms
+                    && l.end_ms_in(scene.duration_ms) > from_ms
+            })
+            .flat_map(|l| match &l.content {
+                LayerContent::Text(t) => vec![t.text.as_str()],
+                LayerContent::LowerThird(lt) => std::iter::once(lt.title.as_str())
+                    .chain(lt.subtitle.as_deref())
+                    .collect(),
+                _ => vec![],
+            })
+    };
+    let mut texts: Vec<&str> = layer_texts(false).collect();
+    texts.extend(scene.text.as_deref());
+    texts.extend(layer_texts(true));
+    texts
+}
+
+/// Whether the whole narration `spoken` (starting `offset_ms` into the scene) is already on
+/// screen as text: its [`visible_key`] is part of the scene's visible text, read in drawing
+/// order. Narration that only partly appears (a longer sentence under a short headline) is not.
+pub(crate) fn narration_on_screen(scene: &Scene, spoken: &str, offset_ms: u64) -> bool {
+    let shown: String = visible_texts(scene, offset_ms)
+        .into_iter()
+        .map(visible_key)
+        .collect();
+    shown.contains(&visible_key(spoken))
 }
 
 /// Runs recognition and alignment for every synthesized narration clip. Returns the number of
@@ -107,16 +188,28 @@ pub async fn add_word_subtitles(
     probe: Arc<dyn AudioProbe>,
     ctx: &RenderContext,
     warnings: &mut Vec<String>,
+    notes: &mut Vec<String>,
 ) -> Result<usize, SchedulerError> {
     if !cfg.word_subtitles.enabled {
         return Ok(0);
     }
     drop_stale_words(&mut timeline.subtitles, warnings);
-    let clips = clips_to_time(
-        &timeline.subtitles,
-        narration_clips(timeline, cfg),
-        cfg.word_subtitles.auto_subtitles,
-    );
+    let all = narration_clips(timeline, cfg);
+    if cfg.word_subtitles.auto_subtitles == AutoSubtitles::On {
+        let shown: Vec<&str> = all
+            .iter()
+            .filter(|c| c.on_screen && !has_cue_to_fill(&timeline.subtitles, c))
+            .map(|c| timeline.scenes[c.scene_index].id.as_str())
+            .collect();
+        if !shown.is_empty() {
+            notes.push(format!(
+                "auto-subtitles: no cues for {} narrated scene(s) whose narration is already on screen as text ({}); `--auto-subtitles all` subtitles them too",
+                shown.len(),
+                shown.join(", ")
+            ));
+        }
+    }
+    let clips = clips_to_time(&timeline.subtitles, all, cfg.word_subtitles.auto_subtitles);
     if clips.is_empty() {
         return Ok(0);
     }
@@ -312,16 +405,16 @@ fn has_cue_to_fill(subtitles: &[SubtitleCue], clip: &NarrationClip) -> bool {
         .any(|c| c.words.is_empty() && c.start_ms < clip.scene_end_ms && c.end_ms > clip.start_ms)
 }
 
-/// The clips worth recognizing: all of them when cues may be generated, else only those with a
-/// cue to fill. Skipping the others saves a whisper call each.
+/// The clips worth recognizing: those cues may be generated for, and those with a cue to fill.
+/// Skipping the others saves a whisper call each.
 pub(crate) fn clips_to_time(
     subtitles: &[SubtitleCue],
     clips: Vec<NarrationClip>,
-    auto_subtitles: bool,
+    auto_subtitles: AutoSubtitles,
 ) -> Vec<NarrationClip> {
     clips
         .into_iter()
-        .filter(|clip| auto_subtitles || has_cue_to_fill(subtitles, clip))
+        .filter(|clip| auto_subtitles.generates(clip) || has_cue_to_fill(subtitles, clip))
         .collect()
 }
 
@@ -452,7 +545,7 @@ pub(crate) async fn apply_word_subtitles(
             clip,
             words,
             max_cols,
-            ws.auto_subtitles,
+            ws.auto_subtitles.generates(clip),
             &|i| owners[i] == Some(k),
         ) {
             timed += 1;
@@ -804,12 +897,14 @@ mod tests {
             wav: PathBuf::from("x.wav"),
             start_ms,
             scene_end_ms,
+            on_screen: false,
         }
     }
 
+    /// The old `--auto-subtitles on`: cues for every narrated scene.
     fn auto() -> WordSubtitleConfig {
         WordSubtitleConfig {
-            auto_subtitles: true,
+            auto_subtitles: AutoSubtitles::All,
             ..WordSubtitleConfig::default()
         }
     }
@@ -1265,7 +1360,7 @@ mod tests {
         );
         let mut warnings = vec![];
         drop_stale_words(&mut t.subtitles, &mut warnings);
-        let clips = clips_to_time(&t.subtitles, narration_clips(&t, &cfg), false);
+        let clips = clips_to_time(&t.subtitles, narration_clips(&t, &cfg), AutoSubtitles::Off);
         assert_eq!(clips.len(), 1, "the edited cue needs timing again");
         let engine = Arc::new(FixedTranscriber(
             vec![
@@ -1323,6 +1418,7 @@ mod tests {
             Arc::new(FixedProbe(1000)),
             &RenderContext::silent(),
             &mut warnings,
+            &mut vec![],
         )
         .await
         .unwrap();
@@ -1342,6 +1438,7 @@ mod tests {
             Arc::new(FixedProbe(1000)),
             &RenderContext::silent(),
             &mut warnings,
+            &mut vec![],
         )
         .await
         .unwrap();
@@ -1585,10 +1682,13 @@ mod tests {
     fn by_default_only_clips_with_cues_are_timed() {
         let (t, clips) = three_languages();
         // Only the English scene has a cue.
-        let kept = clips_to_time(&t.subtitles, clips.clone(), false);
+        let kept = clips_to_time(&t.subtitles, clips.clone(), AutoSubtitles::Off);
         assert_eq!(kept.len(), 1);
         assert_eq!(t.scenes[kept[0].scene_index].id, "en");
-        assert_eq!(clips_to_time(&t.subtitles, clips.clone(), true).len(), 3);
+        assert_eq!(
+            clips_to_time(&t.subtitles, clips.clone(), AutoSubtitles::All).len(),
+            3
+        );
         // A cue that already has words needs nothing.
         let mut filled = t.subtitles.clone();
         filled[0].words = vec![WordTiming {
@@ -1596,7 +1696,7 @@ mod tests {
             start_ms: 0,
             end_ms: 500,
         }];
-        assert!(clips_to_time(&filled, clips, false).is_empty());
+        assert!(clips_to_time(&filled, clips, AutoSubtitles::Off).is_empty());
     }
 
     #[test]
@@ -1651,6 +1751,7 @@ mod tests {
             Arc::new(FixedProbe(1000)),
             &RenderContext::silent(),
             &mut warnings,
+            &mut vec![],
         )
         .await
         .unwrap();
@@ -1658,16 +1759,312 @@ mod tests {
         assert_eq!(t, before);
         assert!(warnings.is_empty(), "{warnings:?}");
         // Switched on, the same timeline would need the engine (and warns that it is missing).
-        cfg.word_subtitles.auto_subtitles = true;
+        cfg.word_subtitles.auto_subtitles = AutoSubtitles::All;
         add_word_subtitles(
             &mut t,
             &cfg,
             Arc::new(FixedProbe(1000)),
             &RenderContext::silent(),
             &mut warnings,
+            &mut vec![],
         )
         .await
         .unwrap();
         assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+
+    fn layer(json: &str) -> vimmer_dsl::Layer {
+        serde_json::from_str(json).unwrap()
+    }
+
+    fn shown(text: &str) -> Scene {
+        narrated("s", 4000, text)
+    }
+
+    #[test]
+    fn visible_key_ignores_case_punctuation_spacing_and_width() {
+        assert_eq!(visible_key("Hello, World!"), "helloworld");
+        assert_eq!(visible_key("Ｈｅｌｌｏ，　Ｗｏｒｌｄ！"), "helloworld");
+        assert_eq!(visible_key("  hello\nworld... "), "helloworld");
+        assert_eq!(visible_key("你好，世界。"), visible_key("你好 世界!"));
+        assert_eq!(visible_key("「ＡＩ」で変わる、未来。"), "aiで変わる未来");
+        assert_eq!(visible_key("Tip 1: don't"), "tip1dont");
+    }
+
+    #[test]
+    fn narration_matching_the_scene_text_is_on_screen() {
+        // English: punctuation, case and spacing differ.
+        let s = shown("Tip one: grind your beans right before brewing.");
+        assert!(narration_on_screen(
+            &s,
+            "tip one — Grind your beans  right before brewing",
+            0
+        ));
+        // Chinese: full-width punctuation on screen, half-width in the narration.
+        let s = shown("在西安的钟楼下，每一个字都会亮起来。");
+        assert!(narration_on_screen(
+            &s,
+            "在西安的钟楼下,每一个字都会亮起来.",
+            0
+        ));
+        // Japanese with full-width Latin letters on screen.
+        let s = shown("ＡＩで、未来が変わる！");
+        assert!(narration_on_screen(&s, "AIで未来が変わる。", 0));
+        // The narration is a part of a longer on-screen text: every spoken word is shown.
+        let s = shown("Small changes, big flavor. Try it tomorrow.");
+        assert!(narration_on_screen(&s, "Small changes, big flavor.", 0));
+    }
+
+    #[test]
+    fn narration_longer_than_the_on_screen_text_is_not() {
+        let s = shown("Grind fresh");
+        assert!(!narration_on_screen(
+            &s,
+            "Tip one: grind your beans right before brewing.",
+            0
+        ));
+        let s = shown("西安钟楼");
+        assert!(!narration_on_screen(&s, "西安钟楼，古城的中心。", 0));
+        let s = shown("桜");
+        assert!(!narration_on_screen(&s, "桜の季節がやってきました。", 0));
+        // Same words in another order are not the same sentence.
+        let s = shown("big flavor, small changes");
+        assert!(!narration_on_screen(&s, "Small changes, big flavor.", 0));
+        // A different word.
+        let s = shown("Use water just off the boil.");
+        assert!(!narration_on_screen(
+            &s,
+            "Use water just below the boil.",
+            0
+        ));
+    }
+
+    #[test]
+    fn text_layers_on_screen_during_the_narration_count() {
+        let mut s = shown("Coffee");
+        s.layers = vec![layer(
+            r#"{"id":"t","kind":"text","x":0,"y":0,"width":1,"text":"Grind your beans right before brewing!"}"#,
+        )];
+        assert!(narration_on_screen(
+            &s,
+            "Grind your beans right before brewing.",
+            0
+        ));
+        // Split between a layer under the scene text and the scene text itself, in drawing
+        // order.
+        let mut s = shown("right before brewing.");
+        s.layers = vec![layer(
+            r#"{"id":"t","kind":"text","x":0,"y":0,"width":1,"z":-1,"text":"Grind your beans"}"#,
+        )];
+        assert!(narration_on_screen(
+            &s,
+            "Grind your beans right before brewing.",
+            0
+        ));
+        // A lower third's title and subtitle.
+        let mut s = shown("Coffee");
+        s.layers = vec![layer(
+            r#"{"id":"l","kind":"lower_third","x":0,"y":0.7,"width":0.6,"height":0.15,"title":"Ada Lovelace","subtitle":"First programmer"}"#,
+        )];
+        assert!(narration_on_screen(
+            &s,
+            "Ada Lovelace, first programmer.",
+            0
+        ));
+        // A layer that is gone before the narration starts, or invisible, does not count.
+        let mut s = shown("Coffee");
+        s.layers = vec![
+            layer(
+                r#"{"id":"a","kind":"text","x":0,"y":0,"width":1,"end_ms":500,"text":"Grind your beans."}"#,
+            ),
+            layer(
+                r#"{"id":"b","kind":"text","x":0,"y":0,"width":1,"opacity":0,"text":"Grind your beans."}"#,
+            ),
+        ];
+        assert!(!narration_on_screen(&s, "Grind your beans.", 800));
+        assert!(narration_on_screen(&s, "Grind your beans.", 200));
+    }
+
+    #[test]
+    fn auto_subtitles_on_skips_only_narration_already_on_screen() {
+        let (t, mut clips) = three_languages();
+        // Every narration in these scenes is their scene text.
+        assert!(clips.iter().all(|c| c.on_screen));
+        // `on`: the English clip still has a cue to fill; the others are on screen.
+        let kept = clips_to_time(&t.subtitles, clips.clone(), AutoSubtitles::On);
+        assert_eq!(
+            kept,
+            clips_to_time(&t.subtitles, clips.clone(), AutoSubtitles::Off)
+        );
+        // Narration that is not on screen is still subtitled.
+        clips[2].on_screen = false;
+        let kept = clips_to_time(&t.subtitles, clips.clone(), AutoSubtitles::On);
+        let ids: Vec<&str> = kept
+            .iter()
+            .map(|c| t.scenes[c.scene_index].id.as_str())
+            .collect();
+        assert_eq!(ids, ["en", "ja"]);
+        assert!(!AutoSubtitles::On.generates(&clips[1]));
+        assert!(AutoSubtitles::On.generates(&clips[2]));
+        assert!(AutoSubtitles::All.generates(&clips[1]));
+        assert!(!AutoSubtitles::Off.generates(&clips[2]));
+    }
+
+    async fn run_auto(
+        mode: AutoSubtitles,
+        t: &mut VideoTimeline,
+        tokens: Vec<RecognizedToken>,
+    ) -> Vec<String> {
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let clips = clips_to_time(&t.subtitles, narration_clips(t, &cfg), mode);
+        let engine = Arc::new(FixedTranscriber(tokens, Mutex::new(vec![])));
+        let ws = WordSubtitleConfig {
+            auto_subtitles: mode,
+            ..WordSubtitleConfig::default()
+        };
+        let mut warnings = vec![];
+        apply_word_subtitles(
+            t,
+            &clips,
+            engine,
+            Arc::new(FixedProbe(1500)),
+            &ws,
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        warnings
+    }
+
+    /// Two narrated scenes in different languages (one recognition call each).
+    fn two_scenes() -> VideoTimeline {
+        VideoTimeline {
+            brand: None,
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![
+                narrated("one", 2000, "Hello world."),
+                narrated("two", 2000, "你好世界。"),
+            ],
+            subtitles: vec![],
+            music: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn on_screen_narration_gets_no_cue_but_hand_written_cues_keep_their_words() {
+        let tokens = vec![
+            RecognizedToken::new("Hello", 100, 500),
+            RecognizedToken::new("world.", 500, 1200),
+        ];
+        // `all` makes a cue for each narrated scene (the old `on`).
+        let mut all = two_scenes();
+        run_auto(AutoSubtitles::All, &mut all, tokens.clone()).await;
+        assert_eq!(all.subtitles.len(), 2);
+
+        // `on`: both narrations are on screen, so nothing is generated.
+        let mut on = two_scenes();
+        let warnings = run_auto(AutoSubtitles::On, &mut on, tokens.clone()).await;
+        assert!(on.subtitles.is_empty(), "{:?}", on.subtitles);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // A hand-written cue over an on-screen narration stays and is word-timed exactly as with
+        // `all` or `off`.
+        let with_cue = |mut t: VideoTimeline| {
+            t.subtitles = vec![SubtitleCue::new(2000, 3900, "你好世界。")];
+            t
+        };
+        let mut timed = Vec::new();
+        for mode in [AutoSubtitles::Off, AutoSubtitles::On, AutoSubtitles::All] {
+            let mut t = with_cue(two_scenes());
+            run_auto(mode, &mut t, tokens.clone()).await;
+            timed.push(t.subtitles);
+        }
+        assert_eq!(timed[0].len(), 1);
+        assert!(!timed[0][0].words.is_empty());
+        assert_eq!(
+            timed[0], timed[1],
+            "`on` times hand-written cues like `off`"
+        );
+        // `all` also generates the first scene's cue; the hand-written one is identical.
+        assert_eq!(timed[2].len(), 2);
+        assert_eq!(timed[2][1], timed[0][0]);
+    }
+
+    #[tokio::test]
+    async fn narration_not_on_screen_is_still_subtitled_with_on() {
+        let tokens = vec![
+            RecognizedToken::new("Hello", 100, 500),
+            RecognizedToken::new("world.", 500, 1200),
+        ];
+        let mut t = two_scenes();
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let mut clips = narration_clips(&t, &cfg);
+        // As if the second scene's narration were not shown as text.
+        clips[1].on_screen = false;
+        let engine = Arc::new(FixedTranscriber(tokens, Mutex::new(vec![])));
+        let ws = WordSubtitleConfig {
+            auto_subtitles: AutoSubtitles::On,
+            ..WordSubtitleConfig::default()
+        };
+        let clips = clips_to_time(&t.subtitles, clips, AutoSubtitles::On);
+        assert_eq!(clips.len(), 1);
+        apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine,
+            Arc::new(FixedProbe(1500)),
+            &ws,
+            &RenderContext::silent(),
+            &mut vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(t.subtitles.len(), 1);
+        assert_eq!(t.subtitles[0].text, "你好世界。");
+        assert!(t.subtitles[0].start_ms >= 2000);
+        assert!(!t.subtitles[0].words.is_empty());
+        assert_eq!(validate(&t), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn on_with_everything_on_screen_needs_no_engine_and_says_why() {
+        let mut t = two_scenes();
+        let before = t.clone();
+        let mut cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        cfg.word_subtitles.whisper_cli = Some(PathBuf::from("/nonexistent/whisper-cli"));
+        cfg.word_subtitles.auto_subtitles = AutoSubtitles::On;
+        let (mut warnings, mut notes) = (vec![], vec![]);
+        let n = add_word_subtitles(
+            &mut t,
+            &cfg,
+            Arc::new(FixedProbe(1000)),
+            &RenderContext::silent(),
+            &mut warnings,
+            &mut notes,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(t, before);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].contains("(one, two)"), "{notes:?}");
     }
 }
