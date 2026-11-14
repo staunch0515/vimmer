@@ -267,6 +267,109 @@ at 0.5 over ducked music, and a clip continued across the `--chunk-ms 3000` seam
 `fixtures/video-clips-frames.json` checks frame accuracy with a clip that carries its frame number
 as a bit strip (`public/assets/clips/README.md`).
 
+### Brand kit (`brand`)
+
+One set of colors, fonts and a logo that every scene uses. Put it in the timeline, or keep it in
+its own file and pass it with `--brand` so one brand serves many timelines (the file replaces the
+timeline's `brand`; `vimmer check --brand` and `vimmer expand --brand` take it too):
+
+```json
+"brand": {
+  "colors": { "primary": "#ff6b35", "accent": "#ffd166", "text": "#fff8f0",
+              "muted_text": "#c9b8a8", "background": "#1a1423", "subtitle_background": "#1a1423d9" },
+  "fonts": { "heading": { "family": "Vimmer Demo Thin", "src": "assets/fonts/FiraSans-Thin.ttf" } },
+  "logo": { "src": "assets/brand/vimmer-logo.png", "corner": "top_right", "size": 0.06,
+            "margin": 0.05, "opacity": 0.95, "hide_on": ["intro", "outro"] }
+}
+```
+
+```bash
+rust-core/target/release/vimmer fixtures/brand-templates-demo.json --brand fixtures/brand.alt.json -o renders/alt.mp4 --remotion-dir remotion-renderer
+```
+
+**Colors are defaults.** Every part is optional. An element with its own color keeps it; an
+element without one takes the brand color, and without a brand the built-in color it always had
+(so a timeline without `brand` renders exactly as before). To make "unset" survive into the
+renderer, the color fields of text, lower-third, counter, bar-chart and ring layers are optional
+in the DSL now (they used to be filled with the built-in value when the JSON was read):
+
+| element | brand color | built-in |
+|---|---|---|
+| scene text, text layers, counters, lower-third titles, ring labels, subtitle text | `text` | `#fafafa` |
+| lower-third subtitles / chart labels and values | `muted_text` | `#d4d4d8` / `#e4e4e7` |
+| highlighted words (scene text, text layers; the current subtitle word) | `accent` | `#a5b4fc` (subtitles `#facc15`) |
+| lower-third accent bars, chart bars, rings, template rules and numbers | `primary` | `#6366f1` |
+| the frame behind scenes without an image or video, template backgrounds | `background` | `#09090b` |
+| the subtitle box | `subtitle_background` | `rgba(9, 9, 11, 0.72)` |
+
+The built-in values live in `vimmer-dsl/src/brand.rs` and `remotion-renderer/src/brand.ts`;
+`npm run test:motion` checks they match.
+
+**Fonts.** `heading` is used by the scene text, lower-third titles, counters and template
+headings (and text layers with `"font": "heading"`); `body` by subtitles, text layers,
+lower-third subtitles and chart/ring labels. `family` is a CSS family name; with `src` (a `.ttf`,
+`.otf`, `.woff` or `.woff2` under `public/`) the file is registered under that name with
+`FontFace` and the renderer holds every frame (`delayRender`) until it has loaded, so the first
+frame already uses it. Give a loaded font a name no installed font has. One file serves every
+weight: it is declared for weights 100-900, so the browser never fakes a bold or thin version.
+A missing font or logo file stops the render before it starts
+(`brand heading font: file not found: …`). The demo font is Fira Sans Thin under the SIL Open Font
+License (`public/assets/fonts/OFL.txt`; its embedded license was checked before copying it).
+
+**Logo.** A PNG or JPEG (`src`), `size` tall (fraction of the frame height; the width follows the
+image), `margin` from the two nearest edges (a fraction of the frame width and of the height:
+0.05 is the edge of the title-safe area), `opacity`, in `corner` `top_left`, `top_right`
+(default), `bottom_left` or `bottom_right`. It is drawn above every scene's layers and below the
+subtitles, on every scene except those in `hide_on` (intro and outro templates already show it
+large). SVG is not accepted because templates draw the logo as an image layer.
+
+`vimmer check` adds `brand.contrast` (WCAG contrast of text against the solid color behind it),
+`brand.logo_safe_area`, `brand.logo_subtitles`, `brand.unknown_scene` and
+`assets.missing_font` / `assets.missing_logo` (see the table under Quality check).
+
+### Templates (`scene.template`)
+
+A template scene is a few params instead of layers:
+
+```json
+{ "id": "chapter", "duration_ms": 3000,
+  "template": { "name": "title_card", "params": { "number": "01", "title": "Why a brand kit" } } }
+```
+
+| template | params (`*` required, max characters) | default length |
+|---|---|---|
+| `intro` | `title`* 60, `subtitle` 100, `logo` (bool, default true: the brand logo, large) | 4000 ms |
+| `outro` | `cta`* 50 (call to action), `lines` 0-3 strings of 40 (handles, a URL), `logo` | 5000 ms |
+| `title_card` | `number` 4 (e.g. "01"), `title`* 60 | 3000 ms |
+| `quote` | `quote`* 220 (revealed word by word), `author` 60 | 6000 ms |
+| `list` | `title`* 60, `items`* 1-5 strings of 60 (revealed one by one) | 6000 ms |
+
+Before validation, the scheduler expands each template scene into ordinary layers with
+`vimmer_dsl::expand_templates` (`vimmer-dsl/src/template.rs`): a pure, deterministic function of
+the params, the brand and the resolution, with separate layouts for 16:9 and 9:16. A scene without
+an image or video gets an opaque `background` rectangle; with one, a 70 % scrim of it. Titles use
+the heading font, sub-lines `muted_text`, rules and numbers `primary`, and the intro/outro the
+logo. Template layers get ids starting with `tpl-` (reserved on template scenes) and one `z`
+below every explicit layer, so the scene's own `layers` are drawn above the template (and the
+scene `text`, if any, above both). `duration_ms` 0 or absent takes the default length; entrance
+times shrink with short scenes (at least 1000 ms) so they always fit. Unknown params, a missing
+required param, a wrong type and text over the limit are validation errors naming the scene and
+param. `vimmer check` checks the expanded scene and reports text that does not fit its slot as
+`template.text_overflow`, pointing at `/scenes/i/template/params/<param>`.
+
+`vimmer expand <timeline.json|->` prints the expanded timeline as `{"ok": true, "timeline": …}`
+(or `{"ok": false, "errors": […]}`); the Studio previews template scenes through it, so preview and
+render come from the same Rust code (no TypeScript copy of the layouts). The catalog of templates
+and params for the Studio's form is written by a Rust test to
+`remotion-renderer/editor/src/template-catalog.json` (`VIMMER_UPDATE_CATALOG=1 cargo test -p
+vimmer-dsl catalog` regenerates it; the test fails when it is stale).
+
+`fixtures/brand-templates-demo.json` (16:9, 27 s) and `fixtures/brand-templates-demo-9x16.json`
+go intro → title card → a normal scene with a lower third, a bar chart and a ring (no colors of
+their own) → quote → list → outro, with the logo, brand colors and the demo font, without
+narration. `fixtures/brand.example.json` is the same brand on its own; `fixtures/brand.alt.json`
+is a second one (other colors, no font file, the logo top left) for `--brand`.
+
 ## Commands
 
 ```bash
@@ -962,6 +1065,13 @@ cd remotion-renderer && npm install && npm run editor   # http://localhost:5180
   edit subtitle cues. Add a cue at the playhead.
 - **Toolbar**: format switch, undo and redo (⌘Z / ⇧⌘Z), import and export JSON.
   Validation mirrors the Rust rules and appears above the workspace.
+- **Brand** tab: the six brand colors (picker plus hex field; empty = built-in), heading and body
+  font (family and file), logo (file, corner, size, margin, opacity, hidden scenes), Load / Save
+  `brand.json`, and **Insert template scene** (after the selected scene). A template scene's
+  params are a form in the Scene tab. Every change is one undo step.
+- Template scenes are previewed in place, expanded by `vimmer expand` (dev server) or the same Rust
+  function in the desktop app, about 150 ms after each change. A static build cannot expand them
+  and shows only the brand background with a note.
 - The draft autosaves to localStorage. Export JSON, then render it with the CLI.
 
 ## Quality check
@@ -1015,6 +1125,12 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | `chart.label_overflow` | warning | a bar label or value label is wider than its room (vertical: the bar's slot; horizontal: the label / value column) |
 | `chart.cramped` | warning | a vertical chart leaves under 2 font sizes for its bars, or a horizontal chart's rows are shorter than 1.25 font sizes |
 | `ring.label_overflow` | warning | a progress ring's center text (custom label, or 100 % with its decimals) is wider than 92 % of the ring's hole |
+| `brand.contrast` | warning | text against the solid color behind it (the frame background on a scene without a picture, a shape layer that covers it, a text or lower-third box, the subtitle box) below the WCAG ratio: 4.5:1 for body text, 3:1 for large text (at least 6 % of the frame height, or 4.5 % at weight 700+). One finding per color pair; text over pictures is not checked |
+| `brand.logo_safe_area` | warning | the logo leaves the title-safe area (its `margin` is under 0.05); width from the image's shape |
+| `brand.logo_subtitles` | warning | the logo overlaps the two-line subtitle band while a cue shows on a scene where the logo is drawn |
+| `brand.unknown_scene` | warning | `logo.hide_on` names a scene id that does not exist |
+| `assets.missing_font`, `assets.missing_logo` | error | a brand font or logo file is not in the public dir (the render would stop) |
+| `template.text_overflow` | error / warning | a template's text needs more lines than its slot (`text.overflow` on the expanded layer); the fix points at the template param |
 | `assets.aspect_ratio` | warning / info | the picture fills under 40% / 60% of the frame; the rest is blurred padding (the renderer fits, never crops) |
 | `assets.low_resolution` | warning / info | the image (or clip) is enlarged more than 2.0x / 1.5x on screen (fit factor times the largest zoom; for an image or video layer, the factor that fits it to its box) |
 | `video.missing`, `video.undecodable` | error | a background or layer clip is missing, or ffmpeg finds no video stream with a duration in it |
@@ -1038,12 +1154,12 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | `subtitle.word_outside_cue`, `subtitle.words_out_of_order` | error | `words` outside their cue or overlapping; the fix drops the word timing |
 | `rendered.*` | error / warning | with `--rendered`: no video stream, frame size or duration (±200 ms) not matching the timeline, no audio stream although there is narration, audio or music; clipping in the mix (error), sample peak ≥ -0.1 dBFS, integrated loudness below -30 or above -9 LUFS |
 
-**How text is measured.** The renderer loads no web font, so text is set in Inter if installed,
+**How text is measured.** Without a brand font the renderer loads no web font, so text is set in Inter if installed,
 else the system font (SF Pro on macOS, PingFang for CJK). Widths are estimated per character
 class from Inter SemiBold (CJK 1.0 em, Latin lowercase 0.55, uppercase 0.68, digits 0.62,
 narrow punctuation 0.28) and lines are filled the way the browser breaks them. Latin widths are
 within about ±12% and CJK within about ±3%, so overflow is an error only when it holds at the
-optimistic end. The constants come from `AnimatedText.tsx` and `Subtitles.tsx`
+optimistic end. A brand font is measured with the same table, so its estimates are rougher. The constants come from `AnimatedText.tsx` and `Subtitles.tsx`
 (`vimmer-check/src/layout.rs`); change both together.
 
 ### JSON schema (`--json`)
@@ -1103,6 +1219,11 @@ Loudness and clipping of `http(s)` assets are not checked.
   `vimmer check` rules (`vimmer-check/src/layers.rs`). Box, timing, stacking and animation come
   for free. A kind that needs a file prepared before render (like `video`) also needs a step in
   `vimmer-scheduler/src/run.rs` (see `video.rs`).
+- **Adding a template**: an entry in `CATALOG` and a layout function in
+  `vimmer-dsl/src/template.rs` (both aspects; ids `tpl-…`, and `param_of_layer` for text that can
+  overflow), regenerate `editor/src/template-catalog.json`, add a sample in `editor/src/templates.ts`
+  `SAMPLE`, and describe it in `prompts/edit.md`. The guard, validation, check and preview pick it
+  up from the catalog.
 - **Building a `Scene` or `VideoTimeline`**: neither implements `Default`. Build them from JSON
   with `serde_json::from_value` (as `vimmer-storyboard` does) so that new DSL fields take their
   serde defaults. A literal would fail to compile when a field is added.

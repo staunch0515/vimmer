@@ -17,6 +17,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             project::read_project_file,
             project::write_project_file,
+            project::expand_timeline,
             render::start_render,
             render::cancel_render,
             render::reveal_in_finder,

@@ -7,6 +7,7 @@ import { outlineHeight } from "../layers";
 import { AssetUrlContext, resolveAsset, type AssetUrl } from "../../../src/assets";
 import { ClipLengthContext, type ClipLength } from "../../../src/components/ClipVideo";
 import { assetUrlFor } from "../media";
+import { usePreviewTimeline } from "../templates";
 
 type Props = {
   timeline: VideoTimeline;
@@ -108,6 +109,8 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
     return () => player.removeEventListener("frameupdate", handler);
   }, [playerRef, onFrame]);
 
+  // Template scenes are shown expanded by the Rust code the renderer uses (see templates.ts).
+  const { timeline: shown, errors: templateErrors } = usePreviewTimeline(timeline);
   const { width, height } = timeline.resolution;
   const assetUrl = assetRoot ? assetUrlFor(assetRoot) : null;
   const clipLength = useClipLengths(timeline, assetUrl);
@@ -123,7 +126,7 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
       <Player
         ref={playerRef}
         component={Timeline}
-        inputProps={timeline}
+        inputProps={shown}
         durationInFrames={frameCount(timeline)}
         fps={timeline.fps}
         compositionWidth={width}
@@ -134,6 +137,9 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
       />
       </ClipLengthContext.Provider>
       </AssetUrlContext.Provider>
+      {templateErrors.length > 0 && (
+        <div className="template-errors" role="status">{templateErrors.join("  ·  ")}</div>
+      )}
       {selectedLayer && onMoveLayer && (
         <div className="layer-overlay">
           <LayerHandle layer={selectedLayer} onMove={onMoveLayer} />

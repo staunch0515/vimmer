@@ -372,3 +372,14 @@ textarea { resize: vertical; width: 100%; }
 .bar-rows { display: flex; flex-direction: column; gap: 4px; }
 .bar-row { display: grid; grid-template-columns: 1fr 70px 80px auto; gap: 4px; align-items: center; }
 .bar-row input { min-width: 0; }
+
+/* Brand panel and templates */
+.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.row input:not([type="color"]) { flex: 1; min-width: 0; }
+.row input[type="color"] { width: 32px; height: 28px; padding: 0; border: none; background: none; cursor: pointer; }
+.subform { display: flex; flex-direction: column; gap: 8px; }
+.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.template-errors {
+  position: absolute; left: 8px; right: 8px; bottom: 56px; padding: 6px 10px; border-radius: 6px;
+  background: rgba(127, 29, 29, 0.85); color: #fecaca; font-size: 12px; pointer-events: none;
+}

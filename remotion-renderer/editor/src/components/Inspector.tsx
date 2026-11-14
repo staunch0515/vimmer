@@ -11,8 +11,9 @@ import { DEFAULT_CLIP } from "../layers";
 import { useEffect, useState } from "react";
 import { AssistantPanel } from "./AssistantPanel";
 import { LayerPanel } from "./LayerPanel";
+import { BrandEditor, TemplateParams } from "./BrandPanel";
 
-export type InspectorTab = "scene" | "subtitles" | "music" | "assistant";
+export type InspectorTab = "scene" | "subtitles" | "music" | "brand" | "assistant";
 
 type Props = {
   timeline: VideoTimeline;
@@ -41,6 +42,9 @@ export const Inspector = (props: Props) => {
         <button role="tab" aria-selected={tab === "music"} className={tab === "music" ? "tab active" : "tab"} onClick={() => setTab("music")}>
           Music
         </button>
+        <button role="tab" aria-selected={tab === "brand"} className={tab === "brand" ? "tab active" : "tab"} onClick={() => setTab("brand")} data-tab="brand">
+          Brand
+        </button>
         <button role="tab" aria-selected={tab === "assistant"} className={tab === "assistant" ? "tab active" : "tab"} onClick={() => setTab("assistant")}>
           Assistant
         </button>
@@ -49,6 +53,7 @@ export const Inspector = (props: Props) => {
         {tab === "scene" && <SceneEditor {...props} />}
         {tab === "subtitles" && <SubtitleEditor {...props} />}
         {tab === "music" && <MusicEditor {...props} />}
+        {tab === "brand" && <BrandEditor timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} />}
         {/* Stays mounted so a pending proposal survives switching tabs. */}
         <div hidden={tab !== "assistant"}>
           <AssistantPanel timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} />
@@ -83,7 +88,8 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
           onChange={(e) => patch({ duration_ms: Math.max(100, Number(e.target.value) || 100) })}
         />
       </Field>
-      <Field label="Text">
+      {scene.template && <TemplateParams index={index} template={scene.template} dispatch={dispatch} />}
+      <Field label="Text" hint={scene.template ? "drawn over the template" : undefined}>
         <textarea rows={3} value={scene.text ?? ""} onChange={(e) => patch({ text: e.target.value || null })} />
       </Field>
       <Field label="Highlights" hint="Comma-separated words">
