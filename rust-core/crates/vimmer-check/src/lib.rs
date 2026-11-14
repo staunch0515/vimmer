@@ -11,14 +11,19 @@
 pub mod assets;
 pub mod audio;
 pub mod brand;
+pub mod fonts;
 pub mod layers;
 pub mod layout;
+pub mod logo;
+pub mod media;
 pub mod motion;
 pub mod music;
 pub mod rendered;
 pub mod report;
+mod sfnt;
 pub mod sfx;
 pub mod text;
+pub mod textbox;
 pub mod timing;
 pub mod video;
 
@@ -265,10 +270,11 @@ fn check_resolved(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding>
 
 fn check_expanded(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding> {
     let mut findings = Vec::new();
+    let fonts = fonts::Fonts::load(timeline.brand.as_ref(), opts.public_dir.as_deref());
     findings.extend(timing::validation(timeline));
-    findings.extend(text::check(timeline));
-    findings.extend(layout::check(timeline));
-    findings.extend(layers::check(timeline));
+    findings.extend(text::check_with(timeline, &fonts));
+    findings.extend(layout::check_with(timeline, &fonts));
+    findings.extend(layers::check_with(timeline, &fonts));
     findings.extend(motion::check(timeline));
     findings.extend(video::check_cost(timeline));
     findings.extend(timing::check(timeline));
@@ -282,8 +288,10 @@ fn check_expanded(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding>
     findings.extend(timing::narration(timeline, measured.as_deref(), opts.tts));
     findings.extend(brand::contrast(timeline));
     findings.extend(brand::check(timeline, opts.public_dir.as_deref()));
+    findings.extend(logo::overlap(timeline, opts.public_dir.as_deref(), &fonts));
     match &opts.public_dir {
         Some(dir) => {
+            findings.extend(media::check(timeline, dir, &opts.ffmpeg, &fonts));
             findings.extend(assets::check(timeline, dir));
             findings.extend(layers::check_assets(timeline, dir));
             findings.extend(audio::check_sources(timeline, dir, &opts.ffmpeg));

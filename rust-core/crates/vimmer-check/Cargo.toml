@@ -10,5 +10,7 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 image.workspace = true
+# Brand font advance widths (cmap + hmtx); no default features, no dependencies of its own.
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
 vimmer-dsl.workspace = true
 vimmer-media.workspace = true

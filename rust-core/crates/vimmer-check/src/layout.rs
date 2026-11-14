@@ -10,7 +10,9 @@
 
 use vimmer_dsl::{Resolution, VideoTimeline};
 
-use crate::text::{cue_lines, scene_text_lines, shown_text, MAX_CUE_LINES};
+use crate::fonts::Fonts;
+use crate::text::{cue_lines_with, scene_text_lines_with, shown_text, MAX_CUE_LINES};
+use crate::textbox::Role;
 use crate::{scene_starts_ms, Finding, Severity, Suggestion};
 
 /// Margin of the title-safe area, as a fraction of each side.
@@ -117,6 +119,11 @@ pub fn title_safe(res: Resolution) -> (f64, f64, f64, f64) {
 }
 
 pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
+    check_with(timeline, &Fonts::none())
+}
+
+/// [`check`] with the brand's measured fonts.
+pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
     let mut out = Vec::new();
     let res = timeline.resolution;
     let (safe_l, safe_t, _safe_r, safe_b) = title_safe(res);
@@ -129,7 +136,7 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
         let Some(text) = scene.text.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
         };
-        let lines = scene_text_lines(text, &area, 1.0);
+        let lines = scene_text_lines_with(text, &area, 1.0, fonts, Role::Heading);
         if lines > area.max_lines {
             continue;
         }
@@ -178,7 +185,7 @@ pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
             ));
         }
         for (i, cue) in timeline.subtitles.iter().enumerate() {
-            let lines = cue_lines(&shown_text(cue), &band, 1.0);
+            let lines = cue_lines_with(&shown_text(cue), &band, 1.0, fonts);
             if lines <= MAX_CUE_LINES {
                 continue;
             }

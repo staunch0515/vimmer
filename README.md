@@ -1312,7 +1312,7 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | code | severity | rule |
 |---|---|---|
 | `dsl.invalid` | error | the DSL validation fails (cue and word-timing problems are reported by the codes below instead) |
-| `text.overflow` | error / warning | a text layer or lower third with a `height` needs more lines than its box holds (same width model, its own font size), or scene text needs more lines than fit between the top padding and the 260 px bottom inset: 6 lines at 1920x1080, 14 at 1080x1920 (92 px font, 1.2 line height, 73.9% of the width per line). Error when it still overflows with every width 12% narrower |
+| `text.overflow` | error / warning | a text layer or lower third with a `height` needs more lines than its box holds (same width model, its own font size), or scene text needs more lines than fit between the top padding and the 260 px bottom inset: 6 lines at 1920x1080, 14 at 1080x1920 (92 px font, 1.2 line height, 73.9% of the width per line). Error when it still overflows with every width 12% narrower (3% when the brand font is measured, below) |
 | `text.reading_speed` | warning | scene text without narration, or a text layer over its shown time, faster than the reading limit (below) |
 | `subtitle.too_long` | error / warning | a cue needs more than 2 lines in the band (font 5% of the short side, text width 86% of the frame minus padding); error at 4+ lines even with 12% narrower widths. The fix splits the cue in two |
 | `subtitle.reading_speed` | warning | a cue without word timing above en 20, zh 9, ja 4 characters per second (Netflix limits; en counts spaces, zh/ja skip punctuation). Cues with word timing or over a narrated scene follow the speech and are not checked |
@@ -1328,7 +1328,9 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | `chart.label_overflow` | warning | a bar label or value label is wider than its room (vertical: the bar's slot; horizontal: the label / value column) |
 | `chart.cramped` | warning | a vertical chart leaves under 2 font sizes for its bars, or a horizontal chart's rows are shorter than 1.25 font sizes |
 | `ring.label_overflow` | warning | a progress ring's center text (custom label, or 100 % with its decimals) is wider than 92 % of the ring's hole |
-| `brand.contrast` | warning | text against the solid color behind it (the frame background on a scene without a picture, a shape layer that covers it, a text or lower-third box, the subtitle box) below the WCAG ratio: 4.5:1 for body text, 3:1 for large text (at least 6 % of the frame height, or 4.5 % at weight 700+). One finding per color pair; text over pictures is not checked |
+| `brand.contrast` | warning | text against the solid color behind it (the frame background on a scene without a picture, a shape layer that covers it, a text or lower-third box, the subtitle box) below the WCAG ratio: 4.5:1 for body text, 3:1 for large text (at least 6 % of the frame height, or 4.5 % at weight 700+). One finding per color pair; text over pictures is `text.contrast_media` |
+| `text.contrast_media` | warning | scene text, a text layer, counter or lower third over the scene's image or video is below the same WCAG ratios against the pixels under it. The background is rebuilt as the renderer draws it (letterbox, Ken Burns motion or keyframes, video frame via ffmpeg at the clip time, `cover`/`contain`), at quarter size, with the scene text's dark gradient, shapes under the text and translucent text boxes on top; up to 160 points of the text box at up to 3 moments, and the box's lowest 20 % is the value. Skipped for remote or missing files (reported elsewhere), text over image or video layers, and opaque boxes (`brand.contrast`); at most 12 video frames per check |
+| `brand.logo_overlap` | warning / info | the logo's box (same geometry as the renderer: corner, `margin`, `size`, the image's aspect ratio) overlaps text (scene text, text layers, lower thirds, counters, charts, rings: warning) or a small image, icon, shape or video layer (info; layers of a quarter of the frame or more are backdrops and not reported) while both are shown. The fix moves the logo to a corner where it covers no text, else hides it on that scene |
 | `brand.logo_safe_area` | warning | the logo leaves the title-safe area (its `margin` is under 0.05); width from the image's shape |
 | `brand.logo_subtitles` | warning | the logo overlaps the two-line subtitle band while a cue shows on a scene where the logo is drawn |
 | `brand.unknown_scene` | warning | `logo.hide_on` names a scene id that does not exist |
@@ -1371,7 +1373,10 @@ else the system font (SF Pro on macOS, PingFang for CJK). Widths are estimated p
 class from Inter SemiBold (CJK 1.0 em, Latin lowercase 0.55, uppercase 0.68, digits 0.62,
 narrow punctuation 0.28) and lines are filled the way the browser breaks them. Latin widths are
 within about ±12% and CJK within about ±3%, so overflow is an error only when it holds at the
-optimistic end. A brand font is measured with the same table, so its estimates are rougher. The constants come from `AnimatedText.tsx` and `Subtitles.tsx`
+optimistic end. A brand font with a TTF/OTF file in the public dir is measured instead: advance
+widths come from its `hmtx`/`cmap` tables (characters it lacks fall back to the table above), and
+an overflow is an error when it holds with widths 3% narrower (kerning). Messages then say
+"measured in <family>". WOFF/WOFF2 files and fonts without a file use the estimate. The constants come from `AnimatedText.tsx` and `Subtitles.tsx`
 (`vimmer-check/src/layout.rs`); change both together.
 
 ### JSON schema (`--json`)

@@ -7,7 +7,7 @@
 //! video is watched scaled down): a font of at least 6 % of the frame height, or 4.5 % when bold
 //! (weight 700+). What is behind the text is only known when nothing but solid colors is there: a
 //! text box, a shape layer that covers the text, or the frame background on a scene without an
-//! image or video. Text over pictures is not checked (the scene text gets a dark scrim there).
+//! image or video. Text over pictures is `text.contrast_media` (see [`crate::media`]).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -30,16 +30,16 @@ pub const LARGE_MIN_RATIO: f64 = 3.0;
 pub const LARGE_FRAC: f64 = 0.06;
 pub const LARGE_BOLD_FRAC: f64 = 0.045;
 
-fn rgb(c: &str) -> Option<[u8; 4]> {
+pub(crate) fn rgb(c: &str) -> Option<[u8; 4]> {
     parse_hex(c)
 }
 
 /// `color` (maybe translucent) over the opaque `under`.
-fn flatten(color: &str, under: [u8; 3]) -> Option<[u8; 3]> {
+pub(crate) fn flatten(color: &str, under: [u8; 3]) -> Option<[u8; 3]> {
     rgb(color).map(|c| over(c, under))
 }
 
-fn is_large(font_frac: f64, weight: u16) -> bool {
+pub(crate) fn is_large(font_frac: f64, weight: u16) -> bool {
     font_frac >= LARGE_FRAC || (weight >= 700 && font_frac >= LARGE_BOLD_FRAC)
 }
 
@@ -67,7 +67,7 @@ struct Sample {
 
 /// The solid color behind layer `index` of `scene` (shapes below it that cover its box, else the
 /// frame background), or `None` when a picture may be behind it.
-fn behind(scene: &Scene, index: usize, base: Option<[u8; 3]>) -> Option<[u8; 3]> {
+pub(crate) fn behind(scene: &Scene, index: usize, base: Option<[u8; 3]>) -> Option<[u8; 3]> {
     let layer = &scene.layers[index];
     let target = frac_box(layer).unwrap_or((layer.x, layer.y, layer.x + layer.width, layer.y));
     // Draw order: z, then list order. Layers drawn before this one that are opaque-ish shapes
@@ -282,7 +282,7 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
     out
 }
 
-fn hex(c: [u8; 3]) -> String {
+pub(crate) fn hex(c: [u8; 3]) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
 
@@ -340,7 +340,7 @@ pub fn contrast(t: &VideoTimeline) -> Vec<Finding> {
 }
 
 /// Width over height of an image file, if it can be read (raster files and SVG `viewBox`).
-fn aspect(path: &Path) -> Option<f64> {
+pub(crate) fn aspect(path: &Path) -> Option<f64> {
     if path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
@@ -362,7 +362,11 @@ fn aspect(path: &Path) -> Option<f64> {
 }
 
 /// The logo's box in px: (left, top, right, bottom).
-fn logo_rect(brand: &Brand, res: Resolution, aspect: f64) -> Option<(f64, f64, f64, f64)> {
+pub(crate) fn logo_rect(
+    brand: &Brand,
+    res: Resolution,
+    aspect: f64,
+) -> Option<(f64, f64, f64, f64)> {
     let logo = brand.logo.as_ref()?;
     let (w, h) = (f64::from(res.width), f64::from(res.height));
     let lh = f64::from(logo.size) * h;
