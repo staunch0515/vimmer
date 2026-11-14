@@ -1,9 +1,10 @@
-import type { Brand, Keyframe, Layer, LayerKind, Music, Scene, SceneTemplate, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import type { Brand, SubtitleBox, Keyframe, Layer, LayerKind, Music, Scene, SceneTemplate, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
 import { templateScene } from "./templates";
 import { emptyScene, type Selection } from "./model";
 import { clampLayers, moveInStack, newLayer } from "./layers";
 import { patchCue } from "../../src/subtitles/words";
 import * as kfs from "./layerKeyframes";
+import { clampBox } from "./subtitleBox";
 import { endMerge, record, redo, undo, type Merge } from "./history";
 
 export type EditorState = {
@@ -46,6 +47,8 @@ export type Action =
   | { type: "patchMusic"; patch: Partial<Music> }
   // The whole brand (null removes it). Brand edits are undoable like any other edit.
   | { type: "setBrand"; brand: Brand | null }
+  // Where the subtitles sit (null: the built-in place).
+  | { type: "setSubtitleBox"; box: SubtitleBox | null }
   // A new scene made from a template, after scene `after` (-1: at the start).
   | { type: "insertTemplate"; name: string; after: number; params?: SceneTemplate["params"] }
   | { type: "patchTemplate"; index: number; params: SceneTemplate["params"] }
@@ -329,6 +332,10 @@ const edit = (state: EditorState, action: Action): EditorState => {
     case "patchMusic": {
       if (!t.music) return state;
       return commit(state, { ...t, music: { ...t.music, ...action.patch } });
+    }
+    case "setSubtitleBox": {
+      const { subtitle_box: _old, ...rest } = t;
+      return commit(state, action.box ? { ...rest, subtitle_box: clampBox(action.box) } : rest);
     }
     case "setBrand": {
       const { brand: _old, ...rest } = t;

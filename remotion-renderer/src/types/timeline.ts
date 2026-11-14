@@ -371,4 +371,12 @@ export type VideoTimeline = {
   music?: Music | null;
   // Absent: the built-in look, exactly as before brands existed.
   brand?: Brand | null;
+  // Where the subtitles sit. Absent: the built-in place (centered, bottom edge 4 % of the frame
+  // width above the bottom), exactly as before. Mirrors `SubtitleBox` in model.rs.
+  subtitle_box?: SubtitleBox | null;
+};
+
+export type SubtitleBox = {
+  x: number; // center of the box, fraction of the frame width (0..1)
+  y: number; // bottom edge of the box, fraction of the frame height (0..1]; the box grows upward
 };

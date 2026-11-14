@@ -1284,6 +1284,7 @@ mod tests {
             ],
             subtitles: vec![],
             music: None,
+            subtitle_box: None,
         };
         t.scenes[0].audio = None; // not narrated by us: ignored
         let cfg = SchedulerConfig::new(
@@ -1342,6 +1343,7 @@ mod tests {
             scenes: vec![narrated("zh", 2000, "你好世界。")],
             subtitles: vec![SubtitleCue::new(0, 2000, "你好世界。")],
             music: None,
+            subtitle_box: None,
         };
         // Words from an earlier text, and times that no longer fit the edited cue.
         t.subtitles[0].words = ["再", "见", "。"]
@@ -1402,6 +1404,7 @@ mod tests {
             scenes: vec![narrated("a", 2000, "Hello")],
             subtitles: vec![SubtitleCue::new(0, 1000, "Hello")],
             music: None,
+            subtitle_box: None,
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -1461,6 +1464,7 @@ mod tests {
             ],
             subtitles: vec![],
             music: None,
+            subtitle_box: None,
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -1530,6 +1534,7 @@ mod tests {
             scenes: vec![narrated("a", 2000, "你好"), narrated("b", 2000, "再见")],
             subtitles: vec![],
             music: None,
+            subtitle_box: None,
         };
         let mut clips = narration_clips(
             &t,
@@ -1612,6 +1617,7 @@ mod tests {
             ],
             subtitles: vec![SubtitleCue::new(0, 1000, "Hello.")],
             music: None,
+            subtitle_box: None,
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -1735,6 +1741,7 @@ mod tests {
             scenes: vec![narrated("zh", 2000, "你好。")],
             subtitles: vec![],
             music: None,
+            subtitle_box: None,
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -1956,6 +1963,7 @@ mod tests {
             ],
             subtitles: vec![],
             music: None,
+            subtitle_box: None,
         }
     }
 

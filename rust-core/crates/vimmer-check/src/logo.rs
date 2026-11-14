@@ -133,12 +133,11 @@ fn covers_text(t: &VideoTimeline, items: &[Item], rect: Edges, hidden: &[String]
     let on_text = items
         .iter()
         .any(|i| i.text && shown(i.scene) && i.boxes.iter().any(|b| overlaps(rect, *b)));
-    let band = SubtitleBand::new(t.resolution);
-    let w = f64::from(t.resolution.width);
+    let band = SubtitleBand::for_timeline(t);
     let band_rect = (
         band.left_x,
         band.top_y(2),
-        w - 2.0 * band.left_x,
+        band.right_x - band.left_x,
         band.bottom_y - band.top_y(2),
     );
     on_text || (!t.subtitles.is_empty() && overlaps(rect, band_rect))

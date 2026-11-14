@@ -138,6 +138,8 @@ pub enum ValidationError {
     BadTemplate { scene: String, message: String },
     #[error("brand: {0}")]
     BadBrand(String),
+    #[error("subtitle_box: {0}")]
+    BadSubtitleBox(String),
     #[error("scene `{scene}` sfx {index}: {message}")]
     BadSfx {
         scene: String,
@@ -815,6 +817,13 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
                 .collect()
         })
         .unwrap_or_default();
+    if let Some(b) = &timeline.subtitle_box {
+        errors.extend(
+            b.problems()
+                .into_iter()
+                .map(ValidationError::BadSubtitleBox),
+        );
+    }
     let result = if timeline.scenes.iter().any(|s| s.template.is_some()) {
         let mut expanded = timeline.clone();
         match crate::template::expand_templates(&mut expanded) {
@@ -1037,12 +1046,38 @@ mod tests {
             scenes,
             subtitles: vec![],
             music: None,
+            subtitle_box: None,
         }
     }
 
     #[test]
     fn valid_timeline_passes() {
         assert!(validate(&timeline(vec![scene("a", 15_000)])).is_ok());
+    }
+
+    #[test]
+    fn subtitle_box_is_optional_and_checked() {
+        let mut t = timeline(vec![scene("a", 15_000)]);
+        // Absent: not written, and the default is today's place (4 % of the width above the bottom).
+        assert!(!serde_json::to_string(&t).unwrap().contains("subtitle_box"));
+        let d = t.subtitle_box_or_default();
+        assert_eq!(d.x, 0.5);
+        assert!((d.y - (1.0 - 0.04 * 1920.0 / 1080.0)).abs() < 1e-12);
+        t.subtitle_box = Some(crate::model::SubtitleBox { x: 0.3, y: 0.5 });
+        assert!(validate(&t).is_ok());
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains(r#""subtitle_box":{"x":0.3,"y":0.5}"#), "{json}");
+        let back: VideoTimeline = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.subtitle_box, t.subtitle_box);
+        t.subtitle_box = Some(crate::model::SubtitleBox { x: 1.5, y: 0.0 });
+        let errs = validate(&t).unwrap_err();
+        let bad: Vec<_> = errs
+            .iter()
+            .filter(|e| matches!(e, ValidationError::BadSubtitleBox(_)))
+            .collect();
+        assert_eq!(bad.len(), 2, "{errs:?}");
+        t.subtitle_box = Some(crate::model::SubtitleBox { x: f64::NAN, y: 1.0 });
+        assert!(validate(&t).is_err());
     }
 
     #[test]
@@ -1059,6 +1094,7 @@ mod tests {
             scenes: vec![bad, scene("dup", 1000)],
             subtitles: vec![],
             music: None,
+            subtitle_box: None,
         };
         let errs = validate(&t).unwrap_err();
         assert!(errs.contains(&ValidationError::UnsupportedFps(24)));

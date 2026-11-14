@@ -5,6 +5,7 @@ import type { VideoTimeline } from "../../src/types/timeline";
 import { checkTimeline, emptyScene, frameCount, frameToMs, timecode, totalMs, ALLOWED_RESOLUTIONS, type Selection } from "./model";
 import { reducer, type Action, type EditorState } from "./state";
 import { mergeKey, mergesInput } from "./history";
+import { boxOf, nudgeBox } from "./subtitleBox";
 import { baseName, confirmDiscard, guardClose, parseTimeline, pickToOpen, saveTimeline, serialize, setWindowTitle } from "./project";
 import { Toolbar } from "./components/Toolbar";
 import { Preview } from "./components/Preview";
@@ -267,9 +268,21 @@ export const App = () => {
     }
   };
 
+  // Arrow keys nudge the subtitle box while a subtitle is selected: 1 px, 10 px with Shift.
+  // Presses in a row are one undo step (like typing in a field).
+  const nudgeSubtitles = (key: string, shift: boolean): boolean => {
+    if (state.selection.kind !== "subtitle") return false;
+    const step = shift ? 10 : 1;
+    const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[key];
+    if (!d) return false;
+    const box = nudgeBox(boxOf(timeline.subtitle_box, timeline.resolution), d[0], d[1], timeline.resolution);
+    dispatch({ type: "coalesce", key: "nudge-subtitles", at: performance.now(), action: { type: "setSubtitleBox", box } });
+    return true;
+  };
+
   // Shortcuts call the latest handlers through a ref, so the listener never sees stale state.
-  const actions = useRef({ doNew, doOpen, doSave });
-  actions.current = { doNew, doOpen, doSave };
+  const actions = useRef({ doNew, doOpen, doSave, nudgeSubtitles });
+  actions.current = { doNew, doOpen, doSave, nudgeSubtitles };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -292,6 +305,8 @@ export const App = () => {
       } else if (mod && key === "y" && !typing) {
         e.preventDefault();
         dispatch({ type: "redo" });
+      } else if (!typing && !mod && e.key.startsWith("Arrow") && actions.current.nudgeSubtitles(e.key, e.shiftKey)) {
+        e.preventDefault();
       } else if (e.code === "Space" && !typing) {
         e.preventDefault();
         playerRef.current?.toggle();
@@ -445,6 +460,8 @@ export const App = () => {
             playerRef={playerRef}
             onFrame={setFrame}
             selectedLayer={selectedLayer}
+            subtitlesSelected={state.selection.kind === "subtitle"}
+            onMoveSubtitles={(box) => dispatch({ type: "setSubtitleBox", box })}
             onMoveLayer={(x, y) => {
               if (state.selection.kind !== "layer") return;
               const { sceneIndex, index } = state.selection;
@@ -456,7 +473,7 @@ export const App = () => {
             <span className="dim mono">/ {timecode(totalMs(timeline))}</span>
             <span className="dim">frame {frame} of {frameCount(timeline)}</span>
             <span className="spacer" />
-            <span className="dim">Space play · ⌘S save · ⌘Z undo</span>
+            <span className="dim">Space play · ⌘S save · ⌘Z undo · ⇧⌘Z redo</span>
           </div>
         </section>
         <div ref={fieldsRef} style={{ display: "contents" }}>

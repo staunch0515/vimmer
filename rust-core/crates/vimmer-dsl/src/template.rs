@@ -1048,6 +1048,7 @@ mod tests {
                         subtitles: vec![],
                         music: None,
                         brand: b.cloned(),
+                        subtitle_box: None,
                     };
                     validate(&t).unwrap_or_else(|e| panic!("{case}: {e:?}"));
                     // Everything stays inside the frame.
@@ -1149,6 +1150,7 @@ mod tests {
                 subtitles: vec![],
                 music: None,
                 brand: None,
+                subtitle_box: None,
             };
             validate(&t).unwrap_or_else(|e| panic!("{name}: {e:?}"));
         }

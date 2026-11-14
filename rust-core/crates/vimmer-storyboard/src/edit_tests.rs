@@ -1441,6 +1441,36 @@ fn brand_can_be_added_and_changed() {
 }
 
 #[test]
+fn subtitle_box_can_be_set_moved_and_removed() {
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/subtitle_box", "value": {"x": 0.5, "y": 0.2}}]),
+    );
+    assert_eq!(out.timeline["subtitle_box"], json!({"x": 0.5, "y": 0.2}));
+    let doc = out.timeline;
+    let out = ok(
+        &doc,
+        json!([{"op": "replace", "path": "/subtitle_box/x", "value": 0.4}]),
+    );
+    assert_eq!(out.timeline["subtitle_box"]["x"], 0.4);
+    let out = ok(&doc, json!([{"op": "remove", "path": "/subtitle_box"}]));
+    assert!(out.timeline.get("subtitle_box").is_none());
+    let e = err(
+        &doc,
+        json!([{"op": "add", "path": "/subtitle_box/align", "value": "left"}]),
+    );
+    assert!(
+        text(&e).contains("`align` is not a field of the subtitle box"),
+        "{e}"
+    );
+    let e = err(
+        &doc,
+        json!([{"op": "replace", "path": "/subtitle_box/y", "value": 1.4}]),
+    );
+    assert!(text(&e).contains("subtitle_box"), "{e}");
+}
+
+#[test]
 fn template_scenes_are_checked_per_template() {
     let scene = |params: Value| {
         json!([{"op": "add", "path": "/scenes/-", "value": {

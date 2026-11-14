@@ -611,6 +611,8 @@ enum Kind {
     SfxTrigger,
     /// A scene's background `video` clip.
     Video,
+    /// The timeline's `subtitle_box`: where the subtitles sit.
+    SubtitleBox,
     /// The timeline's `brand` and its parts.
     Brand,
     BrandColors,
@@ -640,7 +642,9 @@ impl Kind {
                 ("subtitles", Subtitles),
                 ("music", Music),
                 ("brand", Brand),
+                ("subtitle_box", SubtitleBox),
             ],
+            SubtitleBox => &[("x", Leaf), ("y", Leaf)],
             Brand => &[
                 ("colors", BrandColors),
                 ("fonts", BrandFonts),
@@ -790,6 +794,7 @@ impl Kind {
             Kind::Sfx => "a sound effect",
             Kind::SfxTrigger => "a sound effect's layer trigger",
             Kind::Video => "a scene background video",
+            Kind::SubtitleBox => "the subtitle box",
             Kind::Brand => "the brand",
             Kind::BrandColors => "the brand colors",
             Kind::BrandFonts => "the brand fonts",

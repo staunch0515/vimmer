@@ -362,6 +362,7 @@ mod tests {
             scenes,
             subtitles: vec![],
             music: None,
+            subtitle_box: None,
         }
     }
 

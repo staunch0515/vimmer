@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Timeline } from "../../../src/compositions/Timeline";
-import type { Layer, VideoTimeline } from "../../../src/types/timeline";
+import type { Layer, SubtitleBox, VideoTimeline } from "../../../src/types/timeline";
+import { boxOf, snapBox, type BoxSize, type Guides } from "../subtitleBox";
 import { frameCount } from "../model";
 import { outlineHeight } from "../layers";
 import { AssetUrlContext, resolveAsset, type AssetUrl } from "../../../src/assets";
@@ -18,6 +19,94 @@ type Props = {
   // when the drag ends, so a drag is one undo step.
   selectedLayer?: Layer | null;
   onMoveLayer?: (x: number, y: number) => void;
+  // A subtitle is selected: the subtitle box is outlined and draggable. Moving it calls
+  // onMoveSubtitles once, when the drag ends (one undo step).
+  subtitlesSelected?: boolean;
+  onMoveSubtitles?: (box: SubtitleBox) => void;
+};
+
+// The shown subtitle box, in fractions of the frame: left, top, width, height.
+type Rect = { l: number; t: number; w: number; h: number };
+
+// Follows the rendered subtitle box (`data-subtitle-box` in Subtitles.tsx) inside the frame, so
+// the handle sits exactly on what the Player draws, whatever the cue and the frame.
+const useSubtitleRect = (frameRef: React.RefObject<HTMLDivElement | null>, active: boolean): Rect | null => {
+  const [rect, setRect] = useState<Rect | null>(null);
+  useEffect(() => {
+    if (!active) {
+      setRect(null);
+      return;
+    }
+    const frame = frameRef.current;
+    if (!frame) return;
+    const measure = () => {
+      const el = frame.querySelector<HTMLElement>("[data-subtitle-box]");
+      let next: Rect | null = null;
+      if (el) {
+        const f = frame.getBoundingClientRect();
+        const b = el.getBoundingClientRect();
+        const fw = frame.clientWidth;
+        const fh = frame.clientHeight;
+        next = { l: (b.left - f.left - frame.clientLeft) / fw, t: (b.top - f.top - frame.clientTop) / fh, w: b.width / fw, h: b.height / fh };
+      }
+      setRect((r) =>
+        r === next || (r && next && Math.abs(r.l - next.l) + Math.abs(r.t - next.t) + Math.abs(r.w - next.w) + Math.abs(r.h - next.h) < 1e-5)
+          ? r
+          : next,
+      );
+    };
+    // The Player rewrites its DOM on every frame and on every prop change (a cue appears, the
+    // box moves); the frame resizes with the window. Measure after each.
+    const mutations = new MutationObserver(measure);
+    mutations.observe(frame, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["style"] });
+    const resize = new ResizeObserver(measure);
+    resize.observe(frame);
+    measure();
+    return () => {
+      mutations.disconnect();
+      resize.disconnect();
+    };
+  }, [frameRef, active]);
+  return rect;
+};
+
+const SubtitleHandle = ({
+  rect, box, timeline, frameRef, onDrag, onMove,
+}: {
+  rect: Rect; box: SubtitleBox; timeline: VideoTimeline; frameRef: React.RefObject<HTMLDivElement | null>;
+  onDrag: (box: SubtitleBox | null, guides: Guides | null) => void; onMove: (box: SubtitleBox) => void;
+}) => {
+  const start = useRef<{ px: number; py: number; fw: number; fh: number; box: SubtitleBox; size: BoxSize; last: SubtitleBox | null } | null>(null);
+  return (
+    <div
+      className={start.current ? "layer-handle subtitle-handle dragging" : "layer-handle subtitle-handle"}
+      data-subtitle-handle
+      style={{ left: `${rect.l * 100}%`, top: `${rect.t * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}
+      title="Drag to move the subtitles (all cues). Arrow keys nudge, Shift for 10 px."
+      onPointerDown={(e) => {
+        const frame = frameRef.current;
+        if (!frame) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        start.current = { px: e.clientX, py: e.clientY, fw: frame.clientWidth, fh: frame.clientHeight, box, size: { w: rect.w, h: rect.h }, last: null };
+      }}
+      onPointerMove={(e) => {
+        const s = start.current;
+        if (!s) return;
+        const wanted = { x: s.box.x + (e.clientX - s.px) / s.fw, y: s.box.y + (e.clientY - s.py) / s.fh };
+        const snapped = snapBox(wanted, s.size, timeline.resolution);
+        s.last = snapped.box;
+        onDrag(snapped.box, snapped.guides);
+      }}
+      onPointerUp={() => {
+        const s = start.current;
+        start.current = null;
+        onDrag(null, null);
+        if (s?.last && (s.last.x !== s.box.x || s.last.y !== s.box.y)) onMove(s.last);
+      }}
+    >
+      <span className="layer-handle-label">subtitles</span>
+    </div>
+  );
 };
 
 const round4 = (v: number) => Math.round(v * 10_000) / 10_000;
@@ -100,7 +189,12 @@ const useClipLengths = (timeline: VideoTimeline, assetUrl: AssetUrl | null): Cli
 };
 
 // The preview is the real Remotion composition running in the Player, so what you see is what renders.
-export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer, onMoveLayer }: Props) => {
+export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer, onMoveLayer, subtitlesSelected, onMoveSubtitles }: Props) => {
+  const frameRef = useRef<HTMLDivElement>(null);
+  // While the subtitles are dragged, the Player draws them at the dragged place.
+  const [dragBox, setDragBox] = useState<SubtitleBox | null>(null);
+  const [guides, setGuides] = useState<Guides | null>(null);
+  const subtitleRect = useSubtitleRect(frameRef, !!subtitlesSelected && !!onMoveSubtitles);
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
@@ -110,13 +204,15 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
   }, [playerRef, onFrame]);
 
   // Template scenes are shown expanded by the Rust code the renderer uses (see templates.ts).
-  const { timeline: shown, errors: templateErrors } = usePreviewTimeline(timeline);
+  const { timeline: expanded, errors: templateErrors } = usePreviewTimeline(timeline);
+  const shown = dragBox ? { ...expanded, subtitle_box: dragBox } : expanded;
   const { width, height } = timeline.resolution;
   const assetUrl = assetRoot ? assetUrlFor(assetRoot) : null;
   const clipLength = useClipLengths(timeline, assetUrl);
   return (
     <div className="canvas-slot">
       <div
+        ref={frameRef}
         className="canvas-frame"
         // Largest box with the composition's aspect ratio that fits the slot.
         style={{ width: `min(100cqw, calc(100cqh * ${width} / ${height}))`, aspectRatio: `${width} / ${height}` }}
@@ -143,6 +239,31 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
       {selectedLayer && onMoveLayer && (
         <div className="layer-overlay">
           <LayerHandle layer={selectedLayer} onMove={onMoveLayer} />
+        </div>
+      )}
+      {subtitlesSelected && onMoveSubtitles && (
+        <div className="layer-overlay" data-subtitle-overlay>
+          {guides && (
+            <>
+              {/* The title-safe area, and the lines the box snapped to. */}
+              <div className="safe-area-guide" />
+              {guides.x.map((x) => <div key={`gx${x}`} className="snap-line v" style={{ left: `${x * 100}%` }} />)}
+              {guides.y.map((y) => <div key={`gy${y}`} className="snap-line h" style={{ top: `${y * 100}%` }} />)}
+            </>
+          )}
+          {subtitleRect && (
+            <SubtitleHandle
+              rect={subtitleRect}
+              box={boxOf(timeline.subtitle_box, timeline.resolution)}
+              timeline={timeline}
+              frameRef={frameRef}
+              onDrag={(b, g) => {
+                setDragBox(b);
+                setGuides(g);
+              }}
+              onMove={onMoveSubtitles}
+            />
+          )}
         </div>
       )}
       </div>

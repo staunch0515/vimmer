@@ -194,10 +194,11 @@ textarea { resize: vertical; width: 100%; }
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); font-weight: 600;
   margin-top: 6px;
 }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field-label { color: var(--text-2); font-size: 12px; display: flex; align-items: baseline; gap: 4px; }
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.field > input, .field > select, .field > textarea { min-width: 0; max-width: 100%; }
+.field-label { color: var(--text-2); font-size: 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 4px; min-width: 0; }
 .field-label .suffix { margin-left: auto; color: var(--text-3); font-family: var(--mono); font-size: 11px; }
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 .empty { padding: 24px 8px; text-align: center; }
 .empty-title { font-weight: 500; margin-bottom: 4px; }
 .cue-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -351,7 +352,7 @@ textarea { resize: vertical; width: 100%; }
 
 .media-field { display: flex; flex-direction: column; gap: 4px; }
 .media-input { display: flex; gap: 6px; align-items: center; }
-.media-input input { flex: 1; }
+.media-input input { flex: 1; min-width: 0; }
 .field-error { color: var(--danger); font-size: 11px; }
 .block.music { top: 10px; bottom: 10px; background: linear-gradient(180deg, #3b2a14, #2a1e0e); border-color: rgba(251, 191, 36, 0.25); }
 .block.music.active { border-color: var(--amber); box-shadow: 0 0 16px rgba(251, 191, 36, 0.25); }
@@ -437,3 +438,11 @@ textarea { resize: vertical; width: 100%; }
 }
 .kf-marker.layer { background: #a5b4fc; }
 .kf-marker.layer.active { background: #fff; }
+
+/* Subtitle box drag: the title-safe area (5 % margins) and the snap lines. */
+.subtitle-handle { outline-color: var(--cyan); background: rgba(34, 211, 238, 0.06); }
+.subtitle-handle .layer-handle-label { background: #0e7490; }
+.safe-area-guide { position: absolute; inset: 5%; border: 1px dashed rgba(250, 204, 21, 0.55); pointer-events: none; }
+.snap-line { position: absolute; background: #f472b6; pointer-events: none; }
+.snap-line.v { top: 0; bottom: 0; width: 1px; margin-left: -0.5px; }
+.snap-line.h { left: 0; right: 0; height: 1px; margin-top: -0.5px; }

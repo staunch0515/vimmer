@@ -101,6 +101,8 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
     VideoTimeline {
         // The brand draws the logo and sets fonts and default colors in every chunk.
         brand: timeline.brand.clone(),
+        // Where the subtitles sit: the same in every chunk.
+        subtitle_box: timeline.subtitle_box,
         fps,
         resolution: timeline.resolution,
         scenes: timeline.scenes[chunk.scenes.clone()].to_vec(),
@@ -212,6 +214,7 @@ mod tests {
                 .collect(),
             subtitles: vec![],
             music: None,
+            subtitle_box: None,
         }
     }
 

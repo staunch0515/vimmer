@@ -2,6 +2,7 @@ import type { Easing, Keyframe, Scene, SubtitleCue, TransitionKind, VideoTimelin
 import { totalFrames } from "../../src/layout";
 import { checkClip, checkLayers } from "./layers";
 import { templateProblems } from "./templates";
+import { boxProblems } from "./subtitleBox";
 
 export const MAX_DURATION_MS = 200_000;
 export const ALLOWED_RESOLUTIONS = [
@@ -62,6 +63,7 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
       problems.push("Beat sync max shift must be between 1 and 1000 ms.");
     }
   }
+  problems.push(...boxProblems(t.subtitle_box));
   t.subtitles?.forEach((c, i) => {
     if (c.start_ms >= c.end_ms) problems.push(`Subtitle ${i + 1} must start before it ends.`);
     else if (c.end_ms > total) problems.push(`Subtitle ${i + 1} runs past the end of the timeline.`);
