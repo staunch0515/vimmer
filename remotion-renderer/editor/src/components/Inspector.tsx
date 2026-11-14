@@ -94,7 +94,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch }: Props) => {
       </Field>
       <Field label="Highlights" hint="Comma-separated words">
         <input
-          value={scene.highlights.join(", ")}
+          value={(scene.highlights ?? []).join(", ")}
           onChange={(e) => patch({ highlights: e.target.value.split(",").map((w) => w.trim()).filter(Boolean) })}
         />
       </Field>

@@ -208,7 +208,7 @@ export const reducer = (state: EditorState, action: Action): EditorState => {
     }
     case "duplicateScene": {
       const src = t.scenes[action.index];
-      const copy = { ...src, id: `${src.id}-copy`, highlights: [...src.highlights], ...(src.layers ? { layers: [...src.layers] } : {}) };
+      const copy = { ...src, id: `${src.id}-copy`, highlights: [...(src.highlights ?? [])], ...(src.layers ? { layers: [...src.layers] } : {}) };
       const scenes = [...t.scenes.slice(0, action.index + 1), copy, ...t.scenes.slice(action.index + 1)];
       return commit(state, { ...t, scenes }, { kind: "scene", index: action.index + 1 });
     }
