@@ -144,6 +144,33 @@ class PromptAndSchema(unittest.TestCase):
         self.assertFalse(scene["additionalProperties"])
         self.assertFalse(schema["additionalProperties"])
 
+    def test_schema_and_prompt_offer_an_optional_spoken_line(self):
+        with open(gs.DEFAULT_SCHEMA_FILE, encoding="utf-8") as f:
+            schema = gs.build_schema(json.load(f), "zh", "landscape")
+        scene = schema["properties"]["scenes"]["items"]
+        self.assertEqual(scene["properties"]["spoken"]["type"], "string")
+        self.assertEqual(scene["required"], ["text"])
+        with open(gs.DEFAULT_PROMPT_FILE, encoding="utf-8") as f:
+            system = gs.build_system_prompt(f.read(), "zh", "landscape", None)
+        self.assertIn('"spoken"', system)
+
+    def test_recorded_reply_with_and_without_spoken_lines_is_passed_through(self):
+        recorded = fixture("recorded_opus_zh.json")
+        # As recorded (no spoken lines): unchanged.
+        out = gs.interpret(recorded, "claude-opus-5-5")
+        board = json.loads(out["storyboard_json"])
+        self.assertTrue(all("spoken" not in s for s in board["scenes"]))
+        # The same reply with a spoken line on the first scene.
+        board["scenes"][0]["spoken"] = "西安钟楼，就坐落在这座古城的正中心。"
+        edited = json.loads(json.dumps(recorded))
+        for block in edited["content"]:
+            if block.get("type") == "text":
+                block["text"] = json.dumps(board, ensure_ascii=False)
+        out = gs.interpret(edited, "claude-opus-5-5")
+        again = json.loads(out["storyboard_json"])
+        self.assertEqual(again["scenes"][0]["spoken"], "西安钟楼，就坐落在这座古城的正中心。")
+        self.assertEqual(again["scenes"][0]["text"], board["scenes"][0]["text"])
+
     def test_history_becomes_alternating_turns_ending_with_the_errors(self):
         msgs = gs.build_messages(
             " text ", [{"assistant": '{"a":1}', "feedback": "scene 2: field `text`: empty"}]

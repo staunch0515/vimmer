@@ -214,6 +214,35 @@ fn narration_and_voice() {
 }
 
 #[test]
+fn a_spoken_line_becomes_the_narration_text_and_sizes_the_scene() {
+    let long = "This is the spoken line, which is a good deal longer than the headline on screen.";
+    let c = convert(&base(&format!(r#"{{"text":"Headline","spoken":" {long} "}}"#))).unwrap();
+    let scene = &c.timeline.scenes[0];
+    assert_eq!(scene.text.as_deref(), Some("Headline"));
+    assert_eq!(scene.narration.as_ref().unwrap().text.as_deref(), Some(long));
+    assert_eq!(scene.spoken_text(), Some(long));
+    let short = convert(&base(r#"{"text":"Headline"}"#)).unwrap();
+    assert!(scene.duration_ms > short.timeline.scenes[0].duration_ms);
+    assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+
+    // Omitted, blank or the same as the text: no spoken line, exactly as before.
+    for spoken in ["", r#","spoken":"""#, r#","spoken":"  ""#, r#","spoken":"Headline""#] {
+        let c = convert(&base(&format!(r#"{{"text":"Headline"{spoken}}}"#))).unwrap();
+        assert_eq!(c.timeline, short.timeline, "{spoken}");
+        let json = serde_json::to_value(&c.timeline).unwrap();
+        assert_eq!(json["scenes"][0]["narration"], serde_json::json!({"voice": null}));
+    }
+
+    // Narration off: the line is dropped with a warning.
+    let mut quiet = base(r#"{"text":"Headline","spoken":"Said"}"#);
+    quiet.narration = false;
+    let c = convert(&quiet).unwrap();
+    assert!(c.timeline.scenes[0].narration.is_none());
+    assert_eq!(c.warnings.len(), 1);
+    assert_eq!(c.warnings[0].field, "spoken");
+}
+
+#[test]
 fn kanji_only_japanese_keeps_a_japanese_say_voice() {
     let mut s = base(r#"{"text":"東京都庁舎。"}"#);
     s.language = crate::Language::Ja;

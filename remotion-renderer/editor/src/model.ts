@@ -3,6 +3,7 @@ import { totalFrames } from "../../src/layout";
 import { checkClip, checkLayers } from "./layers";
 import { templateProblems } from "./templates";
 import { boxProblems } from "./subtitleBox";
+import { nothingToSpeak } from "./narration";
 
 export const MAX_DURATION_MS = 200_000;
 export const ALLOWED_RESOLUTIONS = [
@@ -39,6 +40,7 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
     if (s.duration_ms <= 0) problems.push(`Scene “${s.id}” has zero duration.`);
     if (s.template) problems.push(...templateProblems(s.template).map((p) => `Scene “${s.id}” template: ${p}`));
     if (!s.template && !s.text?.trim() && !s.image && !s.video && !s.layers?.length) problems.push(`Scene “${s.id}” needs text, an image, a video or a layer.`);
+    if (nothingToSpeak(s)) problems.push(`Scene “${s.id}” has an empty spoken line and no text to speak; write the line or turn narration off.`);
     if (s.image && s.video) problems.push(`Scene “${s.id}” has both an image and a video; choose one background.`);
     if (s.video) problems.push(...checkClip(`Scene “${s.id}” background`, s.video));
     problems.push(...checkSceneMotion(s, t.scenes.indexOf(s)));

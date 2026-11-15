@@ -28,6 +28,34 @@ Rust `VideoTimeline` / `Scene` structs and the TypeScript types in
   `zoom_out`, `pan_left`, `pan_right`.
 - Asset paths are relative to `remotion-renderer/public/`.
 
+### Narration and spoken lines (`narration`, `narration.text`)
+
+`"narration": {"voice": null}` on a scene (with no `audio`) has its speech synthesized at render
+time (see [Narration](#narration-local-tts)). By default it speaks the scene's `text`. Give the
+narration its own `text` — the **spoken line** (台词) — and it says that instead, while the screen
+still shows the scene `text`:
+
+```json
+{ "id": "intro", "duration_ms": 3000, "text": "钟楼", "image": "assets/sample.jpeg",
+  "narration": { "voice": "Tingting", "text": "这是西安的钟楼，古城的中心。" } }
+```
+
+- Absent or blank `narration.text`: the scene `text` is spoken, exactly as before (same voice,
+  same cache file, same render). A scene can also say its line with `text` `null`; it then needs
+  an image, a video or a layer like any scene without text.
+- `narration.text` present but blank, on a scene with no `text` (and no `audio`), is a validation
+  error: there is nothing to speak. A narrated scene with neither (no `narration.text` at all)
+  stays valid and silent, as it always was.
+- Everything that follows the narration uses the spoken line: the scene is stretched to fit it,
+  the TTS cache is keyed by it, word-by-word timing and `--auto-subtitles` cues use its words, and
+  `--auto-subtitles on` subtitles it unless the spoken line is already on screen as text.
+  `vimmer check` sizes `narration.too_long` by it and, because viewers now read the on-screen text
+  themselves, checks `text.reading_speed` for that scene (over the scene as long as the line makes it).
+- In the editor: **台词 Spoken line** under the scene text (shown while narration is on). Empty
+  means "read the text"; clearing it removes the field. The editing assistant can set or remove
+  it ("台词改成…"), and a storyboard scene may carry `spoken` (see Storyboard).
+- `fixtures/spoken-lines-demo.json` shows all three cases.
+
 ### Transitions (`transition_in`)
 
 Optional per scene: `{ "kind": ..., "duration_ms": ... }`, where `kind` is `fade`,
@@ -534,7 +562,8 @@ cargo run -p vimmer-storyboard -- crates/vimmer-storyboard/examples/en-coffee.st
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `text` | yes | Narration and on-screen text. Trimmed; must not be empty. |
+| `text` | yes | On-screen text, also the narration unless `spoken` is set. Trimmed; must not be empty. |
+| `spoken` | no | What the narration says when it differs from `text` (becomes `narration.text`; it also sizes the scene when `duration_ms` is omitted). Blank or equal to `text`: ignored. With `narration: false`: dropped with a warning. |
 | `duration_ms` | no | Integer > 0, at most 200 000. Omit to estimate from the text. |
 | `emphasis` | no | Words copied from `text`. Those found in `text` become `highlights`; others are warned about and not highlighted. |
 | `camera` | no (`static`) | Camera move, see the mapping below. |
@@ -1301,7 +1330,7 @@ show without a rebuild. Typing a path still works in both the browser and the de
 ## Narration (local TTS)
 
 A scene with **Narrate the text** checked (Inspector, Audio) gets its speech generated
-when you render: its `text` is synthesized with macOS `say` (Samantha for English, Tingting
+when you render: its spoken line (`narration.text`, see [above](#narration-and-spoken-lines-narration-narrationtext)), else its `text`, is synthesized with macOS `say` (Samantha for English, Tingting
 for Chinese, Kyoko for Japanese; or pick a voice) and converted to WAV. The scene is stretched to fit the speech,
 plus 300 ms. Files are cached in `remotion-renderer/public/generated/tts/`, keyed by voice and
 text. A scene that already has its own audio file keeps it. The preview stays silent until

@@ -30,6 +30,8 @@ pub enum ValidationError {
     EmptyScene(String),
     #[error("scene `{0}` has an empty audio source")]
     EmptyAudioSource(String),
+    #[error("scene `{0}` has a spoken line (narration.text) that is empty and no text to speak instead; write the spoken line, or turn narration off")]
+    NothingToSpeak(String),
     #[error("timeline is {0} ms; maximum is {MAX_DURATION_MS} ms")]
     TooLong(u64),
     #[error("timeline is {0} frames; maximum is {MAX_FRAMES} frames")]
@@ -902,6 +904,13 @@ fn validate_expanded(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError
                 errors.push(ValidationError::EmptyAudioSource(scene.id.clone()));
             }
         }
+        // Only a scene that names a spoken line is held to this: before `narration.text`
+        // existed a narrated scene without text rendered silently, and still does.
+        if let Some(n) = &scene.narration {
+            if n.text.is_some() && scene.audio.is_none() && scene.spoken_text().is_none() {
+                errors.push(ValidationError::NothingToSpeak(scene.id.clone()));
+            }
+        }
         if let Some(ts) = &scene.text_style {
             for message in ts.problems("text_style.") {
                 errors.push(ValidationError::BadTextStyle {
@@ -1476,6 +1485,42 @@ mod tests {
                 release_ms: 6_000
             }]
         );
+    }
+
+    #[test]
+    fn a_spoken_line_needs_something_to_say() {
+        use crate::model::{AudioMapping, Narration};
+        let spoken = |line: &str, text: Option<&str>| {
+            let mut s = scene("a", 1_000);
+            s.text = text.map(String::from);
+            s.image = Some("bg.png".into());
+            s.narration = Some(Narration {
+                voice: None,
+                text: Some(line.into()),
+            });
+            s
+        };
+        // A spoken line with or without on-screen text is fine; so is a blank line over text.
+        assert!(validate(&timeline(vec![spoken("Hello there", None)])).is_ok());
+        assert!(validate(&timeline(vec![spoken("Hello", Some("Hi"))])).is_ok());
+        assert!(validate(&timeline(vec![spoken(" ", Some("Hi"))])).is_ok());
+        // A blank spoken line and no text: nothing to speak.
+        let errs = validate(&timeline(vec![spoken("  ", None)])).unwrap_err();
+        assert_eq!(errs, vec![ValidationError::NothingToSpeak("a".into())]);
+        assert!(errs[0].to_string().contains("spoken line"));
+        // With its own audio the scene is not narrated, so it is not checked.
+        let mut with_audio = spoken("", None);
+        with_audio.audio = Some(AudioMapping {
+            source: "v.wav".into(),
+            offset_ms: 0,
+        });
+        assert!(validate(&timeline(vec![with_audio])).is_ok());
+        // Old-style narration (no spoken line) without text stays valid, as before.
+        let mut old = scene("a", 1_000);
+        old.text = None;
+        old.image = Some("bg.png".into());
+        old.narration = Some(Narration::default());
+        assert!(validate(&timeline(vec![old])).is_ok());
     }
 
     #[test]

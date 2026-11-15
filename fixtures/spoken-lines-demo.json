@@ -1,0 +1,60 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "scenes": [
+    {
+      "id": "headline",
+      "duration_ms": 3000,
+      "text": "Coffee 101",
+      "highlights": [
+        "Coffee"
+      ],
+      "image": "assets/sample.png",
+      "motion": "zoom_in",
+      "audio": null,
+      "narration": {
+        "voice": "Samantha",
+        "text": "Welcome to a short lesson about brewing better coffee at home."
+      }
+    },
+    {
+      "id": "voice-only",
+      "duration_ms": 3000,
+      "text": null,
+      "highlights": [],
+      "image": "assets/sample.jpeg",
+      "motion": "pan_left",
+      "audio": null,
+      "narration": {
+        "voice": "Samantha",
+        "text": "First, grind your beans just before you brew."
+      },
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 500
+      }
+    },
+    {
+      "id": "unchanged",
+      "duration_ms": 3000,
+      "text": "Then pour slowly and enjoy.",
+      "highlights": [
+        "enjoy"
+      ],
+      "image": "assets/design.png",
+      "motion": "zoom_out",
+      "audio": null,
+      "narration": {
+        "voice": "Samantha"
+      },
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 500
+      }
+    }
+  ],
+  "subtitles": []
+}

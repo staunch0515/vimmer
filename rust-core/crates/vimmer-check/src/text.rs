@@ -30,6 +30,7 @@
 
 use serde_json::json;
 use vimmer_dsl::{SubtitleCue, VideoTimeline};
+use vimmer_media::TtsEngine;
 
 use crate::fonts::Fonts;
 use crate::layout::{SceneTextArea, SubtitleBand};
@@ -386,13 +387,23 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
                 .at(starts[i]),
             );
         }
-        if scene.narration.is_some() {
-            continue;
+        // Narration that reads the text aloud paces it (and stretches the scene to fit). A
+        // spoken line says something else: the text is still read, over a scene at least as
+        // long as the line (estimated as `say` reads it, the shorter estimate).
+        let mut shown_ms = scene.duration_ms;
+        if let Some(narration) = &scene.narration {
+            match narration.spoken_line() {
+                Some(line) if scene.audio.is_none() => {
+                    let speech = crate::timing::estimate_speech_ms(line, TtsEngine::Say);
+                    shown_ms = shown_ms.max(speech + crate::audio::TAIL_MS);
+                }
+                _ => continue,
+            }
         }
         let lang = Lang::of(text);
         let chars = reading_chars(text, lang);
         let limit = cps_limit(lang);
-        let cps = chars as f64 * 1000.0 / scene.duration_ms.max(1) as f64;
+        let cps = chars as f64 * 1000.0 / shown_ms.max(1) as f64;
         if cps > limit && scene.duration_ms > 0 {
             let needed = ((chars as f64 / limit) * 1000.0 / 100.0).ceil() as u64 * 100;
             out.push(
@@ -401,7 +412,7 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
                     "text.reading_speed",
                     format!(
                         "scene text is {chars} characters in {} ({cps:.1} chars/s); the {} limit is {limit} chars/s",
-                        crate::secs(scene.duration_ms),
+                        crate::secs(shown_ms),
                         lang.code()
                     ),
                     Suggestion::set(

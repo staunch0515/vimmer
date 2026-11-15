@@ -103,12 +103,12 @@ pub(crate) fn narration_clips(
         .iter()
         .enumerate()
         .filter_map(|(i, scene)| {
-            scene.narration.as_ref()?;
             let audio = scene.audio.as_ref()?;
             if !audio.source.starts_with("generated/tts/") {
                 return None;
             }
-            let text = scene.text.clone().filter(|t| !t.trim().is_empty())?;
+            // What the clip says: the spoken line when set, else the scene text.
+            let text = scene.spoken_text()?.to_string();
             let scene_start = frame_ms(starts[i]);
             // Validation measures the timeline as the sum of `duration_ms`, which can be a few
             // ms shorter than the frame-rounded end, so cues must stay inside both.
@@ -2075,5 +2075,43 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(notes.len(), 1, "{notes:?}");
         assert!(notes[0].contains("(one, two)"), "{notes:?}");
+    }
+
+    #[tokio::test]
+    async fn on_subtitles_a_spoken_line_that_differs_from_the_text_with_the_spoken_words() {
+        let tokens = vec![
+            RecognizedToken::new("Good", 100, 500),
+            RecognizedToken::new("morning.", 500, 1200),
+        ];
+        let mut t = two_scenes();
+        // Scene `one` shows "Hello world." but says "Good morning.".
+        t.scenes[0].narration.as_mut().unwrap().text = Some("Good morning.".into());
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let clips = narration_clips(&t, &cfg);
+        assert_eq!(clips[0].text, "Good morning.");
+        assert!(!clips[0].on_screen, "the spoken line is not what is shown");
+        assert!(clips[1].on_screen);
+
+        // A spoken line that is shown (here as part of the scene text) counts as on screen.
+        let mut shown = two_scenes();
+        shown.scenes[0].narration.as_mut().unwrap().text = Some("hello WORLD".into());
+        assert!(narration_clips(&shown, &cfg)[0].on_screen);
+
+        let mut on = t.clone();
+        run_auto(AutoSubtitles::On, &mut on, tokens.clone()).await;
+        assert_eq!(on.subtitles.len(), 1, "{:?}", on.subtitles);
+        assert_eq!(on.subtitles[0].text, "Good morning.", "cues use the spoken words");
+        assert!(!on.subtitles[0].words.is_empty());
+        assert!(on.subtitles[0].end_ms <= 2000);
+        assert_eq!(validate(&on), Ok(()));
+        // `all` subtitles both scenes, the first with its spoken line.
+        let mut all = t.clone();
+        run_auto(AutoSubtitles::All, &mut all, tokens).await;
+        assert_eq!(all.subtitles.len(), 2);
+        assert_eq!(all.subtitles[0].text, "Good morning.");
     }
 }

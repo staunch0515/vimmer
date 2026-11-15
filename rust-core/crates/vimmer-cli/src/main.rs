@@ -199,7 +199,8 @@ struct RenderArgs {
     /// is missing.
     #[arg(long, value_enum, default_value_t = Toggle::On)]
     word_subtitles: Toggle,
-    /// Create subtitle cues from the narration text for narrated scenes that no cue covers.
+    /// Create subtitle cues from what the narration says (its spoken line, else the scene text)
+    /// for narrated scenes that no cue covers.
     /// `on`: only where the narration is not already on screen as text (scene text or text
     /// layers), so a sentence is not shown twice. `all`: every narrated scene, even when its
     /// text is on screen (captions for accessibility). Off by default: only cues already in the

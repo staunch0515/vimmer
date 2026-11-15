@@ -24,7 +24,11 @@
         "properties": {
           "text": {
             "type": "string",
-            "description": "Narration and on-screen text. One or two short sentences."
+            "description": "On-screen text, also read aloud unless `spoken` is set. One or two short sentences."
+          },
+          "spoken": {
+            "type": "string",
+            "description": "Optional. What the narration says when it should differ from the on-screen text (e.g. a short headline on screen, a full sentence spoken). Omit to read `text` aloud."
           },
           "duration_ms": {
             "type": "integer",

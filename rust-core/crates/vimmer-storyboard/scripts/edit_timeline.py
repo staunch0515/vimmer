@@ -117,6 +117,10 @@ def scene_table(timeline):
             )
             parts.append(f"layers=[{names}]")
         parts.append(f"text={json.dumps(_clip(s.get('text') or ''), ensure_ascii=False)}")
+        spoken = (s.get("narration") or {}).get("text")
+        if spoken:
+            # The spoken line, only when the scene has one (old timelines list as before).
+            parts.append(f"spoken={json.dumps(_clip(spoken), ensure_ascii=False)}")
         lines.append("  ".join(parts))
         start += dur
     return lines, start

@@ -722,7 +722,7 @@ impl Kind {
             TextShadow => &[("color", Leaf), ("x", Leaf), ("y", Leaf), ("blur", Leaf)],
             Bar => &[("label", Leaf), ("value", Leaf), ("color", Leaf)],
             Audio => &[("source", Leaf), ("offset_ms", Leaf)],
-            Narration => &[("voice", Leaf)],
+            Narration => &[("voice", Leaf), ("text", Leaf)],
             Video => VIDEO_CLIP_FIELDS,
             Transition => &[("kind", Leaf), ("duration_ms", Leaf)],
             Keyframe => &[
@@ -1414,6 +1414,15 @@ fn sanity_problems(t: &VideoTimeline) -> Vec<String> {
                 ));
             }
         }
+        if let Some(line) = s.narration.as_ref().and_then(|n| n.text.as_ref()) {
+            let n = line.chars().count();
+            if n > MAX_TEXT_CHARS {
+                out.push(format!(
+                    "scene `{}` spoken line (narration.text) is {n} characters; the limit is {MAX_TEXT_CHARS}",
+                    s.id
+                ));
+            }
+        }
         if s.highlights.len() > MAX_HIGHLIGHTS {
             out.push(format!(
                 "scene `{}` has {} highlights; the limit is {MAX_HIGHLIGHTS}",
@@ -2007,9 +2016,12 @@ fn edit_warnings(
             ));
         }
         let narrated = s.narration.is_some() && s.audio.is_none();
-        let shorter = prev.is_none_or(|p| s.duration_ms < p.duration_ms || p.text != s.text);
+        let shorter = prev.is_none_or(|p| {
+            s.duration_ms < p.duration_ms || p.spoken_text() != s.spoken_text()
+        });
         if narrated && shorter {
-            if let Some(text) = s.text.as_deref().filter(|t| !t.trim().is_empty()) {
+            // What the narration says: the spoken line, else the scene text.
+            if let Some(text) = s.spoken_text() {
                 let need = estimate_duration_ms(text, guess_language(text), TtsEngine::from_env());
                 if s.duration_ms * 10 < need * 8 {
                     out.push(format!(
@@ -2084,10 +2096,20 @@ fn show_field(key: &str, v: &Value) -> String {
             _ => show(v),
         },
         "narration" => match v {
-            Value::Object(m) => match m.get("voice").and_then(Value::as_str) {
-                Some(voice) => format!("on (voice {voice})"),
-                None => "on".into(),
-            },
+            Value::Object(m) => {
+                let mut parts = Vec::new();
+                if let Some(voice) = m.get("voice").and_then(Value::as_str) {
+                    parts.push(format!("voice {voice}"));
+                }
+                if let Some(line) = m.get("text").and_then(Value::as_str) {
+                    parts.push(format!("says \"{}\"", clip(line, 40)));
+                }
+                if parts.is_empty() {
+                    "on".into()
+                } else {
+                    format!("on ({})", parts.join(", "))
+                }
+            }
             _ => "off".into(),
         },
         "video" => match serde_json::from_value::<vimmer_dsl::VideoClip>(v.clone()) {

@@ -391,6 +391,7 @@ fn schema_matches_the_storyboard_model() {
         voice: Some("v".into()),
         scenes: vec![crate::SceneSpec {
             text: "a".into(),
+            spoken: Some("s".into()),
             duration_ms: Some(1),
             emphasis: vec![],
             camera: Some("static".into()),

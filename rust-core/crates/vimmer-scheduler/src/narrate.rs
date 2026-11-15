@@ -1,4 +1,4 @@
-//! Narration step: synthesizes scene text, attaches it as audio and stretches the scene to fit.
+//! Narration step: synthesizes each scene's spoken text (its spoken line, else its text), attaches it as audio and stretches the scene to fit.
 //!
 //! Two engines: macOS `say` (the default) and Kokoro, a local neural TTS run through a Python
 //! helper in one batch per render. When Kokoro is chosen but cannot run, all narration falls back
@@ -95,7 +95,7 @@ pub async fn narrate_scenes(
         if scene.audio.is_some() {
             continue;
         }
-        let Some(text) = scene.text.clone().filter(|t| !t.trim().is_empty()) else {
+        let Some(text) = scene.spoken_text().map(String::from) else {
             continue;
         };
         jobs.push(Job {
@@ -505,9 +505,11 @@ cp "$in" "$out"
         ]);
         t.scenes[0].narration = Some(Narration {
             voice: Some("Tingting".into()),
+            text: None,
         });
         t.scenes[1].narration = Some(Narration {
             voice: Some("jm_kumo".into()),
+            text: None,
         });
         t
     }
@@ -700,6 +702,62 @@ cp "$in" "$out"
         assert_eq!(
             t.scenes[0].audio.as_ref().unwrap().source,
             format!("generated/tts/zh-{:016x}.wav", fnv1a("Tingting\n西安钟楼"))
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_spoken_line_is_what_is_synthesized_and_keyed() {
+        struct Texts(std::sync::Mutex<Vec<String>>);
+        impl Speech for Texts {
+            fn synthesize(&self, text: &str, _v: &str, out: &Path) -> Result<(), MediaError> {
+                self.0.lock().unwrap().push(text.to_string());
+                std::fs::write(out, b"wav").map_err(MediaError::from)
+            }
+        }
+        let dir =
+            std::env::temp_dir().join(format!("vimmer-narrate-line-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = cfg(dir.clone());
+        let speech = Arc::new(Texts(Default::default()));
+        let mut t = timeline(vec![
+            scene("old", 1_000, Some("Hello"), true),
+            scene("line", 1_000, Some("Shown"), true),
+            scene("blind", 1_000, None, true),
+            scene("blank", 1_000, Some("Fallback"), true),
+        ]);
+        t.scenes[1].narration.as_mut().unwrap().text = Some("Said instead".into());
+        t.scenes[2].narration.as_mut().unwrap().text = Some("Only heard".into());
+        t.scenes[3].narration.as_mut().unwrap().text = Some("  ".into());
+        let probe: Arc<dyn AudioProbe> = Arc::new(FixedProbe(500));
+        let n = narrate_scenes(
+            &mut t,
+            &cfg,
+            speech.clone(),
+            probe,
+            &RenderContext::silent(),
+            &mut Vec::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 4);
+        assert_eq!(
+            *speech.0.lock().unwrap(),
+            ["Hello", "Said instead", "Only heard", "Fallback"]
+        );
+        let src = |i: usize| t.scenes[i].audio.as_ref().unwrap().source.clone();
+        // A scene without a spoken line keeps the key it had before the field existed
+        // (the same name main gives it).
+        assert_eq!(src(0), "generated/tts/old-751a583f147ef128.wav");
+        assert_eq!(src(0), format!("generated/tts/old-{:016x}.wav", fnv1a("Samantha\nHello")));
+        assert_eq!(
+            src(1),
+            format!("generated/tts/line-{:016x}.wav", fnv1a("Samantha\nSaid instead"))
+        );
+        assert_eq!(
+            src(3),
+            format!("generated/tts/blank-{:016x}.wav", fnv1a("Samantha\nFallback"))
         );
         let _ = std::fs::remove_dir_all(dir);
     }

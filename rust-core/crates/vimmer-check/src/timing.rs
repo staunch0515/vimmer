@@ -286,11 +286,12 @@ pub fn estimate_speech_ms(text: &str, engine: TtsEngine) -> u64 {
     vimmer_media::estimate_speech_ms(text, SpeechLang::of(text), engine)
 }
 
-/// Scenes whose narration is synthesized at render time.
+/// Scenes whose narration is synthesized at render time, with what it says (the spoken line,
+/// else the scene text).
 fn narrated(timeline: &VideoTimeline) -> impl Iterator<Item = (usize, &vimmer_dsl::Scene, &str)> {
     timeline.scenes.iter().enumerate().filter_map(|(i, s)| {
-        let text = s.text.as_deref().filter(|t| !t.trim().is_empty())?;
-        (s.narration.is_some() && s.audio.is_none()).then_some((i, s, text))
+        let text = s.spoken_text()?;
+        s.audio.is_none().then_some((i, s, text))
     })
 }
 

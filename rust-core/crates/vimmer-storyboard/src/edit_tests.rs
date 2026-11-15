@@ -1724,3 +1724,72 @@ fn white_frame_around_the_text() {
         assert!(text(&e).contains(want), "{want}: {e}");
     }
 }
+
+// --- spoken line --------------------------------------------------------------------------------
+
+#[test]
+fn the_spoken_line_can_be_set_changed_and_removed() {
+    let mut doc = small();
+    doc["scenes"][1]["narration"] = json!({"voice": null});
+    let out = ok(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/1/narration/text", "value": "Said, not shown."}]),
+    );
+    assert_eq!(
+        out.timeline["scenes"][1]["narration"],
+        json!({"voice": null, "text": "Said, not shown."})
+    );
+    assert!(
+        out.summary.iter().any(|l| l.contains("says \"Said, not shown.\"")),
+        "{:?}",
+        out.summary
+    );
+    // Removing it goes back to speaking the on-screen text, in the old shape.
+    let back = ok(
+        &out.timeline,
+        json!([{"op": "remove", "path": "/scenes/1/narration/text"}]),
+    );
+    assert_eq!(back.timeline, doc);
+
+    // Only on a narration object, a string, and within the text limit.
+    let e = err(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/1/narration/lines", "value": "x"}]),
+    );
+    assert!(text(&e).contains("lines"), "{e}");
+    let long = "x".repeat(MAX_TEXT_CHARS + 1);
+    let e = err(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/1/narration/text", "value": long}]),
+    );
+    assert!(text(&e).contains("spoken line"), "{e}");
+    // A blank line over a scene with no text has nothing to speak.
+    let mut blind = small();
+    blind["scenes"][0]["narration"] = json!({"voice": null});
+    blind["scenes"][0]["text"] = Value::Null;
+    let e = err(
+        &blind,
+        json!([{"op": "add", "path": "/scenes/0/narration/text", "value": " "}]),
+    );
+    assert!(text(&e).contains("nothing") || text(&e).contains("spoken line"), "{e}");
+    ok(
+        &blind,
+        json!([{"op": "add", "path": "/scenes/0/narration/text", "value": "Only heard."}]),
+    );
+}
+
+#[test]
+fn a_long_spoken_line_on_a_short_scene_warns() {
+    let mut doc = small();
+    doc["scenes"][1]["narration"] = json!({"voice": null});
+    let line = "This spoken line is much longer than the two words shown on screen, so it needs time.";
+    let out = ok(
+        &doc,
+        json!([{"op": "add", "path": "/scenes/1/narration/text", "value": line}]),
+    );
+    assert!(
+        out.warnings.iter().any(|w| w.contains("lengthens the scene")),
+        "{:?}",
+        out.warnings
+    );
+}

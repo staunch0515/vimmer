@@ -1034,3 +1034,53 @@ fn a_border_only_box_is_no_box_for_contrast_but_takes_room() {
     assert!(find(&fs, "text.contrast_media", Some("framed"), None).len() == 1, "{fs:#?}");
 }
 
+
+/// A one-scene timeline with an image, `text` on screen and narration saying `line` (when set).
+fn spoken(text: Option<&str>, line: Option<&str>, ms: u64) -> VideoTimeline {
+    let mut scene = serde_json::json!({
+        "id": "a", "duration_ms": ms, "image": "bg.png", "narration": {"voice": null}
+    });
+    if let Some(t) = text {
+        scene["text"] = t.into();
+    }
+    if let Some(l) = line {
+        scene["narration"]["text"] = l.into();
+    }
+    serde_json::from_value(serde_json::json!({
+        "fps": 30, "resolution": {"width": 1920, "height": 1080}, "scenes": [scene]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_spoken_line_is_what_the_narration_checks_measure() {
+    let long_line = "This spoken line goes on for a good while longer than the short headline does, \
+                     so the narration needs far more time than the scene has.";
+    // Narration length follows the spoken line, not the short on-screen text.
+    let fs = run(&spoken(Some("Short."), Some(long_line), 2_000), None);
+    one(&fs, "narration.too_long", Some("a"), None);
+    let fs = run(&spoken(Some("Short."), Some("Hi."), 2_000), None);
+    assert!(find(&fs, "narration.too_long", None, None).is_empty());
+    // Without a spoken line the scene text is measured, as before.
+    let fs = run(&spoken(Some(long_line), None, 2_000), None);
+    one(&fs, "narration.too_long", Some("a"), None);
+    // Narration with only a spoken line and no on-screen text is measured too.
+    let fs = run(&spoken(None, Some(long_line), 2_000), None);
+    one(&fs, "narration.too_long", Some("a"), None);
+
+    // Text read aloud is paced by the narration: no reading-speed warning (as before).
+    let wall = "A dense block of on-screen words that nobody could read in one short second at all.";
+    let fs = run(&spoken(Some(wall), None, 1_000), None);
+    assert!(find(&fs, "text.reading_speed", None, None).is_empty());
+    // A different spoken line: viewers must read the text themselves, over the scene as long as
+    // the line makes it.
+    let fs = run(&spoken(Some(wall), Some("Hi."), 1_000), None);
+    one(&fs, "text.reading_speed", Some("a"), None);
+    let fs = run(&spoken(Some(wall), Some(long_line), 1_000), None);
+    assert!(find(&fs, "text.reading_speed", None, None).is_empty(), "{fs:#?}");
+
+    // A blank spoken line with nothing on screen to speak is invalid.
+    let fs = run(&spoken(None, Some(" "), 2_000), None);
+    let f = one(&fs, "dsl.invalid", None, None);
+    assert!(f.message.contains("spoken line"), "{}", f.message);
+}
