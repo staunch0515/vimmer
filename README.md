@@ -878,7 +878,14 @@ The app opens on **Home**: every project with its thumbnail, length and last cha
 box, and the projects opened most recently. From there: **Generate from text**, **New project**,
 **Import timeline…**, and per project (the ⋯ on its card) Open, Rename, Duplicate, Show in Finder
 and Move to Trash. Deleting always moves to the macOS Trash (after a confirmation); nothing is
-removed for good.
+removed for good. The project that is open in the editor cannot be renamed or deleted from Home.
+
+Opening a project shows it in the editor, with the project's sidebar on the left (**Assets** and
+**Renders**). **Projects** in the toolbar and **← Projects** in the sidebar go back to Home; the
+editor keeps its document, and **← Back to editor** returns to it. ⌘S saves into the project;
+**Save as** writes a copy of the timeline elsewhere and stays in the project. Opening another
+project (or file) while there are unsaved changes asks: Save, Don't save or Cancel. When the app
+was closed with unsaved changes, it starts in the editor with that draft, in its project.
 
 A project is a folder under `~/Documents/Vimmer/` (change it at the bottom of Home; projects are
 not moved when you do):
@@ -957,7 +964,15 @@ the editor) opens one, ⌘S saves to its path (or asks for one), ⇧⌘S saves a
 starts an untitled one, and **Render…** asks where to save the MP4. Its assets live in
 `remotion-renderer/public/`. Writes are atomic (temp file, then rename). Unsaved work is
 mirrored to localStorage as a draft and comes back on the next launch, marked unsaved. Leaving a
-document with unsaved changes asks first.
+document with unsaved changes asks first. In the desktop app the sidebar of a plain file says
+so, and **Make it a project…** (once the file is saved) imports it as described above.
+
+For development, two pages of the editor's dev server run the Studio without the desktop app:
+`/src/studio/app-dev.html` is the whole app against a mocked shell (in-memory projects, a
+pretend render, no API calls), and `/src/studio/dev.html` shows the Studio screens alone.
+`/src/studio/selftest.html` is the opposite: opened inside the real desktop window (see the
+comment at the top of `editor/src/studio/selftest.tsx`), it runs every Studio command for real
+in a projects folder you name and writes the outcome to a file.
 
 ## Background music
 
