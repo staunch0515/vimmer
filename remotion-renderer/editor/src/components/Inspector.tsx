@@ -42,6 +42,8 @@ type Props = {
   audioUrl: (path: string) => string;
   /** Moves the playhead to a timeline time in ms. */
   onSeekMs?: (ms: number) => void;
+  /** Changes when another document is opened (the assistant's chat starts over). */
+  docKey: number;
 };
 
 const MOTIONS: Scene["motion"][] = ["static", "zoom_in", "zoom_out", "pan_left", "pan_right"];
@@ -72,9 +74,9 @@ export const Inspector = (props: Props) => {
         {tab === "subtitles" && <SubtitleEditor {...props} />}
         {tab === "music" && <MusicEditor {...props} />}
         {tab === "brand" && <BrandEditor timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} />}
-        {/* Stays mounted so a pending proposal survives switching tabs. */}
+        {/* Stays mounted so the chat and a pending proposal survive switching tabs. */}
         <div hidden={tab !== "assistant"}>
-          <AssistantPanel timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} />
+          <AssistantPanel timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} docKey={props.docKey} />
         </div>
       </div>
     </aside>

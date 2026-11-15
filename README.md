@@ -826,7 +826,8 @@ It needs the same setup as `vimmer generate`: the helper venv and `ANTHROPIC_API
 above). It prints what changed, scene by scene, any warnings, and the cost. Options:
 `--model` (default `claude-opus-5-5`), `--effort` (default `low`), `--max-retries` (default 2),
 `--public-dir` (default `remotion-renderer/public`), `--save-dir` (raw API replies),
-`--overwrite-input` (allow `-o` to name the input).
+`--overwrite-input` (allow `-o` to name the input), `--conversation` (earlier turns of a chat,
+see "In the editor").
 
 Claude answers with one of three statuses. `edited` comes with a patch. `clarify` means the
 request is too vague, or names a scene or word that does not exist, and Claude asks a question.
@@ -858,11 +859,29 @@ failing op and the reason, and goes back to Claude for a correction, at most twi
   shortened below its speech (the render lengthens it back to fit), `motion` ignored because of keyframes, a new asset file that is
   missing.
 
-**In the editor.** The Studio has an **Assistant** tab. Type an instruction, optionally keep
-the selected scene as context, pick a model, and press **Propose** (⌘↵). The panel shows the
-explanation, the change summary, warnings and the cost. **Accept** applies the change as one
-undo step; **Reject** discards it. A proposal made before the timeline changed cannot be
-accepted.
+**In the editor.** The Studio has an **Assistant** tab: a chat with Claude. Type a message,
+optionally keep the selected scene as context, pick a model, and press **Send 发送** (⌘↵). Each
+answer shows the explanation (or Claude's question), the change summary, warnings and the
+cost. **Accept 接受** applies a proposed change as one undo step; **Reject 拒绝** discards it;
+sending another message without deciding leaves it unapplied. Each proposal shows what became
+of it. A proposal made before the timeline changed cannot be accepted. Nothing changes until
+you accept.
+
+Follow-ups work: answer Claude's question, or say "再快一点", "第 3 幕也这样", "刚才那个不要了"
+(Claude proposes undoing an accepted change as a new proposal). Each message sends the
+**current** timeline, as a single request does, plus the recent chat as compact text: your
+earlier messages, Claude's answers (status, explanation, change summary) and whether each
+proposal was accepted, rejected or left. Old timelines are not resent. At most the last 6
+exchanges and about 6000 characters go along (the backend refuses more than 12 or 16000); the
+panel says when older ones are no longer sent. **新对话 New chat** starts over. The chat is
+kept in memory only and is cleared when you open another file or project. Editing the
+timeline by hand between messages is fine: the next message uses the timeline as it is.
+
+The chat is a separate, optional part of the request (`conversation` in the helper request,
+`vimmer edit --conversation FILE` on the command line, with
+`{"turns": [{"user", "status", "reply", "changes", "decision"}], "dropped": n}`). It is not the
+retry `history` of one request. Without it, the request and the prompt are exactly what they
+were before chats existed.
 
 The backend produces the same JSON as `vimmer edit --dry-run --json`, from the same library code
 (`vimmer_storyboard::edit_claude`: `propose_edit`, then `proposal_json` / `failure_json`).
@@ -875,8 +894,8 @@ The backend produces the same JSON as `vimmer edit --dry-run --json`, from the s
 - **Browser editor** (`npm run editor`). A dev-server endpoint, answering local requests only
   (loopback peer, localhost Host and Origin, JSON body), runs the CLI from
   `rust-core/target/{release,debug}/vimmer` or `$VIMMER_BIN`. It first checks that the binary
-  has `vimmer edit` (`vimmer edit --help`); if it is missing or too old, the panel says to
-  build it (`cd rust-core && cargo build -p vimmer-cli`). When the key is not in the dev
+  has `vimmer edit` (`vimmer edit --help`, and `--conversation` for a follow-up message); if it
+  is missing or too old, the panel says to build it (`cd rust-core && cargo build -p vimmer-cli`). When the key is not in the dev
   server's environment, the CLI is started through `zsh -c 'source ~/.zshrc; ...'`, so only
   that child process holds it.
 

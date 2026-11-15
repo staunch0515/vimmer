@@ -23,7 +23,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use vimmer_media::Limits;
 use vimmer_storyboard::edit_claude::{
-    failure_json, propose_edit_with_key_check, proposal_json, EditOptions, MAX_INSTRUCTION_CHARS,
+    failure_json, propose_edit_with_key_check, proposal_json, Conversation, EditOptions,
+    MAX_INSTRUCTION_CHARS,
 };
 use vimmer_storyboard::generate::{FailureKind, GenerateFailure, LlmHelper, ENV_API_KEY};
 
@@ -45,6 +46,9 @@ pub struct ProposeArgs {
     pub instruction: String,
     pub scene_id: Option<String>,
     pub model: String,
+    /// The chat so far (earlier exchanges, built by the editor). Absent for a single request.
+    #[serde(default)]
+    pub conversation: Option<Conversation>,
 }
 
 fn failure(kind: &str, message: impl Into<String>) -> Value {
@@ -67,6 +71,9 @@ pub fn check_args(a: &ProposeArgs) -> Result<(), String> {
     if a.scene_id.as_ref().is_some_and(|s| s.len() > 64) {
         return Err("The scene id is too long.".into());
     }
+    if let Some(Err(e)) = a.conversation.as_ref().map(Conversation::check) {
+        return Err(format!("The chat history is too long ({e}). Start a new chat."));
+    }
     Ok(())
 }
 
@@ -77,6 +84,7 @@ fn edit_options(a: &ProposeArgs, public_dir: Option<&Path>) -> EditOptions {
     opts.model = a.model.clone();
     opts.timeout = CALL_TIMEOUT;
     opts.public_dir = public_dir.map(Path::to_path_buf);
+    opts.conversation = a.conversation.clone();
     opts
 }
 

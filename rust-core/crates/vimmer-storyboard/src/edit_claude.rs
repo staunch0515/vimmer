@@ -9,8 +9,10 @@
 //! ```
 //!
 //! Each reply goes through [`apply_edit`]; a rejection (with the failing op and the reason) is
-//! sent back as the next turn of the same conversation, up to `max_retries` times. Claude only
-//! ever changes JSON: nothing here renders, and the input timeline is never written.
+//! sent back as the next message of the same request (its retry `history`), up to
+//! `max_retries` times. A chat's earlier exchanges ([`Conversation`]) are a separate, optional
+//! part of the request. Claude only ever changes JSON: nothing here renders, and the input
+//! timeline is never written.
 //!
 //! The API key stays in the environment of the helper process (see [`crate::generate`]).
 
@@ -36,6 +38,10 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 pub const MAX_INSTRUCTION_CHARS: usize = 2_000;
 /// Most asset file names listed for Claude.
 pub const MAX_LISTED_ASSETS: usize = 200;
+/// Most earlier exchanges of a chat sent with one request.
+pub const MAX_CONVERSATION_TURNS: usize = 12;
+/// Most characters of earlier chat (all text fields together) sent with one request.
+pub const MAX_CONVERSATION_CHARS: usize = 16_000;
 
 /// What Claude decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +70,9 @@ pub struct EditOptions {
     pub public_dir: Option<PathBuf>,
     /// When set, each raw API reply is saved here as `reply-<attempt>.json`.
     pub record_dir: Option<PathBuf>,
+    /// Earlier exchanges of the editor's chat. `None` (the CLI default) sends the request
+    /// exactly as before chats existed.
+    pub conversation: Option<Conversation>,
 }
 
 impl EditOptions {
@@ -78,7 +87,78 @@ impl EditOptions {
             timeout: DEFAULT_TIMEOUT,
             public_dir: None,
             record_dir: None,
+            conversation: None,
         }
+    }
+}
+
+/// The recent part of a chat with the assistant, oldest first, as the editor built it. Not the
+/// same thing as the retry `history` of one request: this is what the user and the assistant
+/// said before, with whether each proposed edit was accepted. Old timelines are never sent;
+/// the request always carries the current one.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Conversation {
+    pub turns: Vec<ConversationTurn>,
+    /// How many older exchanges were left out to keep the request small.
+    #[serde(default)]
+    pub dropped: u32,
+}
+
+/// One earlier exchange: what the user asked and what the assistant answered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationTurn {
+    pub user: String,
+    pub status: EditStatus,
+    /// The assistant's explanation (or its question, or why not).
+    pub reply: String,
+    /// The change summary lines of an `edited` proposal.
+    #[serde(default)]
+    pub changes: Vec<String>,
+    /// For an `edited` proposal: `accepted`, `rejected` or `ignored` (the user moved on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<Decision>,
+}
+
+/// What the user did with a proposed edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    Accepted,
+    Rejected,
+    /// Not accepted before the next message: never applied.
+    Ignored,
+}
+
+impl Conversation {
+    /// True when there is nothing to send.
+    pub fn is_empty(&self) -> bool {
+        self.turns.is_empty()
+    }
+
+    /// Checks the size limits; returns the problem in words.
+    pub fn check(&self) -> Result<(), String> {
+        if self.turns.len() > MAX_CONVERSATION_TURNS {
+            return Err(format!(
+                "the conversation has more than {MAX_CONVERSATION_TURNS} earlier turns"
+            ));
+        }
+        let chars: usize = self
+            .turns
+            .iter()
+            .map(|t| {
+                t.user.chars().count()
+                    + t.reply.chars().count()
+                    + t.changes.iter().map(|c| c.chars().count()).sum::<usize>()
+            })
+            .sum();
+        if chars > MAX_CONVERSATION_CHARS {
+            return Err(format!(
+                "the conversation is longer than {MAX_CONVERSATION_CHARS} characters"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -119,6 +199,9 @@ struct HelperRequest<'a> {
     /// The library track the timeline's `music.pick` plays now.
     #[serde(skip_serializing_if = "Option::is_none")]
     music_now: Option<&'a str>,
+    /// Earlier chat turns; absent (not `null`) without one, so such requests stay as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation: Option<&'a Conversation>,
 }
 
 #[derive(Serialize)]
@@ -280,6 +363,8 @@ pub fn propose_edit_with_key_check(
         Some(format!(
             "the instruction is longer than {MAX_INSTRUCTION_CHARS} characters"
         ))
+    } else if let Some(Err(e)) = opts.conversation.as_ref().map(Conversation::check) {
+        Some(e)
     } else if let Err(e) = apply_edit(timeline, &Value::Array(vec![]), &EditCheck::default()) {
         e.problems
             .iter()
@@ -380,6 +465,7 @@ pub fn propose_edit_with_key_check(
             history: &history,
             music_tracks: &music_tracks,
             music_now: music_now.as_deref(),
+            conversation: opts.conversation.as_ref().filter(|c| !c.is_empty()),
         };
         let request_file =
             work_dir.join(format!("edit-request-{}-{number}.json", std::process::id()));

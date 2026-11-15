@@ -294,3 +294,86 @@ fn assets_are_listed_relative_and_sorted() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+fn chat() -> Conversation {
+    serde_json::from_value(json!({
+        "dropped": 1,
+        "turns": [
+            {"user": "加个转场", "status": "clarify", "reply": "要哪种？", "changes": []},
+            {"user": "淡入", "status": "edited", "reply": "第二段加了淡入。",
+             "changes": ["scene-02: transition none -> fade 500 ms"], "decision": "accepted"},
+            {"user": "慢一点", "status": "edited", "reply": "延长。", "changes": [], "decision": "ignored"}
+        ]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn without_a_conversation_the_request_has_exactly_the_old_fields() {
+    let fx = Fixture::new("noconv");
+    fx.reply(None, &faster());
+    fx.run(&EditOptions::new("第二段节奏快一点")).unwrap();
+    let mut empty = EditOptions::new("第二段节奏快一点");
+    empty.conversation = Some(Conversation::default());
+    fx.run(&empty).unwrap();
+    for n in [1, 2] {
+        let req = fx.request(n);
+        let mut keys: Vec<&str> = req.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["assets", "effort", "history", "instruction", "model", "scene_id", "timeline", "timeout_secs"],
+            "request {n}"
+        );
+    }
+}
+
+#[test]
+fn a_conversation_is_passed_to_the_helper_beside_the_retry_history() {
+    let fx = Fixture::new("conv");
+    fx.reply(Some(1), &json!({"status": "edited", "explanation": "x", "patch": [op("add", "/nope", "1")]}));
+    fx.reply(None, &faster());
+    let mut opts = EditOptions::new("再快一点");
+    opts.conversation = Some(chat());
+    let p = fx.run(&opts).unwrap();
+    assert_eq!(p.retries(), 1);
+    for n in [1, 2] {
+        assert_eq!(fx.request(n)["conversation"], serde_json::to_value(chat()).unwrap());
+    }
+    // The retry loop is unchanged: the rejected attempt goes back through `history`.
+    assert_eq!(fx.request(1)["history"], json!([]));
+    assert_eq!(fx.request(2)["history"].as_array().unwrap().len(), 1);
+    assert_eq!(fx.request(2)["conversation"]["turns"][1]["decision"], json!("accepted"));
+    assert!(fx.request(2)["conversation"]["turns"][0].get("decision").is_none());
+}
+
+#[test]
+fn a_conversation_over_the_limits_is_an_input_problem_before_any_call() {
+    let fx = Fixture::new("convbig");
+    fx.reply(None, &faster());
+    let turn = chat().turns[0].clone();
+    let mut opts = EditOptions::new("再快一点");
+    opts.conversation = Some(Conversation { turns: vec![turn.clone(); MAX_CONVERSATION_TURNS + 1], dropped: 0 });
+    let f = fx.run(&opts).unwrap_err();
+    assert_eq!(f.kind, FailureKind::Helper);
+    assert!(f.message.contains("earlier turns"), "{}", f.message);
+    let mut long = turn;
+    long.reply = "x".repeat(MAX_CONVERSATION_CHARS + 1);
+    opts.conversation = Some(Conversation { turns: vec![long], dropped: 0 });
+    let f = fx.run(&opts).unwrap_err();
+    assert!(f.message.contains("characters"), "{}", f.message);
+    assert_eq!(fx.runs(), 0);
+    assert!(chat().check().is_ok());
+}
+
+#[test]
+fn a_conversation_rejects_unknown_fields_and_decisions() {
+    let bad = json!({"turns": [{"user": "a", "status": "edited", "reply": "b", "decision": "maybe"}]});
+    assert!(serde_json::from_value::<Conversation>(bad).is_err());
+    let extra = json!({"turns": [], "timeline": {}});
+    assert!(serde_json::from_value::<Conversation>(extra).is_err());
+    let minimal: Conversation =
+        serde_json::from_value(json!({"turns": [{"user": "a", "status": "refused", "reply": "b"}]})).unwrap();
+    assert_eq!(minimal.dropped, 0);
+    assert_eq!(minimal.turns[0].decision, None);
+}

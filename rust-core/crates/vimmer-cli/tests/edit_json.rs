@@ -112,3 +112,64 @@ fn the_cli_prints_the_library_json() {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+
+/// Runs `vimmer edit --dry-run --json` with a stand-in Python that also keeps the request it
+/// was given; returns what the CLI printed and that request.
+fn cli_request(name: &str, extra: &[&str]) -> (String, Option<Value>) {
+    let edit = json!({"status": "clarify", "explanation": "Which scene?", "patch": []});
+    let reply = json!({"ok": true, "reply_json": edit.to_string(), "model": "claude-sonnet-5-5",
+                       "stop_reason": "end_turn", "usage": null, "warnings": []});
+    let dir = fixture(name, &reply);
+    let python = dir.join("python");
+    fs::write(
+        &python,
+        "#!/bin/sh\nd=\"$(dirname \"$0\")\"\nwhile [ $# -gt 0 ]; do [ \"$1\" = --request ] && cp \"$2\" \"$d/request.json\"; shift; done\ncat \"$d/reply.json\"\n",
+    )
+    .unwrap();
+    let chat = dir.join("chat.json");
+    fs::write(
+        &chat,
+        r#"{"turns": [{"user": "slower", "status": "edited", "reply": "Slower.", "changes": ["scene-01: duration 15000 ms -> 20000 ms"], "decision": "rejected"}], "dropped": 0}"#,
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vimmer"))
+        .args(["edit", "--dry-run", "--json", "--model", "claude-sonnet-5-5"])
+        .args(extra.iter().map(|a| a.replace("@CHAT@", &chat.display().to_string())))
+        .arg("--public-dir")
+        .arg(dir.join("public"))
+        .arg("--llm-python")
+        .arg(&python)
+        .args(["--", "-", "make it slower"])
+        .env(ENV_API_KEY, "sk-fake-test-value-000")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(TIMELINE.as_bytes()).unwrap();
+    let out = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    let request = fs::read_to_string(dir.join("request.json"))
+        .ok()
+        .map(|s| serde_json::from_str(&s).unwrap());
+    let _ = fs::remove_dir_all(&dir);
+    (out, request)
+}
+
+#[test]
+fn without_conversation_the_cli_request_has_no_chat_and_with_it_carries_the_file() {
+    let (out, req) = cli_request("plain", &[]);
+    assert!(out.contains("\"status\":\"clarify\""), "{out}");
+    let req = req.unwrap();
+    assert!(req.get("conversation").is_none());
+    assert_eq!(req["history"], json!([]));
+
+    let (out, req) = cli_request("chat", &["--conversation", "@CHAT@"]);
+    assert!(out.contains("\"ok\":true"), "{out}");
+    let req = req.unwrap();
+    assert_eq!(req["conversation"]["turns"][0]["decision"], json!("rejected"));
+    assert_eq!(req["conversation"]["dropped"], json!(0));
+
+    // A file that is not a conversation is an error before any call.
+    let (out, req) = cli_request("badchat", &["--conversation", "/nonexistent/chat.json"]);
+    assert!(req.is_none(), "{out}");
+}

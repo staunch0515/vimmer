@@ -95,6 +95,8 @@ export const App = () => {
   const [frame, setFrame] = useState(0);
   const [tab, setTab] = useState<InspectorTab>("scene");
   const [path, setPath] = useState<string | null>(null);
+  // Bumped whenever another document is loaded (new, open, project): the assistant's chat is per document.
+  const [docKey, setDocKey] = useState(0);
   // Studio projects (desktop app). The app starts on the projects screen; the browser editor and
   // a recovered draft go straight to the editor, as before. `project` is the open project, or
   // null for a plain timeline file (`path`) outside any project.
@@ -298,6 +300,7 @@ export const App = () => {
     if (!(await discardOk())) return;
     const t = newTimeline();
     dispatch({ type: "load", timeline: t });
+    setDocKey((k) => k + 1);
     leaveProject();
     setPath(null);
     setSaved(serialize(t));
@@ -312,6 +315,7 @@ export const App = () => {
       if (!picked) return false;
       const t = parseTimeline(picked.text);
       dispatch({ type: "load", timeline: t });
+      setDocKey((k) => k + 1);
       leaveProject();
       setPath(picked.path);
       setSaved(serialize(t));
@@ -354,6 +358,7 @@ export const App = () => {
     const assets = await tauriApi.listAssets(dir, opened.timelineJson).catch(() => [] as AssetInfo[]);
     setOpenProject(dir, assets.map((a) => a.path), () => setAssetsKey((k) => k + 1));
     dispatch({ type: "load", timeline: t });
+    setDocKey((k) => k + 1);
     setProject(opened.project);
     setPath(null);
     setSaved(serialize(t));
@@ -677,6 +682,7 @@ export const App = () => {
           playheadMs={frameToMs(frame, fps)}
           dispatch={fieldDispatch}
           onSeekMs={(ms) => seek(Math.round((ms * fps) / 1000))}
+          docKey={docKey}
           onSelect={select}
           onAddSubtitle={addSubtitleAtPlayhead}
           beats={beats}
