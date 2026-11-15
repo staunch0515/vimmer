@@ -325,15 +325,27 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = &cli.brand {
         timeline.brand = Some(expand_cmd::load_brand(path)?);
     }
-    render(timeline, cli.render, cli.output).await
+    let assets = timeline_assets(&cli.timeline);
+    render(timeline, cli.render, cli.output, assets).await
+}
+
+/// Where a timeline file's own assets may be: its folder, and whether that folder wins over the
+/// renderer's public dir. It wins only for a Studio project (a `project.json` next to the
+/// timeline); for any other timeline the public dir comes first, as it always did, and the
+/// folder only supplies files the public dir does not have.
+fn timeline_assets(timeline: &Path) -> Option<(PathBuf, bool)> {
+    let folder = std::path::absolute(timeline).ok()?.parent()?.to_path_buf();
+    let is_project = folder.join("project.json").is_file();
+    Some((folder, is_project))
 }
 
 async fn render(
     timeline: VideoTimeline,
     args: RenderArgs,
     output: PathBuf,
+    assets: Option<(PathBuf, bool)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let cfg = RenderOptions {
+    let mut cfg = RenderOptions {
         chunk_ms: args.chunk_ms,
         preprocess_jobs: args.preprocess_jobs,
         render_jobs: args.render_jobs,
@@ -351,6 +363,10 @@ async fn render(
         kokoro_models: args.kokoro_models,
     }
     .config(args.work_dir, output, args.remotion_dir);
+    if let Some((folder, first)) = assets {
+        cfg.asset_dirs = vec![folder];
+        cfg.asset_dirs_first = first;
+    }
 
     let report = render_timeline(
         timeline,
@@ -498,7 +514,7 @@ async fn run_generate(cli: GenerateCli) -> Result<(), Box<dyn std::error::Error>
         .output
         .clone()
         .expect("clap requires --output without --no-render");
-    render(generated.conversion.timeline, cli.render, output).await
+    render(generated.conversion.timeline, cli.render, output, None).await
 }
 
 /// Ctrl-C stops the helpers (they run in their own process group, so they would not see the
@@ -667,7 +683,7 @@ async fn run_illustrate(cli: IllustrateCli) -> Result<(), Box<dyn std::error::Er
         )?;
     }
     match cli.output {
-        Some(output) => render(timeline, cli.render, output).await,
+        Some(output) => render(timeline, cli.render, output, None).await,
         None => Ok(()),
     }
 }

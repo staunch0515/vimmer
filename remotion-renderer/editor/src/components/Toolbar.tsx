@@ -15,6 +15,8 @@ type Props = {
   onResolution: (w: number, h: number) => void;
   onRender: () => void;
   rendering: boolean;
+  /** Goes to the projects screen (desktop app). Absent: no button. */
+  onHome?: () => void;
 };
 
 export const Toolbar = (p: Props) => {
@@ -27,6 +29,7 @@ export const Toolbar = (p: Props) => {
         <span className="brand-sub">Studio</span>
       </div>
       <div className="divider" />
+      {p.onHome && <button className="btn ghost" onClick={p.onHome} title="All projects">Projects</button>}
       <button className="btn ghost" onClick={p.onNew} title="New (⌘N)">New</button>
       <button className="btn ghost" onClick={p.onOpen} title="Open (⌘O)">Open</button>
       <button className="btn ghost" onClick={p.onSave} title="Save (⌘S)">Save</button>

@@ -35,7 +35,7 @@ pub fn import_into(public: &Path, src: &Path) -> Result<String, String> {
         .to_string();
     let dir = public.join("assets");
     fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
-    let bytes = fs::read(&src).map_err(|e| format!("Could not read {source}: {e}"))?;
+    let bytes = fs::read(src).map_err(|e| format!("Could not read {source}: {e}"))?;
 
     let (stem, ext) = match name.rsplit_once('.') {
         Some((s, e)) => (s.to_string(), format!(".{e}")),

@@ -101,6 +101,13 @@ pub struct SchedulerConfig {
     /// Remotion public dir. Image and audio sources are relative to it; normalized
     /// images are written to `<public_dir>/generated/`.
     pub public_dir: PathBuf,
+    /// Extra folders an asset path may be found in (a Studio project, the timeline's own
+    /// folder). Files found there are staged into the public dir (see `localize.rs`). Empty:
+    /// every path is relative to `public_dir`, as it always was.
+    pub asset_dirs: Vec<PathBuf>,
+    /// `true`: a file in `asset_dirs` wins over the same path in `public_dir` (a Studio
+    /// project). `false`: `asset_dirs` only supply paths that `public_dir` does not have.
+    pub asset_dirs_first: bool,
     pub chunk_ms: u64,
     pub preprocess_concurrency: usize,
     pub render_concurrency: usize,
@@ -121,6 +128,8 @@ impl SchedulerConfig {
             output,
             remotion_dir,
             public_dir,
+            asset_dirs: Vec::new(),
+            asset_dirs_first: false,
             chunk_ms: DEFAULT_CHUNK_MS,
             preprocess_concurrency: 4,
             render_concurrency: 2,
@@ -143,6 +152,9 @@ impl SchedulerConfig {
             &mut self.public_dir,
         ] {
             *path = std::path::absolute(&*path)?;
+        }
+        for dir in &mut self.asset_dirs {
+            *dir = std::path::absolute(&*dir)?;
         }
         Ok(self)
     }
@@ -201,6 +213,11 @@ pub async fn render_timeline_with(
     let mut warnings = Vec::new();
     let mut notes = Vec::new();
     ctx.check()?;
+
+    // Files of a project (or next to the timeline) are staged into the public dir and their
+    // paths rewritten; from here on every asset path is relative to `public_dir`. Without
+    // `asset_dirs`, or without a file found there, this changes nothing.
+    crate::localize::stage_assets(&mut timeline, &cfg, &mut notes)?;
 
     // A music pick becomes a file (and, with beat sync, the track's beat grid) before anything
     // reads the music.

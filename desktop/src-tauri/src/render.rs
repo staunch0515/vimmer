@@ -31,17 +31,23 @@ pub struct RenderState {
 pub struct StartArgs {
     /// The timeline as the editor holds it, including unsaved edits.
     pub timeline_json: String,
-    /// Destination MP4 path, chosen by the user.
-    pub output: String,
+    /// Destination MP4 path, chosen by the user. May be left out for a project: the render then
+    /// goes to `<project>/renders/<date-time>.mp4`.
+    #[serde(default)]
+    pub output: Option<String>,
     /// The render panel's choices. Missing fields keep the CLI's defaults.
     #[serde(default)]
     pub options: PanelOptions,
+    /// The Studio project being rendered. Its files win over the public folder, and the finished
+    /// render is added to its history. Missing: a plain timeline file, rendered as before.
+    #[serde(default)]
+    pub project_dir: Option<String>,
 }
 
 /// What the render panel sends; mirrors `RenderOptions` in remotion-renderer/editor/src/render.ts.
 /// Every field is optional so an older editor (or an empty object) renders like the CLI without
 /// flags.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PanelOptions {
     /// `say` or `kokoro`. Missing: `$VIMMER_TTS` (from the login shell too), else `say`.
@@ -119,7 +125,7 @@ pub fn render_options(panel: &PanelOptions, env: &dyn Fn(&str) -> Option<String>
 }
 
 /// `$VIMMER_TTS` when it names an engine, else `say`; and whether the variable decided it.
-fn default_engine(env: &dyn Fn(&str) -> Option<String>) -> (TtsEngine, bool) {
+pub(crate) fn default_engine(env: &dyn Fn(&str) -> Option<String>) -> (TtsEngine, bool) {
     match env("VIMMER_TTS").as_deref().and_then(TtsEngine::parse) {
         Some(engine) => (engine, true),
         None => (TtsEngine::Say, false),
@@ -145,14 +151,36 @@ pub struct CheckArgs {
     pub timeline_json: String,
     /// The engine chosen in the panel, for `narration.too_long`. Missing: the render's default.
     pub tts: Option<String>,
+    /// The Studio project the timeline belongs to, so its own files are found. Missing: only the
+    /// public folder is looked in, as before.
+    #[serde(default)]
+    pub project_dir: Option<String>,
 }
 
 /// The `vimmer check` rules on the timeline as the editor holds it (the same report as
 /// `vimmer check --json`, without a rendered file and without synthesizing narration).
 #[tauri::command]
-pub async fn check_before_render(args: CheckArgs) -> Result<Report, String> {
-    let timeline: VideoTimeline =
-        serde_json::from_str(&args.timeline_json).map_err(|e| format!("The timeline is not valid JSON: {e}"))?;
+pub async fn check_before_render(app: AppHandle, args: CheckArgs) -> Result<Report, String> {
+    let project = match &args.project_dir {
+        Some(dir) => Some(crate::studio::studio(&app)?.project(dir)?),
+        None => None,
+    };
+    check_timeline_in(args, project).await
+}
+
+/// The check, with the project folder already resolved.
+pub async fn check_timeline_in(args: CheckArgs, project: Option<PathBuf>) -> Result<Report, String> {
+    let timeline: VideoTimeline = match &project {
+        Some(dir) => {
+            let mut value: serde_json::Value = serde_json::from_str(&args.timeline_json)
+                .map_err(|e| format!("The timeline is not valid JSON: {e}"))?;
+            point_at_project_files(&mut value, dir);
+            serde_json::from_value(value).map_err(|e| format!("The timeline is not valid JSON: {e}"))?
+        }
+        None => {
+            serde_json::from_str(&args.timeline_json).map_err(|e| format!("The timeline is not valid JSON: {e}"))?
+        }
+    };
     let tts = match args.tts.as_deref() {
         Some(name) => TtsEngine::parse(name).ok_or_else(|| format!("Unknown voice engine `{name}`."))?,
         None => default_engine(&vimmer_env).0,
@@ -171,6 +199,20 @@ pub async fn check_before_render(args: CheckArgs) -> Result<Report, String> {
         .map_err(|e| format!("The check stopped: {e}"))
 }
 
+/// Replaces every asset path that names a file of the project by that file's absolute path, so
+/// the check (which joins paths onto the public folder; joining an absolute path gives that
+/// path) finds project files. Paths that are not in the project stay as they are.
+pub fn point_at_project_files(timeline: &mut serde_json::Value, project: &Path) {
+    crate::paths::for_each_asset(timeline, &mut |path, _| {
+        if crate::paths::is_local_relative(path) {
+            let file = project.join(path.as_str());
+            if file.is_file() {
+                *path = file.display().to_string();
+            }
+        }
+    });
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Finished {
@@ -178,6 +220,23 @@ pub struct Finished {
     pub cancelled: bool,
     pub output: Option<String>,
     pub error: Option<String>,
+    /// For a project render: its new history entry and the project as the Home screen shows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render: Option<crate::studio::RenderRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<crate::studio::ProjectSummary>,
+    /// What the render noted (which music track, a project file used instead of a public one).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+/// Where the render goes: the path given, else the project's `renders/` folder.
+pub fn output_for(output: Option<&str>, project: Option<&Path>) -> Result<PathBuf, String> {
+    match (output.map(str::trim).filter(|o| !o.is_empty()), project) {
+        (Some(path), _) => Ok(PathBuf::from(path)),
+        (None, Some(dir)) => Ok(crate::renders::default_output(dir)),
+        (None, None) => Err("No output file was chosen.".into()),
+    }
 }
 
 #[tauri::command]
@@ -188,6 +247,13 @@ pub fn start_render(app: AppHandle, state: State<'_, RenderState>, args: StartAr
     if !remotion_dir.join("package.json").exists() {
         return Err(format!("Remotion project not found at {}", remotion_dir.display()));
     }
+    let studio = crate::studio::studio(&app)?;
+    let project = match &args.project_dir {
+        Some(dir) => Some(studio.project(dir)?),
+        None => None,
+    };
+    let output = output_for(args.output.as_deref(), project.as_deref())?;
+    let panel_options = serde_json::to_value(&args.options).unwrap_or_default();
 
     let cancel = Arc::new(CancelHandle::default());
     {
@@ -202,7 +268,12 @@ pub fn start_render(app: AppHandle, state: State<'_, RenderState>, args: StartAr
         let options = render_options(&args.options, &vimmer_env)?;
         let cache = app.path().app_cache_dir().map_err(|e| format!("No cache folder: {e}"))?;
         let work_dir = cache.join(format!("render-{}", unix_millis()));
-        let mut cfg = options.config(work_dir.clone(), PathBuf::from(&args.output), remotion_dir.clone());
+        let mut cfg = options.config(work_dir.clone(), output.clone(), remotion_dir.clone());
+        if let Some(dir) = &project {
+            // A project's own files come first, as `vimmer <project>/timeline.json` does.
+            cfg.asset_dirs = vec![dir.clone()];
+            cfg.asset_dirs_first = true;
+        }
         let path = user_path();
         cfg.ffmpeg = find_in_path("ffmpeg", &path);
         let speech: Arc<dyn Speech> = Arc::new(SaySpeech {
@@ -234,15 +305,46 @@ pub fn start_render(app: AppHandle, state: State<'_, RenderState>, args: StartAr
         let result = render_timeline_with(timeline, cfg, probe, speech, ctx).await;
         let _ = std::fs::remove_dir_all(&work_dir);
         clear_current(&task_app);
+        let failed = |cancelled: bool, error: Option<String>| Finished {
+            ok: false,
+            cancelled,
+            output: None,
+            error,
+            render: None,
+            project: None,
+            notes: Vec::new(),
+        };
         let finished = match result {
-            Ok(report) => Finished {
-                ok: true,
-                cancelled: false,
-                output: Some(report.output.display().to_string()),
-                error: None,
-            },
-            Err(SchedulerError::Cancelled) => Finished { ok: false, cancelled: true, output: None, error: None },
-            Err(e) => Finished { ok: false, cancelled: false, output: None, error: Some(e.to_string()) },
+            Ok(report) => {
+                // A project render goes into the project's history; a problem there must not
+                // turn a finished render into a failed one.
+                let recorded = match project {
+                    Some(dir) => {
+                        let out = report.output.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            let record = crate::renders::record_render(&studio, &dir, &out, panel_options, false).ok()?;
+                            let meta = crate::studio::read_meta(&dir).ok()?;
+                            Some((record, crate::studio::summary(&dir, &meta)))
+                        })
+                        .await
+                        .ok()
+                        .flatten()
+                    }
+                    None => None,
+                };
+                let (render, project) = recorded.map_or((None, None), |(r, p)| (Some(r), Some(p)));
+                Finished {
+                    ok: true,
+                    cancelled: false,
+                    output: Some(report.output.display().to_string()),
+                    error: None,
+                    render,
+                    project,
+                    notes: report.notes,
+                }
+            }
+            Err(SchedulerError::Cancelled) => failed(true, None),
+            Err(e) => failed(false, Some(e.to_string())),
         };
         let _ = task_app.emit(FINISHED_EVENT, finished);
     });
@@ -279,7 +381,7 @@ fn clear_current(app: &AppHandle) {
 }
 
 /// The Remotion project next to this repository. Only valid when running from the source tree.
-fn default_remotion_dir() -> PathBuf {
+pub(crate) fn default_remotion_dir() -> PathBuf {
     let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../remotion-renderer");
     here.canonicalize().unwrap_or(here)
 }
@@ -303,7 +405,7 @@ pub(crate) fn user_path() -> String {
 }
 
 /// A `VIMMER_*` variable: this process's value, else the login shell's.
-fn vimmer_env(name: &str) -> Option<String> {
+pub(crate) fn vimmer_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty()).or_else(|| {
         let i = SHELL_VARS.iter().position(|v| *v == name)?;
         shell_vars()[i].clone()
@@ -335,7 +437,7 @@ pub(crate) fn find_in_path(name: &str, path: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
-fn unix_millis() -> u128 {
+pub(crate) fn unix_millis() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
 
@@ -406,8 +508,8 @@ mod tests {
         timeline["scenes"][0]["duration_ms"] = 300.into(); // far too short for its narration
         timeline["scenes"][1]["image"] = "missing/nope.png".into(); // an error
         let run = |tts: &str| {
-            let args = CheckArgs { timeline_json: timeline.to_string(), tts: Some(tts.into()) };
-            serde_json::to_value(tauri::async_runtime::block_on(check_before_render(args)).unwrap()).unwrap()
+            let args = CheckArgs { timeline_json: timeline.to_string(), tts: Some(tts.into()), project_dir: None };
+            serde_json::to_value(tauri::async_runtime::block_on(check_timeline_in(args, None)).unwrap()).unwrap()
         };
         let find = |report: &serde_json::Value, code: &str| {
             report["findings"].as_array().unwrap().iter().find(|f| f["code"] == code).cloned().unwrap()
@@ -424,13 +526,55 @@ mod tests {
         let kokoro = run("kokoro");
         assert!(find(&kokoro, "narration.too_long")["message"].as_str().unwrap().contains("kokoro"));
 
-        let bad = CheckArgs { timeline_json: "{}".into(), tts: None };
-        assert!(tauri::async_runtime::block_on(check_before_render(bad)).is_err());
+        let bad = CheckArgs { timeline_json: "{}".into(), tts: None, project_dir: None };
+        assert!(tauri::async_runtime::block_on(check_timeline_in(bad, None)).is_err());
     }
 
     #[test]
     fn start_args_without_options_still_parse() {
         let args: StartArgs = serde_json::from_str(r#"{"timelineJson":"{}","output":"o.mp4"}"#).unwrap();
         assert!(args.options.tts.is_none());
+        // What the editor sends for a plain timeline file: no project, the chosen path.
+        assert!(args.project_dir.is_none());
+        assert_eq!(output_for(args.output.as_deref(), None).unwrap(), PathBuf::from("o.mp4"));
+        assert!(output_for(None, None).is_err(), "a plain file needs a chosen path");
+        assert!(output_for(Some("  "), None).is_err());
+    }
+
+    #[test]
+    fn a_project_render_defaults_to_its_renders_folder() {
+        let args: StartArgs = serde_json::from_str(r#"{"timelineJson":"{}","projectDir":"/p/Film"}"#).unwrap();
+        assert_eq!(args.project_dir.as_deref(), Some("/p/Film"));
+        let out = output_for(args.output.as_deref(), Some(Path::new("/p/Film"))).unwrap();
+        assert!(out.starts_with("/p/Film/renders") && out.extension().unwrap() == "mp4", "{}", out.display());
+        // A path the user chose wins.
+        assert_eq!(output_for(Some("/tmp/x.mp4"), Some(Path::new("/p/Film"))).unwrap(), PathBuf::from("/tmp/x.mp4"));
+    }
+
+    #[test]
+    fn the_check_finds_a_projects_own_files() {
+        let dir = std::env::temp_dir().join(format!("vimmer-check-project-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        let img = image::RgbImage::from_pixel(64, 36, image::Rgb([40, 40, 40]));
+        img.save(dir.join("assets/mine.png")).unwrap();
+        let timeline = serde_json::json!({"fps": 30, "resolution": {"width": 1920, "height": 1080},
+            "scenes": [{"id": "a", "duration_ms": 3000, "text": "Hello", "image": "assets/mine.png"},
+                       {"id": "b", "duration_ms": 3000, "text": "World", "image": "assets/sample.jpeg"}]});
+        let codes = |project: Option<PathBuf>| {
+            let args = CheckArgs { timeline_json: timeline.to_string(), tts: Some("say".into()), project_dir: None };
+            let report = serde_json::to_value(tauri::async_runtime::block_on(check_timeline_in(args, project)).unwrap()).unwrap();
+            report["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| f["code"] == "assets.missing_image")
+                .map(|f| f["suggestion"]["path"].as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>()
+        };
+        // Without the project the file is unknown; with it, found. The public file is found both ways.
+        assert_eq!(codes(None), ["/scenes/0/image"]);
+        assert!(codes(Some(dir.clone())).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

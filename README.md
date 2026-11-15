@@ -872,10 +872,107 @@ Cancelling kills the Remotion and ffmpeg processes. Only one render runs at a ti
 Remotion project is found next to the repository, so the app must run from the source
 tree for now.
 
-Projects are plain timeline JSON files on disk: ⌘O opens one, ⌘S saves to its path
-(or asks for one), ⇧⌘S saves as a new file, ⌘N starts a new project. Writes are atomic
-(temp file, then rename). Unsaved work is mirrored to localStorage as a draft and comes
-back on the next launch, marked unsaved. Closing the window with unsaved changes asks first.
+### Studio projects
+
+The app opens on **Home**: every project with its thumbnail, length and last change, a search
+box, and the projects opened most recently. From there: **Generate from text**, **New project**,
+**Import timeline…**, and per project (the ⋯ on its card) Open, Rename, Duplicate, Show in Finder
+and Move to Trash. Deleting always moves to the macOS Trash (after a confirmation); nothing is
+removed for good. The project that is open in the editor cannot be renamed or deleted from Home.
+
+Opening a project shows it in the editor, with the project's sidebar on the left (**Assets** and
+**Renders**). **Projects** in the toolbar and **← Projects** in the sidebar go back to Home; the
+editor keeps its document, and **← Back to editor** returns to it. ⌘S saves into the project;
+**Save as** writes a copy of the timeline elsewhere and stays in the project. Opening another
+project (or file) while there are unsaved changes asks: Save, Don't save or Cancel. When the app
+was closed with unsaved changes, it starts in the editor with that draft, in its project.
+
+A project is a folder under `~/Documents/Vimmer/` (change it at the bottom of Home; projects are
+not moved when you do):
+
+```text
+<Name>/project.json    name, times, language, orientation, length, render history
+       timeline.json   the timeline; asset paths are relative to this folder
+       assets/         imported media
+       renders/        rendered MP4s, <YYYYMMDD-HHMMSS>.mp4
+       source/         a generated project's input.txt, storyboard.json and usage.json
+       thumb.jpg       a frame of the latest render, else the first scene's image
+```
+
+The folder is named after the project, so renaming a project renames its folder. Saving writes
+`timeline.json` atomically and refreshes `project.json` and the thumbnail. A project without a
+render or a scene image shows a title card on Home instead of a picture.
+
+**Assets** (left sidebar, Assets tab). **Import…** or dropping files from Finder onto the window
+copies them into the project's `assets/`: images, video, audio, SVG icons and fonts. A file whose
+bytes are already in the project is not copied again; a different file with a taken name gets
+`-2`, `-3`, …. Each file shows its kind, size, pixel size or length, and **Used ×n** or
+**Unused**, judged on the timeline as edited. Click a file to preview it; **Use as scene image**
+(video, audio, icon layer) puts it into the current scene, as does dragging it onto the preview.
+**Remove** and **Remove n unused…** move files to the Trash, and only files that no scene, music
+or brand setting uses. The inspector's own file pickers import into the project too.
+
+**Renders** (left sidebar, Renders tab). In a project, **Render…** does not ask for a path: the
+video goes to `renders/` and is added to the project's history with its time, options, size and
+length. The list plays a render in the app, shows it in Finder or deletes it (to the Trash).
+**Add video…** copies an MP4 you already have into the history.
+
+**Generate from text** (Home). Paste a text or open a `.txt` file, pick the language (detected
+from the text by default), format, optional length in seconds, model (Opus 5.5, or Sonnet 5.5
+at about half the price) and whether Claude also draws an illustration per scene. The dialog
+shows a cost estimate that follows what you type; it is computed locally from the token counts
+and the prices under [Cost](#cost), with the illustration estimate of `vimmer illustrate`.
+**Review cost…** shows the amount again and **nothing is sent before you press
+Generate for about $…**. While it runs you see the stage and can cancel. At the end the dialog
+shows the actual tokens and cost and opens the new project, which has the text, the storyboard
+and the usage in `source/` and the illustrations in `assets/illustrations/`. It is the same code
+as `vimmer generate` (Python helper, music mood, narration sized for `$VIMMER_TTS`).
+
+The app reads `ANTHROPIC_API_KEY` from its own environment or, when started from Finder, from
+your shell (`~/.zshrc`) when the first generation starts. The key is kept in memory, handed only
+to the helper process, and never written to a log, an event, the project folder or the settings.
+Without a key the dialog says so and nothing is charged. The helper's Python comes from
+`$VIMMER_LLM_PYTHON` in the app's environment, else `~/.local/share/vimmer/llm-venv` (see
+[Install](#install)).
+
+**Where a timeline's files are looked for.** A project's own files come first, then
+`remotion-renderer/public/` (the shipped music library, fonts and icons stay there). At render
+time each project file is hard-linked (copied when a link is not possible) to
+`public/generated/project/<content key>/<name>` and the timeline's path is pointed there, so the
+renderer still reads only its public folder. The key is the file's content, so one file is staged
+once for every render, project and copy of a project, and the image, clip and beat caches keep
+working. `public/generated/project/` only grows when a new or changed file is rendered; it can be
+deleted at any time and the next render stages what it needs again (there is no button for that
+yet). When a project file has the same path as a file in `public/`, the project's file is used
+and the render notes it in one line.
+
+The CLI follows the same rule, so `vimmer ~/Documents/Vimmer/<Name>/timeline.json -o out.mp4`
+renders a project like the app does. A timeline that is not in a project (no `project.json`
+beside it) keeps `public/` first, as before; its own folder is only tried for a path that
+`public/` does not have. A timeline that rendered before projects existed renders the same.
+
+**Old timelines and videos.** **Import timeline…** makes a project from a timeline JSON: every
+file it names is copied into the project at the same relative path (from next to the timeline
+first, then from `public/`), so the timeline itself is stored unchanged; library music and URLs
+stay references. Nothing is moved or deleted in the old place. Old MP4s join a project through
+**Add video…**.
+
+### Plain timeline files
+
+A timeline JSON outside any project still works as before: **Open file…** on Home (or ⌘O in
+the editor) opens one, ⌘S saves to its path (or asks for one), ⇧⌘S saves as a new file, ⌘N
+starts an untitled one, and **Render…** asks where to save the MP4. Its assets live in
+`remotion-renderer/public/`. Writes are atomic (temp file, then rename). Unsaved work is
+mirrored to localStorage as a draft and comes back on the next launch, marked unsaved. Leaving a
+document with unsaved changes asks first. In the desktop app the sidebar of a plain file says
+so, and **Make it a project…** (once the file is saved) imports it as described above.
+
+For development, two pages of the editor's dev server run the Studio without the desktop app:
+`/src/studio/app-dev.html` is the whole app against a mocked shell (in-memory projects, a
+pretend render, no API calls), and `/src/studio/dev.html` shows the Studio screens alone.
+`/src/studio/selftest.html` is the opposite: opened inside the real desktop window (see the
+comment at the top of `editor/src/studio/selftest.tsx`), it runs every Studio command for real
+in a projects folder you name and writes the outcome to a file.
 
 ## Background music
 

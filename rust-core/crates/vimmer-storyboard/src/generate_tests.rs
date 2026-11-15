@@ -452,3 +452,37 @@ fn schema_matches_the_storyboard_model() {
         assert_eq!(got, want, "{field}");
     }
 }
+
+#[test]
+fn the_cli_helper_gets_no_extra_environment_and_values_never_reach_a_debug_print() {
+    // What `vimmer generate` / `illustrate` / `edit` use: `locate` and nothing else.
+    let fx = Fixture::new("env");
+    let located = LlmHelper::locate(Some(&fx.helper.python)).unwrap();
+    assert!(located.env.is_empty());
+    let request = Path::new("request.json");
+    for cmd in [
+        located.command(request, None),
+        located.edit_command(request, None),
+        located.illustrate_command(request, None),
+    ] {
+        assert_eq!(cmd.get_envs().count(), 0, "the helper only inherits the environment");
+    }
+
+    // The desktop app passes the key to the helper process only.
+    let mut helper = located.clone();
+    helper.env.set(ENV_API_KEY, "fake-value-for-tests");
+    helper.env.set(ENV_API_KEY, "fake-value-2"); // set twice: one entry
+    for cmd in [
+        helper.command(request, None),
+        helper.edit_command(request, None),
+        helper.illustrate_command(request, None),
+    ] {
+        let envs: Vec<_> = cmd.get_envs().collect();
+        assert_eq!(envs.len(), 1);
+        assert_eq!(envs[0].0, ENV_API_KEY);
+        assert_eq!(envs[0].1.unwrap(), "fake-value-2");
+    }
+    let shown = format!("{helper:?}");
+    assert!(shown.contains(ENV_API_KEY), "{shown}");
+    assert!(!shown.contains("fake-value"), "{shown}");
+}
