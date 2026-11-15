@@ -47,7 +47,7 @@ const SceneBody: React.FC<{ scene: Scene; durationInFrames: number }> = ({ scene
     ) : null}
     <LayerStack layers={scene.layers} side="below" sceneFrames={durationInFrames} />
     {scene.text ? (
-      <AnimatedText text={scene.text} highlights={scene.highlights} onImage={Boolean(scene.image || scene.video)} />
+      <AnimatedText text={scene.text} highlights={scene.highlights} onImage={Boolean(scene.image || scene.video)} textStyle={scene.text_style} />
     ) : null}
     <LayerStack layers={scene.layers} side="above" sceneFrames={durationInFrames} />
   </AbsoluteFill>

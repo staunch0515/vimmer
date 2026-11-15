@@ -1,6 +1,6 @@
 import type { Dispatch } from "react";
 import { useEffect, useState } from "react";
-import type { BarChartLayer, ChartBar, CounterLayer, Easing, Keyframe, ProgressRingLayer, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene } from "../../../src/types/timeline";
+import type { BarChartLayer, ChartBar, CounterLayer, Easing, Keyframe, ProgressRingLayer, Layer, LayerAnimation, LayerAnimationKind, LowerThirdLayer, Scene, Brand } from "../../../src/types/timeline";
 import { splitLayers } from "../../../src/motion/layers";
 import { ANIMATION_KINDS, LAYER_KINDS } from "../layers";
 import { sampleKeyframes } from "../../../src/motion/keyframes";
@@ -9,6 +9,7 @@ import { EASINGS } from "../model";
 import type { Action } from "../state";
 import { Field, MediaInput, NumField } from "./Inspector";
 import { ClipFields } from "./ClipFields";
+import { TextStyleFields } from "./TextStyleFields";
 
 type Props = {
   scene: Scene;
@@ -22,12 +23,14 @@ type Props = {
   sceneStartMs: number;
   // Moves the playhead to a timeline time in ms.
   onSeekMs?: (ms: number) => void;
+  // For the text style's "follows the brand" hints.
+  brand?: Brand | null;
 };
 
 const label = (s: string) => s.replace(/_/g, " ");
 
 /** The scene's layers: list in stacking order (top first), add, select, reorder, delete, edit. */
-export const LayerPanel = ({ scene, sceneIndex, selectedIndex, dispatch, selectedKeyframe, playheadMs, sceneStartMs, onSeekMs }: Props) => {
+export const LayerPanel = ({ scene, sceneIndex, selectedIndex, dispatch, selectedKeyframe, playheadMs, sceneStartMs, onSeekMs, brand }: Props) => {
   const layers = scene.layers ?? [];
   const { below, above } = splitLayers(layers);
   const layer: Layer | undefined = layers[selectedIndex];
@@ -62,7 +65,7 @@ export const LayerPanel = ({ scene, sceneIndex, selectedIndex, dispatch, selecte
         </ul>
       )}
       {layer && (
-        <LayerEditor key={`${sceneIndex}-${selectedIndex}`} layer={layer} scene={scene} sceneIndex={sceneIndex} index={selectedIndex} dispatch={dispatch}>
+        <LayerEditor key={`${sceneIndex}-${selectedIndex}`} layer={layer} scene={scene} sceneIndex={sceneIndex} index={selectedIndex} dispatch={dispatch} brand={brand}>
           <LayerKeyframes
             layer={layer}
             scene={scene}
@@ -81,8 +84,8 @@ export const LayerPanel = ({ scene, sceneIndex, selectedIndex, dispatch, selecte
 };
 
 const LayerEditor = ({
-  layer, scene, sceneIndex, index, dispatch, children,
-}: { layer: Layer; scene: Scene; sceneIndex: number; index: number; dispatch: Dispatch<Action>; children?: React.ReactNode }) => {
+  layer, scene, sceneIndex, index, dispatch, children, brand,
+}: { layer: Layer; scene: Scene; sceneIndex: number; index: number; dispatch: Dispatch<Action>; children?: React.ReactNode; brand?: Brand | null }) => {
   const patch = (p: Record<string, unknown>) => dispatch({ type: "patchLayer", sceneIndex, index, patch: p });
   const frac = (key: "x" | "y" | "width", name: string) => (
     <NumField
@@ -174,12 +177,12 @@ const LayerEditor = ({
         <AnimationField label="Exit" value={layer.exit ?? null} onChange={(a) => patch({ exit: a ?? undefined })} />
       </div>
       {children}
-      <KindFields layer={layer} patch={patch} />
+      <KindFields layer={layer} patch={patch} brand={brand} />
     </div>
   );
 };
 
-const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, unknown>) => void }) => {
+const KindFields = ({ layer, patch, brand }: { layer: Layer; patch: (p: Record<string, unknown>) => void; brand?: Brand | null }) => {
   switch (layer.kind) {
     case "text":
       return (
@@ -228,9 +231,22 @@ const KindFields = ({ layer, patch }: { layer: Layer; patch: (p: Record<string, 
               label="Background"
               optional
               value={layer.background?.color ?? ""}
-              onChange={(c) => patch({ background: c ? { ...(layer.background ?? {}), color: c } : undefined })}
+              onChange={(c) => {
+                const bg = layer.background ?? null;
+                // Clearing the fill keeps a border (a frame without fill); without one the box goes.
+                const frame = bg?.border ? { ...bg, color: undefined } : undefined;
+                patch({ background: c ? { ...(bg ?? {}), color: c } : frame });
+              }}
             />
           </div>
+          <TextStyleFields
+            name="layer"
+            parts={["outline", "border", "shadow"]}
+            style={{ outline: layer.outline, shadow: layer.shadow, background: layer.background }}
+            inherited={brand?.text_style}
+            builtinShadow="none"
+            onChange={(part, value) => patch({ [part]: value ?? undefined })}
+          />
           {layer.reveal === "typewriter" && (
             <div className="two-col">
               <NumField

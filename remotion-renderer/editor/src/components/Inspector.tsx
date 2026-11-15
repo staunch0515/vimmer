@@ -12,6 +12,7 @@ import { DEFAULT_CLIP } from "../layers";
 import { useEffect, useState } from "react";
 import { AssistantPanel } from "./AssistantPanel";
 import { LayerPanel } from "./LayerPanel";
+import { TextStyleFields, withPart } from "./TextStyleFields";
 import { BrandEditor, TemplateParams } from "./BrandPanel";
 import { BeatSyncFields, SfxList, type BeatStatus } from "./SoundPanel";
 import type { DetectedBeats } from "../beats";
@@ -119,6 +120,14 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs }: Pr
           onChange={(e) => patch({ highlights: e.target.value.split(",").map((w) => w.trim()).filter(Boolean) })}
         />
       </Field>
+      <div className="section-title">Text style</div>
+      <TextStyleFields
+        name="scene"
+        style={scene.text_style}
+        inherited={timeline.brand?.text_style}
+        builtinShadow="soft"
+        onChange={(part, value) => patch({ text_style: withPart(scene.text_style, part, value) ?? undefined })}
+      />
       <Field label="Background">
         <select
           value={scene.video ? "video" : "image"}
@@ -169,6 +178,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs }: Pr
         sceneStartMs={sceneStartMs}
         onSeekMs={onSeekMs}
         dispatch={dispatch}
+        brand={timeline.brand}
       />
       <div className="section-title">Transition in</div>
       {index === 0 ? (

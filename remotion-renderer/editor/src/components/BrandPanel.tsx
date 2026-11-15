@@ -6,6 +6,7 @@ import type { Selection } from "../model";
 import { pickToOpen, saveTimeline } from "../project";
 import { CATALOG, parseBrand, templateInfo, type ParamSpec } from "../templates";
 import { Field, MediaInput } from "./Inspector";
+import { TextStyleFields, withPart } from "./TextStyleFields";
 
 type Props = {
   timeline: VideoTimeline;
@@ -40,6 +41,7 @@ const compact = (b: Brand): Brand | null => {
   if (Object.keys(colors).length) out.colors = colors;
   if (fonts && Object.keys(fonts).length) out.fonts = fonts;
   if (b.logo?.src) out.logo = b.logo;
+  if (b.text_style && Object.keys(b.text_style).length) out.text_style = b.text_style;
   return Object.keys(out).length ? out : null;
 };
 
@@ -168,6 +170,15 @@ export const BrandEditor = ({ timeline, selection, dispatch }: Props) => {
           </Field>
         </>
       )}
+
+      <div className="section-title">Text style</div>
+      <div className="dim">Default outline, box and shadow of the scene text and text layers; a scene or layer's own style wins, part by part.</div>
+      <TextStyleFields
+        name="brand"
+        style={brand.text_style}
+        builtinShadow="soft on scene text, none on layers"
+        onChange={(part, value) => set({ ...brand, text_style: withPart(brand.text_style, part, value) })}
+      />
 
       <div className="section-title">Insert template scene</div>
       <div className="dim">Added after the selected scene; edit its text in the Scene tab.</div>

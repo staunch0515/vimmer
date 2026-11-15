@@ -23,6 +23,7 @@ import type { BarChartLayer, CounterLayer, ProgressRingLayer, IconLayer, ImageLa
 import { AnimatedWords, highlightKeys, highlightStyle, normalize, splitWords } from "./AnimatedText";
 import { BASE_FONT_STACK, BUILTIN, brandColor, fontStack, hasFont } from "../brand";
 import { useBrand } from "./Brand";
+import { borderCss, layerTextStyle, outlineCss, shadowCss, styleScale, withGlow } from "../textStyle";
 
 // What each layer kind draws inside its box. The box itself (position, size, transform, opacity,
 // timing) is set by LayerStack. `frameHeight` is the composition height: font sizes, strokes and
@@ -59,9 +60,14 @@ export const TextLayerView: React.FC<{ layer: TextLayer; boxHeight: number | nul
   frame,
 }) => {
   const brand = useBrand();
+  const { width: frameWidth } = useVideoConfig();
   const fontSize = (layer.font_size ?? 0.06) * frameHeight;
   const align = layer.align ?? "center";
-  const bg = layer.background;
+  // Outline, box and shadow: the layer's own, else the brand's text style (textStyle.ts).
+  const style = layerTextStyle(layer, brand);
+  const bg = style.background;
+  const scale = styleScale(frameWidth, frameHeight);
+  const shadow = style.shadow ? shadowCss(style.shadow, scale) : undefined;
   const words = splitWords(layer.text);
   const text = (
     <div
@@ -76,23 +82,27 @@ export const TextLayerView: React.FC<{ layer: TextLayer; boxHeight: number | nul
         color: layer.color ?? brandColor(brand, "text", BUILTIN.text),
         textAlign: align,
         overflowWrap: "break-word",
+        ...outlineCss(style.outline, scale),
+        ...(shadow !== undefined ? { textShadow: shadow } : {}),
         ...(bg
           ? {
               backgroundColor: bg.color,
               padding: (bg.padding ?? 0.4) * fontSize,
               borderRadius: (bg.radius ?? 0.3) * fontSize,
+              ...borderCss(bg, scale),
             }
           : {}),
       }}
     >
       {layer.reveal === "typewriter" ? (
-        <TypedText layer={layer} frame={frame} />
+        <TypedText layer={layer} frame={frame} shadow={shadow} />
       ) : (
         <AnimatedWords
           words={words}
           highlightSet={highlightKeys(layer.highlights ?? [])}
           frame={frame}
           animate={layer.reveal === "words"}
+          shadow={shadow}
         />
       )}
     </div>
@@ -105,7 +115,7 @@ export const TextLayerView: React.FC<{ layer: TextLayer; boxHeight: number | nul
 // Typewriter reveal (motion/typewriter.ts). The whole text is laid out from the first frame and the
 // untyped part is only hidden, so lines never re-wrap while typing. The cursor is an absolutely
 // placed bar inside an empty inline span: it takes no width and adds no line-break opportunity.
-const TypedText: React.FC<{ layer: TextLayer; frame: number }> = ({ layer, frame }) => {
+const TypedText: React.FC<{ layer: TextLayer; frame: number; shadow?: string }> = ({ layer, frame, shadow }) => {
   const { fps } = useVideoConfig();
   const brand = useBrand();
   const cps = layer.typing_cps ?? DEFAULT_TYPING_CPS;
@@ -117,7 +127,7 @@ const TypedText: React.FC<{ layer: TextLayer; frame: number }> = ({ layer, frame
   return (
     <>
       {segments.map((seg, i) => (
-        <span key={i} style={seg.highlight ? highlightStyle(1, brand) : undefined}>
+        <span key={i} style={seg.highlight ? withShadow(highlightStyle(1, brand), shadow) : undefined}>
           {seg.shown}
           {seg.cursorAfter && showCursor ? (
             <span style={{ position: "relative" }}>
@@ -139,6 +149,10 @@ const TypedText: React.FC<{ layer: TextLayer; frame: number }> = ({ layer, frame
     </>
   );
 };
+
+// A highlight's glow over the style's shadow (only the glow without a style shadow, as before).
+const withShadow = (h: React.CSSProperties, shadow: string | undefined): React.CSSProperties =>
+  shadow === undefined ? h : { ...h, textShadow: withGlow(String(h.textShadow ?? ""), shadow) };
 
 export const ShapeLayerView: React.FC<{ layer: ShapeLayer; width: number; height: number } & Ctx> = ({
   layer,
