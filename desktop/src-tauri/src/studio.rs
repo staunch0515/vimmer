@@ -429,6 +429,10 @@ impl Studio {
             }
             None => settings.recent.retain(|d| *d != entry),
         }
+        // A renamed project may land on a path that is already listed (a stale entry of a project
+        // that had this name before): keep each folder once.
+        let mut seen = std::collections::HashSet::new();
+        settings.recent.retain(|d| seen.insert(d.clone()));
         let _ = self.save_settings(&settings);
     }
 
@@ -864,6 +868,14 @@ pub(crate) mod tests {
         assert!(!Path::new(&a.dir).exists());
         assert_eq!(fs::read(Path::new(&renamed.dir).join("assets/pic.png")).unwrap(), b"png");
         assert_eq!(fx.studio.settings().recent, vec![renamed.dir.clone()], "recents follow the rename");
+        // A stale entry with the name a project is renamed to does not make a double.
+        let c = fx.studio.create("Third", None, "landscape").unwrap();
+        fx.studio.open(&c.dir).unwrap();
+        let mut settings = fx.studio.settings();
+        settings.recent.push(format!("{}/Fourth", fx.studio.root().canonicalize().unwrap().display()));
+        fx.studio.save_settings(&settings).unwrap();
+        let fourth = fx.studio.rename(&c.dir, "Fourth").unwrap();
+        assert_eq!(fx.studio.settings().recent, vec![fourth.dir.clone(), renamed.dir.clone()]);
         // Same folder, new display name.
         let again = fx.studio.rename(&renamed.dir, "Intro/take 2").unwrap();
         assert_eq!(again.dir, renamed.dir);
