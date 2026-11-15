@@ -54,3 +54,13 @@ Runs in `results/`, in order:
 - `sound-r1-sonnet-low`: the 6 `sound-*` cases (bar-start beat sync with a larger shift, a whoosh
   at a scene start, a click on a layer's enter, a tempo given by hand in Japanese, a quieter ding
   that ducks the music, a sound to download from the web): 6/6 first try, $0.15.
+- `mood-r1-sonnet-low`: the 5 `mood-*` cases (music by mood over the placeholder library): 5/5,
+  $0.14.
+- `mood-r2-real-tracks-sonnet-low`: the same 5 plus `sample-music`, after six real CC0 tracks
+  joined the library (placeholders ranked last, the listing marks them): mood 5/5 first try,
+  $0.15 in all. `mood-ja-another-track` now expects `happy-clappy-loop` in `exclude` (the track
+  the demo plays now). Sonnet named the real track it expected in three explanations
+  (Another August, Bright Eyes, OverDrive). `sample-music` is counted as failed: it still
+  expects `refused` / `clarify` from before the music library, and now adds
+  `{"pick": {"mood": "upbeat"}}`, which is the right edit. Since then `sample-music` is in the
+  `mood` group and expects that edit (checked against this run's patch without a new call).

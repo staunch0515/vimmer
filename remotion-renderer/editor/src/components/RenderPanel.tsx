@@ -127,53 +127,55 @@ const Setup = (p: Props) => {
         <button className="btn small ghost" onClick={p.onDismiss} aria-label="Close">✕</button>
       </div>
 
-      <label className="field">
-        <span className="field-label">Voice engine</span>
-        <select value={engine} onChange={(e) => set({ tts: e.target.value as RenderOptions["tts"] })}>
-          {TTS_ENGINES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
-        <span className="hint dim">
-          Default: {d.tts}{d.ttsFromEnv ? " (from $VIMMER_TTS)" : ""}. Kokoro falls back to say when it cannot run.
-        </span>
-      </label>
+      <div className="render-body">
+        <label className="field">
+          <span className="field-label">Voice engine</span>
+          <select value={engine} onChange={(e) => set({ tts: e.target.value as RenderOptions["tts"] })}>
+            {TTS_ENGINES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          <span className="hint dim">
+            Default: {d.tts}{d.ttsFromEnv ? " (from $VIMMER_TTS)" : ""}. Kokoro falls back to say when it cannot run.
+          </span>
+        </label>
 
-      <div className="field">
-        <span className="field-label">Auto-subtitles</span>
-        <div className="segmented" role="radiogroup" aria-label="Auto-subtitles">
-          {AUTO_SUBTITLE_MODES.map((m) => (
-            <button
-              key={m.value}
-              role="radio"
-              aria-checked={o.autoSubtitles === m.value}
-              className={`seg${o.autoSubtitles === m.value ? " active" : ""}`}
-              onClick={() => set({ autoSubtitles: m.value })}
-            >
-              {m.label}
-            </button>
-          ))}
+        <div className="field">
+          <span className="field-label">Auto-subtitles</span>
+          <div className="segmented" role="radiogroup" aria-label="Auto-subtitles">
+            {AUTO_SUBTITLE_MODES.map((m) => (
+              <button
+                key={m.value}
+                role="radio"
+                aria-checked={o.autoSubtitles === m.value}
+                className={`seg${o.autoSubtitles === m.value ? " active" : ""}`}
+                onClick={() => set({ autoSubtitles: m.value })}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <span className="hint dim">{mode?.help}</span>
         </div>
-        <span className="hint dim">{mode?.help}</span>
+
+        <label className="check">
+          <input type="checkbox" checked={o.wordSubtitles} onChange={(e) => set({ wordSubtitles: e.target.checked })} />
+          Word-by-word subtitle timing (whisper.cpp)
+        </label>
+
+        <details className="render-advanced">
+          <summary>Advanced</summary>
+          <div className="render-grid">
+            <NumberField label="Chunk length (s)" value={o.chunkMs} placeholder={d.chunkMs} min={1000} scale={1000} onChange={(v) => set({ chunkMs: v })} />
+            <NumberField label="Render jobs" value={o.renderJobs} placeholder={d.renderJobs} min={1} onChange={(v) => set({ renderJobs: v })} />
+            <NumberField label="Image jobs" value={o.preprocessJobs} placeholder={d.preprocessJobs} min={1} onChange={(v) => set({ preprocessJobs: v })} />
+            <label className="field">
+              <span className="field-label">Recognition language</span>
+              <input value={o.whisperLanguage} placeholder="guess" onChange={(e) => set({ whisperLanguage: e.target.value })} />
+            </label>
+          </div>
+        </details>
+
+        <Findings check={p.check} onRecheck={p.onRecheck} onFinding={p.onFinding} />
       </div>
-
-      <label className="check">
-        <input type="checkbox" checked={o.wordSubtitles} onChange={(e) => set({ wordSubtitles: e.target.checked })} />
-        Word-by-word subtitle timing (whisper.cpp)
-      </label>
-
-      <details className="render-advanced">
-        <summary>Advanced</summary>
-        <div className="render-grid">
-          <NumberField label="Chunk length (s)" value={o.chunkMs} placeholder={d.chunkMs} min={1000} scale={1000} onChange={(v) => set({ chunkMs: v })} />
-          <NumberField label="Render jobs" value={o.renderJobs} placeholder={d.renderJobs} min={1} onChange={(v) => set({ renderJobs: v })} />
-          <NumberField label="Image jobs" value={o.preprocessJobs} placeholder={d.preprocessJobs} min={1} onChange={(v) => set({ preprocessJobs: v })} />
-          <label className="field">
-            <span className="field-label">Recognition language</span>
-            <input value={o.whisperLanguage} placeholder="guess" onChange={(e) => set({ whisperLanguage: e.target.value })} />
-          </label>
-        </div>
-      </details>
-
-      <Findings check={p.check} onRecheck={p.onRecheck} onFinding={p.onFinding} />
 
       <div className="render-foot">
         <span className="spacer" />
