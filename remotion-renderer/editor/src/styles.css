@@ -49,25 +49,75 @@ body {
 .spacer { flex: 1; }
 .divider { width: 1px; height: 20px; background: var(--border); margin: 0 6px; }
 
-/* Layout: toolbar, workspace (stage + inspector), timeline. */
+/* Layout: toolbar, banners, then the studio shell (sidebar | preview | inspector over the
+   timeline), whose dividers are draggable (components/layout). */
 .studio {
   height: 100%;
-  display: grid;
-  grid-template-rows: auto auto 1fr 260px;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
 }
-.studio > .problems { grid-row: 2; }
-.workspace {
-  grid-row: 3;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  min-height: 0;
-  min-width: 0;
-}
+.studio > .toolbar, .studio > .problems { flex: none; }
+.studio-shell { flex: 1 1 0; }
 .stage { min-width: 0; }
-.timeline { grid-row: 4; min-width: 0; }
+.timeline { min-width: 0; }
+
+/* Splits. The sized pane has a fixed flex basis; the other pane takes the rest. Panes are
+   one-cell grids so their content (even through `display: contents`) fills them. */
+.split { display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+.split.split-row { flex-direction: row; }
+.split.split-column { flex-direction: column; }
+.split-pane {
+  display: grid; grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr);
+  min-width: 0; min-height: 0; overflow: hidden;
+}
+.split-pane.rest { flex: 1 1 0; }
+.split-handle {
+  flex: 0 0 1px; position: relative; z-index: 6;
+  background: var(--border); outline: none;
+  transition: background 120ms ease;
+}
+/* The hit area is wider than the line. */
+.split-handle::before { content: ""; position: absolute; }
+.split-handle.x { cursor: col-resize; }
+.split-handle.x::before { top: 0; bottom: 0; left: -4px; right: -4px; }
+.split-handle.y { cursor: row-resize; }
+.split-handle.y::before { left: 0; right: 0; top: -4px; bottom: -4px; }
+.split-handle::after { content: ""; position: absolute; opacity: 0; background: var(--accent); transition: opacity 120ms ease; pointer-events: none; }
+.split-handle.x::after { top: 0; bottom: 0; left: -1px; width: 3px; }
+.split-handle.y::after { left: 0; right: 0; top: -1px; height: 3px; }
+.split-handle:hover::after { opacity: 0.55; transition-delay: 150ms; }
+.split-handle.active::after, .split-handle:focus-visible::after { opacity: 1; transition-delay: 0ms; box-shadow: 0 0 10px var(--accent-glow); }
+/* While dragging: the resize cursor everywhere, no text selection, and the preview's media
+   does not grab the pointer. */
+body.split-dragging { user-select: none; -webkit-user-select: none; }
+body.split-dragging.split-x, body.split-dragging.split-x * { cursor: col-resize !important; }
+body.split-dragging.split-y, body.split-dragging.split-y * { cursor: row-resize !important; }
+body.split-dragging iframe, body.split-dragging video { pointer-events: none; }
+
+/* A collapsed pane leaves a tab on its divider to reopen it. */
+.split-reopen {
+  position: absolute; z-index: 1; display: grid; place-items: center;
+  border: 1px solid var(--border-strong); background: var(--elevated); color: var(--text-2);
+  font-size: 13px; line-height: 1; padding: 0; cursor: pointer !important;
+}
+.split-reopen:hover { color: var(--text); background: var(--hover); border-color: var(--accent); }
+.split-handle.x .split-reopen { top: 50%; width: 14px; height: 44px; margin-top: -22px; }
+.split-handle.x .split-reopen.start { left: 0; border-radius: 0 6px 6px 0; border-left: 0; }
+.split-handle.x .split-reopen.end { right: 0; border-radius: 6px 0 0 6px; border-right: 0; }
+.split-handle.y .split-reopen { left: 50%; height: 14px; width: 44px; margin-left: -22px; }
+.split-handle.y .split-reopen.start { top: 0; border-radius: 0 0 6px 6px; border-top: 0; }
+.split-handle.y .split-reopen.end { bottom: 0; border-radius: 6px 6px 0 0; border-bottom: 0; }
+
+/* The dividers draw the lines between regions. */
+.studio-shell .panel { border-top: 0; }
+.studio-shell .inspector { border-left: 0; }
+
+/* Left sidebar (the project's assets go here). */
+.sidebar { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: auto; }
+.sidebar-placeholder { padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.sidebar-placeholder p { margin: 0; font-size: 12px; }
 
 .panel { background: var(--panel); border-top: 1px solid var(--border); }
 .glass {
@@ -94,6 +144,14 @@ body {
   background: linear-gradient(135deg, var(--accent), var(--cyan));
   box-shadow: 0 0 16px var(--accent-glow);
 }
+/* On narrow windows the file name and status shrink first, so Render stays in view; the bar
+   scrolls sideways only as a last resort. */
+.toolbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.toolbar::-webkit-scrollbar { display: none; }
+.toolbar > * { flex: none; }
+.toolbar > .file-name, .toolbar > .status { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.toolbar > .spacer { flex: 1 1 0; }
+.toolbar .btn { white-space: nowrap; }
 .field-inline { display: flex; align-items: center; gap: 8px; }
 .field-inline select { width: 160px; }
 
@@ -211,7 +269,9 @@ textarea { resize: vertical; width: 100%; }
 .cue-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Timeline */
-.timeline { display: flex; flex-direction: column; min-height: 0; }
+.timeline { display: flex; flex-direction: column; min-height: 0; position: relative; }
+/* The track-label column's divider: over the labels' right border, below the header. */
+.split-handle.label-handle { position: absolute; top: 34px; bottom: 0; width: 1px; background: transparent; }
 .timeline-head {
   display: flex; align-items: center; gap: 12px; height: 34px; padding: 0 12px;
   border-bottom: 1px solid var(--border);
@@ -222,9 +282,10 @@ textarea { resize: vertical; width: 100%; }
 .timeline-canvas { position: relative; min-height: 100%; padding-bottom: 8px; }
 .ruler-row, .track-row { display: flex; position: relative; }
 .track-label {
-  flex: 0 0 116px; width: 116px; position: sticky; left: 0; z-index: 3;
+  flex: 0 0 var(--track-label-w, 116px); width: var(--track-label-w, 116px); position: sticky; left: 0; z-index: 3;
   background: var(--panel); border-right: 1px solid var(--border);
   padding: 0 12px; display: flex; align-items: center; color: var(--text-2); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ruler-label { height: 28px; }
 .ruler {
@@ -277,12 +338,10 @@ textarea { resize: vertical; width: 100%; }
   box-shadow: 0 0 8px rgba(34, 211, 238, 0.6); pointer-events: none; z-index: 5;
 }
 
-/* Keep the editor usable on narrow windows by stacking the inspector below the stage. */
+/* Narrow windows: StudioLayout puts the inspector under the stage (NARROW_QUERY). */
 @media (max-width: 900px) {
-  .studio { grid-template-rows: auto auto 1fr 200px; }
-  .workspace { grid-template-columns: 1fr; grid-template-rows: 1fr 300px; }
-  .inspector { border-left: 0; border-top: 1px solid var(--border); }
   .field-inline select { width: 120px; }
+  .toolbar .brand-sub, .toolbar .field-inline > .dim { display: none; }
 }
 
 /* File name and unsaved marker in the toolbar */
@@ -304,7 +363,13 @@ textarea { resize: vertical; width: 100%; }
   border: 1px solid var(--border-strong); border-radius: 10px;
   box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.7);
   display: flex; flex-direction: column; gap: 8px;
+  /* Never taller than the space under the toolbar: the title and the buttons stay in view and
+     only the middle (.render-body, a long error) scrolls. */
+  max-height: calc(100vh - 48px - 32px);
+  overflow: hidden;
 }
+.render-card > * { flex: none; }
+.render-card > .render-stage { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 .render-title { font-weight: 600; }
 .render-title.ok { color: var(--emerald); }
 .render-title.bad { color: var(--danger); }
@@ -319,7 +384,14 @@ textarea { resize: vertical; width: 100%; }
 .render-foot { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 
 /* Render options and the pre-render check */
-.render-card.setup { width: 400px; max-height: calc(100vh - 96px); overflow-y: auto; gap: 12px; }
+.render-card.setup { width: 400px; max-width: calc(100vw - 32px); gap: 12px; }
+/* The one scrolling region of the setup card. The negative margin puts its scrollbar at the
+   card's edge; the padding keeps focus rings from being clipped. */
+.render-card > .render-body {
+  flex: 0 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px;
+  margin: -4px -16px; padding: 4px 16px;
+}
 .render-head { display: flex; align-items: center; gap: 8px; }
 .render-card .hint { font-size: 11px; line-height: 1.4; }
 .render-advanced summary { cursor: pointer; color: var(--text-2); font-size: 12px; }
@@ -329,7 +401,7 @@ textarea { resize: vertical; width: 100%; }
 .render-check .ok { color: var(--emerald); }
 .render-check .warn { color: var(--amber); }
 .render-check .bad { color: var(--danger); }
-.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .finding {
   width: 100%; text-align: left; display: flex; flex-direction: column; gap: 3px;
   padding: 7px 9px; border-radius: 7px; border: 1px solid var(--border); border-left-width: 3px;
