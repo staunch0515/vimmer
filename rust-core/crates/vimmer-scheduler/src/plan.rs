@@ -529,6 +529,63 @@ mod tests {
         }
     }
 
+    /// The chunks that broke transitions: a transition scene near the END of its chunk. The
+    /// renderer holds the previous scene's last frame under the transition with Remotion's
+    /// `<Freeze>`, which clamped its clock to the composition length when the hold sat in a
+    /// `<Sequence>` starting at the incoming scene: whenever `incoming start + previous length`
+    /// ran past the chunk end, the chunk held an earlier frame than the full render (music-ducking
+    /// at 3000 ms, 17 dB; see remotion-renderer/src/motion/hold.ts and its test in
+    /// test/motion.test.ts). The planner was right; this pins that the held scene shares the chunk
+    /// and records which chunks would have hit the clamp, so fixtures/chunk-transitions-demo.json
+    /// keeps exercising it.
+    #[test]
+    fn transition_holds_that_reach_past_the_chunk_end() {
+        let at_risk = |t: &VideoTimeline, limit: u64| -> Vec<String> {
+            let mut out = Vec::new();
+            for c in plan_chunks(t, limit) {
+                let mut from = 0u32;
+                for i in c.scenes.clone() {
+                    let len = t.scenes[i].duration_frames(t.fps);
+                    if i > c.scenes.start && t.scenes[i].transition_in.is_some() {
+                        let held = t.scenes[i - 1].duration_frames(t.fps);
+                        // The held scene is in the same chunk ...
+                        assert!(from >= held, "scene {i} holds a scene outside its chunk");
+                        // ... and `from + held - 1` is the clock the old renderer froze.
+                        if from + held > c.frame_count {
+                            out.push(format!("{}@{}", t.scenes[i].id, c.index));
+                        }
+                    }
+                    from += len;
+                }
+            }
+            out
+        };
+        let music: VideoTimeline =
+            serde_json::from_str(include_str!("../../../../fixtures/music-ducking.json")).unwrap();
+        assert_eq!(
+            plan_chunks(&music, 3_000)
+                .iter()
+                .map(|c| (c.scenes.clone(), c.start_frame, c.frame_count))
+                .collect::<Vec<_>>(),
+            vec![(0..1, 0, 90), (1..3, 90, 180), (3..4, 270, 105), (4..5, 375, 90)]
+        );
+        assert_eq!(at_risk(&music, 3_000), vec!["breath@1"]);
+        assert!(at_risk(&music, DEFAULT_CHUNK_MS).is_empty(), "the full render was fine");
+
+        let demo: VideoTimeline = serde_json::from_str(include_str!(
+            "../../../../fixtures/chunk-transitions-demo.json"
+        ))
+        .unwrap();
+        assert_eq!(vimmer_dsl::validate(&demo), Ok(()));
+        assert_eq!(
+            at_risk(&demo, 3_000),
+            vec!["slide@0", "zoom@1", "wipe@2", "end@3"],
+            "every kind of transition, each right before a chunk end"
+        );
+        // The last scene is short, so even the one-chunk render reached past its end.
+        assert_eq!(at_risk(&demo, DEFAULT_CHUNK_MS), vec!["end@0"]);
+    }
+
     #[test]
     fn full_200_second_timeline_is_within_chunk_budget() {
         let durations = vec![10_000u64; 20];

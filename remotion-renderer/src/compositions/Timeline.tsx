@@ -9,6 +9,7 @@ import { BUILTIN, brandColor } from "../brand";
 import { BrandContext, BrandOverlay } from "../components/Brand";
 import { layoutScenes, msToFrames, totalFrames, type SceneLayout } from "../layout";
 import { transitionPose } from "../motion/transitions";
+import { holdWindow, inHoldWindow, type HoldWindow } from "../motion/hold";
 import { DEFAULT_SFX_VOLUME, sfxFrame } from "../motion/sfx";
 import type { Music, Scene, SubtitleCue, Transition, VideoTimeline } from "../types/timeline";
 
@@ -68,6 +69,26 @@ const TransitionIn: React.FC<{ transition: Transition; children: React.ReactNode
   );
 };
 
+// The previous scene's last frame, still, under the start of a transition (see motion/hold.ts).
+// Deliberately not inside a <Sequence>: there, Remotion would clamp the frozen frame to the
+// composition length and hold an earlier frame whenever the composition ends soon after the
+// transition (a render chunk, or a timeline whose last scenes are short).
+const HeldFrame: React.FC<{ hold: HoldWindow; scene: Scene; durationInFrames: number }> = ({
+  hold,
+  scene,
+  durationInFrames,
+}) => {
+  const frame = useCurrentFrame();
+  if (!inHoldWindow(hold, frame)) return null;
+  return (
+    <AbsoluteFill>
+      <Freeze frame={hold.freezeFrame}>
+        <SceneBody scene={scene} durationInFrames={durationInFrames} />
+      </Freeze>
+    </AbsoluteFill>
+  );
+};
+
 // Extra props the scheduler adds to a chunk render (`chunk_props` in vimmer-scheduler/src/plan.rs):
 // the chunk's start frame in the full timeline and the full-timeline cues that overlap it. Never
 // part of a user timeline; without it, `subtitles` is drawn as is.
@@ -91,11 +112,11 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
         return (
           <Fragment key={scene.id}>
             {hold && transition ? (
-              <Sequence from={from} durationInFrames={transitionFrames} name={`${hold.scene.id} hold`}>
-                <Freeze frame={hold.durationInFrames - 1}>
-                  <SceneBody scene={hold.scene} durationInFrames={hold.durationInFrames} />
-                </Freeze>
-              </Sequence>
+              <HeldFrame
+                hold={holdWindow(hold, layout, transitionFrames)}
+                scene={hold.scene}
+                durationInFrames={hold.durationInFrames}
+              />
             ) : null}
             <Sequence from={from} durationInFrames={durationInFrames} name={scene.id}>
               {transition ? (

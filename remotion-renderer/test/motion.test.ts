@@ -9,6 +9,7 @@ import { lowerThirdPose } from "../src/motion/lowerThird.ts";
 import { clipFrameAt, clipFrames, clipSourceMs, clipTimeAt } from "../src/motion/video.ts";
 import { cursorVisible, typedCount, typedSegments, typingUnits } from "../src/motion/typewriter.ts";
 import { sfxFrame } from "../src/motion/sfx.ts";
+import { frozenFrameSeen, holdWindow, inHoldWindow } from "../src/motion/hold.ts";
 import type { Easing, Keyframe, Scene, ShapeLayer, TransitionKind } from "../src/types/timeline.ts";
 
 const kf = (at_ms: number, extra: Partial<Keyframe> = {}): Keyframe => ({ at_ms, ...extra });
@@ -435,4 +436,30 @@ test("sound effects play on the frames of their layer events (as SoundEffect::fr
   // Without an exit animation the exit is the layer's end frame.
   const plain = { ...scene, layers: [{ ...scene.layers![0], exit: null }] } as Scene;
   assert.equal(sfxFrame({ src: "a.wav", on: { layer: "t", event: "exit" } }, plain, 30), 54);
+});
+
+// The hold under a transition must show the previous scene's LAST frame however soon the
+// composition ends after it. music-ducking at --chunk-ms 3000 renders `first` (105 frames) and
+// `breath` (75 frames, 400 ms fade) as one 180-frame chunk: under a Sequence starting at frame 105
+// Remotion clamped the frozen clock 105 + 104 = 209 to 179 and held scene frame 74 instead of 104.
+test("the held frame is the previous scene's last one, even when the composition ends soon after", () => {
+  const first = { from: 0, durationInFrames: 105 };
+  const breath = { from: 105, durationInFrames: 75 };
+  const total = 180;
+  const w = holdWindow(first, breath, 12);
+  assert.deepEqual(w, { start: 105, end: 117, freezeFrame: 104 });
+  assert.equal(frozenFrameSeen(w.freezeFrame, 0, total), 104, "outside any Sequence (the renderer)");
+  assert.equal(frozenFrameSeen(w.freezeFrame, breath.from, total), 74, "the old Sequence-wrapped hold");
+  assert.equal(frozenFrameSeen(w.freezeFrame, 195, 465), 104, "the full render was not clamped");
+  assert.ok(!inHoldWindow(w, 104) && inHoldWindow(w, 105) && inHoldWindow(w, 116) && !inHoldWindow(w, 117));
+  // Any layout: the previous scene lies before the incoming one, so its last frame is always
+  // inside the composition and never clamped.
+  for (const [a, b, frames] of [[1, 1, 1], [300, 10, 30], [90, 2, 60], [12, 400, 12]]) {
+    const prev = { from: 7, durationInFrames: a };
+    const next = { from: 7 + a, durationInFrames: b };
+    const h = holdWindow(prev, next, frames);
+    assert.equal(frozenFrameSeen(h.freezeFrame, 0, 7 + a + b), a - 1);
+    assert.equal(h.start, next.from);
+    assert.equal(h.end, next.from + frames);
+  }
 });
