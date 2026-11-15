@@ -15,6 +15,8 @@
   border-top: 1px solid var(--border); background: var(--panel); min-width: 0;
 }
 .st-root { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.st-home-foot > .dim, .st-home-foot > .btn { flex: none; white-space: nowrap; }
+.st-home-foot > .st-root { flex: 0 1 auto; }
 
 .st-banner {
   display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: var(--radius);

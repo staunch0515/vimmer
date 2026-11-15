@@ -32,7 +32,7 @@ const Tile = ({ asset, url }: { asset: AssetInfo; url: string }) => {
   switch (asset.kind) {
     case "image":
     case "icon":
-      return <img className={`st-asset-img ${asset.kind}`} src={url} alt="" draggable={false} loading="lazy" />;
+      return <img className={`st-asset-img ${asset.kind}`} src={url} alt="" draggable={false} />;
     case "video":
       // The first frame, without downloading the clip.
       return <video className="st-asset-img" src={`${url}#t=0.1`} preload="metadata" muted playsInline />;
