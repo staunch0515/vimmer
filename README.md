@@ -868,13 +868,13 @@ failing op and the reason, and goes back to Claude for a correction, at most twi
 **In the editor.** The Studio has an **Assistant** tab: a chat with Claude. Type a message,
 optionally keep the selected scene as context, and press **Send 发送** (⌘↵). Each answer shows
 the explanation (or Claude's question), the change summary, warnings, which model answered and
-the cost. A chat uses one model, picked under **模型 Model** at the top of the panel (default
-Claude Opus 5.5). Switching model in an empty chat just switches; in a chat with messages it asks
-first and then starts a new chat (the current one is cleared). The picker is locked while Claude
-is answering. The chosen model stays for New chat and other files until the app is closed. **Accept 接受** applies a proposed change as one undo step; **Reject 拒绝** discards it;
-sending another message without deciding leaves it unapplied. Each proposal shows what became
-of it. A proposal made before the timeline changed cannot be accepted. Nothing changes until
-you accept.
+the cost. The model is picked under **模型 Model** at the top of the panel (default Claude Opus
+5.5) and is used for your next message; you can switch it mid-chat (each message is a separate
+request, so the chat goes along unchanged). The picker is locked while Claude is answering. The
+chosen model stays for New chat and other files until the app is closed. **Accept 接受**
+applies a proposed change as one undo step; **Reject 拒绝** discards it; sending another message
+without deciding leaves it unapplied. Each proposal shows what became of it. A proposal made
+before the timeline changed cannot be accepted. Nothing changes until you accept.
 
 Follow-ups work: answer Claude's question, or say "再快一点", "第 3 幕也这样", "刚才那个不要了"
 (Claude proposes undoing an accepted change as a new proposal). Each message sends the
