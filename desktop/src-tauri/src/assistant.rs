@@ -1,23 +1,40 @@
-//! The editing assistant in the desktop app: runs `vimmer edit - <instruction> --dry-run --json`
-//! with the editor's timeline on stdin and hands its JSON to the webview. Nothing is written;
-//! the editor applies an accepted proposal itself, as one undo step.
+//! The editing assistant in the desktop app. Runs the edit in this process through
+//! `vimmer_storyboard::edit_claude` (the same code as `vimmer edit - <instruction> --dry-run
+//! --json`) and hands the same JSON to the webview, so no prebuilt CLI binary is involved and
+//! nothing can be stale. Nothing is written; the editor applies an accepted proposal itself, as
+//! one undo step.
 //!
-//! A GUI app does not inherit the shell environment, so the CLI is started through
-//! `zsh -c 'source ~/.zshrc; exec "$@"'`: ANTHROPIC_API_KEY reaches only that child process,
-//! never this process's own state or the webview.
+//! The API key is handled as in "generate from text" ([`crate::api_key`]): inherited from this
+//! process, else read from the login shell once, kept in memory and handed to the helper
+//! process alone. Every returned string is scrubbed of it.
+//!
+//! Failures keep the CLI's shape (`ok: false`, `error: {kind, message}`, `attempts`, `usage`)
+//! with kinds that name the cause: `input`, `no_api_key`, `helper_missing` (the helper's Python
+//! or its SDK is not installed), `helper` (it ran but failed), the helper's API error kind
+//! (`auth`, `rate_limit`, `connection`, ...), `invalid`, `timed_out`, `busy`. A `clarify` or
+//! `refused` answer is a normal proposal (`ok: true`), not a failure.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use vimmer_media::Limits;
+use vimmer_storyboard::edit_claude::{
+    failure_json, propose_edit_with_key_check, proposal_json, EditOptions, MAX_INSTRUCTION_CHARS,
+};
+use vimmer_storyboard::generate::{FailureKind, GenerateFailure, LlmHelper, ENV_API_KEY};
+
+use crate::api_key::{helper_key, scrub, HelperKey, NO_KEY_MESSAGE};
 
 const MODELS: [&str; 3] = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
-const MAX_INSTRUCTION_CHARS: usize = 2_000;
+/// The whole proposal, retries included, may take this long.
 const TIMEOUT: Duration = Duration::from_secs(360);
+/// One API call (the CLI's `--llm-timeout` default).
+const CALL_TIMEOUT: Duration = Duration::from_secs(300);
+const INSTALL_HINT: &str = "sh rust-core/crates/vimmer-storyboard/scripts/install_llm.sh";
 
 static BUSY: AtomicBool = AtomicBool::new(false);
 
@@ -53,179 +70,150 @@ pub fn check_args(a: &ProposeArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// The CLI arguments: options first, then `--` so an instruction that starts with `-` stays text.
-pub fn cli_args(a: &ProposeArgs, public_dir: &Path) -> Vec<String> {
-    let mut out: Vec<String> = vec![
-        "edit".into(),
-        "--dry-run".into(),
-        "--json".into(),
-        "--public-dir".into(),
-        public_dir.display().to_string(),
-        "--model".into(),
-        a.model.clone(),
-    ];
-    if let Some(id) = &a.scene_id {
-        out.push("--scene".into());
-        out.push(id.clone());
+/// The options `vimmer edit` would use for these arguments (its defaults otherwise).
+fn edit_options(a: &ProposeArgs, public_dir: Option<&Path>) -> EditOptions {
+    let mut opts = EditOptions::new(a.instruction.clone());
+    opts.scene = a.scene_id.clone();
+    opts.model = a.model.clone();
+    opts.timeout = CALL_TIMEOUT;
+    opts.public_dir = public_dir.map(Path::to_path_buf);
+    opts
+}
+
+/// The kind and message the editor shows for a failed edit.
+fn classify(f: &GenerateFailure) -> (String, String) {
+    let m = f.message.trim();
+    match &f.kind {
+        FailureKind::NoApiKey => ("no_api_key".into(), NO_KEY_MESSAGE.into()),
+        // Our helper names install_llm.sh only when its Python or the anthropic SDK is missing.
+        FailureKind::Helper if m.contains("install_llm.sh") => (
+            "helper_missing".into(),
+            format!("The Claude helper is not installed ({m}). Install it: {INSTALL_HINT}"),
+        ),
+        FailureKind::Helper => ("helper".into(), format!("The Claude helper failed: {m}")),
+        FailureKind::Api(k) if k == "auth" => (
+            k.clone(),
+            format!("Claude rejected the API key: {m}. Check ANTHROPIC_API_KEY in ~/.zshrc."),
+        ),
+        FailureKind::Api(k) if k == "refusal" => (k.clone(), m.to_string()),
+        FailureKind::Api(k) => (k.clone(), format!("The Claude API call failed: {m}")),
+        FailureKind::Invalid => ("invalid".into(), m.to_string()),
+        FailureKind::TimedOut => ("timed_out".into(), m.to_string()),
+        FailureKind::Cancelled => ("cancelled".into(), m.to_string()),
     }
-    out.push("--".into());
-    out.push("-".into());
-    out.push(a.instruction.clone());
-    out
 }
 
-fn repo_root() -> PathBuf {
-    let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    here.canonicalize().unwrap_or(here)
+/// A failure as the CLI prints it, with the desktop's kind and message.
+fn failure_value(f: &GenerateFailure) -> Value {
+    let mut v = failure_json(f);
+    let (kind, message) = classify(f);
+    v["error"] = json!({"kind": kind, "message": message});
+    v
 }
 
-/// `$VIMMER_BIN`, else the release or debug build in rust-core/target.
-fn find_vimmer() -> Option<PathBuf> {
-    let root = repo_root();
-    std::env::var_os("VIMMER_BIN")
-        .map(PathBuf::from)
-        .into_iter()
-        .chain([
-            root.join("rust-core/target/release/vimmer"),
-            root.join("rust-core/target/debug/vimmer"),
-        ])
-        .find(|p| p.is_file())
+/// What a proposal needs besides the editor's values. Tests pass a fake helper and key.
+pub struct AssistantEnv<'a> {
+    /// Renderer public dir (asset files offered to Claude, new paths checked against it).
+    pub public_dir: Option<PathBuf>,
+    /// Scratch folder for request files; removed afterwards.
+    pub work_dir: PathBuf,
+    pub limits: Limits,
+    pub key: &'a dyn Fn() -> Option<HelperKey>,
+    pub helper: &'a dyn Fn() -> Result<LlmHelper, String>,
 }
 
-fn run_cli(
-    bin: &Path,
-    args: &[String],
-    stdin: &str,
-) -> Result<(Option<i32>, String, String), String> {
-    let mut cmd = if Path::new("/bin/zsh").is_file() {
-        let mut c = Command::new("/bin/zsh");
-        c.arg("-c")
-            .arg(r#"source ~/.zshrc >/dev/null 2>&1; exec "$@""#)
-            .arg("vimmer-edit")
-            .arg(bin)
-            .args(args);
-        c
-    } else {
-        let mut c = Command::new(bin);
-        c.args(args);
-        c
-    };
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Could not start {}: {e}", bin.display()))?;
-    if let Some(mut input) = child.stdin.take() {
-        input
-            .write_all(stdin.as_bytes())
-            .map_err(|e| e.to_string())?;
+/// Proposes an edit: the same JSON as `vimmer edit --dry-run --json` on success, a failure with
+/// a specific kind otherwise. The key is scrubbed from everything returned.
+pub fn propose(env: &AssistantEnv, args: &ProposeArgs) -> Value {
+    let mut secrets: Vec<String> = std::env::var(ENV_API_KEY).into_iter().collect();
+    let result = run(env, args, &mut secrets);
+    let mut text = result.to_string();
+    for s in &secrets {
+        text = scrub(&text, Some(s.trim()));
     }
-    // Read output on threads so a full pipe cannot block the child while we wait.
-    let mut out = child.stdout.take().ok_or("no stdout")?;
-    let mut err = child.stderr.take().ok_or("no stderr")?;
-    let out_t = std::thread::spawn(move || {
-        let mut s = String::new();
-        let _ = std::io::Read::read_to_string(&mut out, &mut s);
-        s
-    });
-    let err_t = std::thread::spawn(move || {
-        let mut s = String::new();
-        let _ = std::io::Read::read_to_string(&mut err, &mut s);
-        s
-    });
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            break status;
-        }
-        if started.elapsed() > TIMEOUT {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("The assistant did not answer in time.".into());
-        }
-        std::thread::sleep(Duration::from_millis(100));
+    serde_json::from_str(&text).unwrap_or(result)
+}
+
+fn run(env: &AssistantEnv, args: &ProposeArgs, secrets: &mut Vec<String>) -> Value {
+    if let Err(e) = check_args(args) {
+        return failure("input", e);
+    }
+    let timeline: Value = match serde_json::from_str(&args.timeline_json) {
+        Ok(v) => v,
+        Err(e) => return failure("input", format!("The timeline is not valid JSON: {e}")),
     };
-    Ok((
-        status.code(),
-        out_t.join().unwrap_or_default(),
-        err_t.join().unwrap_or_default(),
-    ))
+    let opts = edit_options(args, env.public_dir.as_deref());
+    // Problems with the timeline or the scene id, found before the key is read. With no key
+    // the library stops right after its input checks: nothing is started or written.
+    let no_helper = LlmHelper {
+        python: PathBuf::from("/nonexistent"),
+        dir: env.work_dir.join("unused"),
+        env: Default::default(),
+    };
+    if let Err(f) = propose_edit_with_key_check(&no_helper, &timeline, &opts, &env.work_dir, &env.limits, false) {
+        if f.kind == FailureKind::Helper {
+            return failure("input", f.message);
+        }
+    }
+
+    let Some(key) = (env.key)() else {
+        return failure("no_api_key", NO_KEY_MESSAGE);
+    };
+    secrets.extend(key.secret().map(str::to_string));
+    let mut helper = match (env.helper)() {
+        Ok(h) => h,
+        Err(e) => {
+            return failure(
+                "helper_missing",
+                format!("The Claude helper is not installed ({e}). Install it: {INSTALL_HINT}"),
+            )
+        }
+    };
+    key.give_to(&mut helper);
+    let result = propose_edit_with_key_check(&helper, &timeline, &opts, &env.work_dir, &env.limits, true);
+    let _ = std::fs::remove_dir_all(&env.work_dir);
+    match result {
+        Ok(p) => proposal_json(&p, None),
+        Err(f) => failure_value(&f),
+    }
 }
 
 /// Proposes an edit. Always resolves to the CLI's JSON shape (`ok` true or false), so the
-/// editor shows one kind of result; setup problems come back as `ok: false` with a kind.
+/// editor shows one kind of result. Runs on a worker thread; the UI is never blocked.
 #[tauri::command]
 pub async fn propose_edit(args: ProposeArgs) -> Value {
     if let Err(e) = check_args(&args) {
         return failure("input", e);
     }
-    let Some(bin) = find_vimmer() else {
-        return failure(
-            "no_binary",
-            "The vimmer CLI was not found in rust-core/target.",
-        );
-    };
     if BUSY.swap(true, Ordering::SeqCst) {
         return failure("busy", "Another proposal is still running.");
     }
-    let public_dir = repo_root().join("remotion-renderer/public");
-    let cli = cli_args(&args, &public_dir);
-    let result =
-        tauri::async_runtime::spawn_blocking(move || run_cli(&bin, &cli, &args.timeline_json))
-            .await;
-    BUSY.store(false, Ordering::SeqCst);
-    let (code, stdout, stderr) = match result {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => return failure("helper", e),
-        Err(e) => return failure("helper", e.to_string()),
-    };
-    let last = stdout
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("");
-    serde_json::from_str(last).unwrap_or_else(|_| {
-        let tail: Vec<&str> = stderr.lines().filter(|l| !l.trim().is_empty()).collect();
-        let tail = tail[tail.len().saturating_sub(3)..].join(" | ");
-        failure(
-            "helper",
-            format!(
-                "vimmer edit failed (exit {code:?}): {}",
-                if tail.is_empty() { "no output" } else { &tail }
-            ),
-        )
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let started = Instant::now();
+        let over = Arc::new(move || started.elapsed() > TIMEOUT);
+        let check = over.clone();
+        let env = AssistantEnv {
+            public_dir: Some(crate::assets::public_dir()).filter(|p| p.is_dir()),
+            work_dir: std::env::temp_dir()
+                .join(format!("vimmer-desktop-edit-{}-{}", std::process::id(), crate::render::unix_millis())),
+            limits: Limits { timeout: None, cancelled: Arc::new(move || check()) },
+            key: &helper_key,
+            helper: &|| LlmHelper::locate(None),
+        };
+        let v = propose(&env, &args);
+        if v["error"]["kind"] == "cancelled" && over() {
+            return failure(
+                "timed_out",
+                format!("The assistant did not answer within {} minutes.", TIMEOUT.as_secs() / 60),
+            );
+        }
+        v
     })
+    .await;
+    BUSY.store(false, Ordering::SeqCst);
+    result.unwrap_or_else(|e| failure("helper", format!("The assistant stopped: {e}")))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn args(instruction: &str, model: &str) -> ProposeArgs {
-        ProposeArgs {
-            timeline_json: "{}".into(),
-            instruction: instruction.into(),
-            scene_id: Some("scene-02".into()),
-            model: model.into(),
-        }
-    }
-
-    #[test]
-    fn instruction_goes_after_double_dash() {
-        let a = args("--overwrite-input -o /etc/x", "claude-opus-5-5");
-        let v = cli_args(&a, Path::new("/p"));
-        let dd = v.iter().position(|s| s == "--").unwrap();
-        assert_eq!(&v[dd + 1..], ["-", "--overwrite-input -o /etc/x"]);
-        assert!(v.contains(&"--dry-run".to_string()));
-        assert!(v.windows(2).any(|w| w == ["--scene", "scene-02"]));
-    }
-
-    #[test]
-    fn arguments_are_checked() {
-        assert!(check_args(&args("ok", "claude-opus-5-5")).is_ok());
-        assert!(check_args(&args("  ", "claude-opus-5-5")).is_err());
-        assert!(check_args(&args("ok", "gpt-x")).is_err());
-        assert!(check_args(&args(&"x".repeat(2001), "claude-opus-5-5")).is_err());
-    }
-}
+#[path = "assistant_tests.rs"]
+mod tests;

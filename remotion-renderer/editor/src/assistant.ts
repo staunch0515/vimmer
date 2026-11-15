@@ -2,8 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type { VideoTimeline } from "../../src/types/timeline";
 import { inTauri } from "./project";
 
-// The editing assistant: Claude proposes a JSON Patch, the Rust core checks it
-// (`vimmer edit --dry-run --json`), and the editor shows the result. The API key stays with the
+// The editing assistant: Claude proposes a JSON Patch, the Rust core checks it (the desktop app
+// runs that in-process; the dev server runs `vimmer edit --dry-run --json`, same JSON), and the
+// editor shows the result. The API key stays with the
 // backend process (desktop shell or the local Vite dev server); it never reaches this page.
 
 export const ASSISTANT_MODELS = [
@@ -79,8 +80,10 @@ export const failureHint = (f: EditFailure): string | null => {
   switch (f.error.kind) {
     case "no_api_key":
       return "Set ANTHROPIC_API_KEY in ~/.zshrc, then restart the editor. The rest of the editor works without it.";
-    case "helper":
+    case "helper_missing":
       return "Install the Claude helper: sh rust-core/crates/vimmer-storyboard/scripts/install_llm.sh";
+    case "auth":
+      return "Check ANTHROPIC_API_KEY in ~/.zshrc: Claude did not accept it.";
     case "no_binary":
       return "Build the CLI first: cd rust-core && cargo build -p vimmer-cli (or set VIMMER_BIN).";
     case "invalid":

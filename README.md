@@ -833,15 +833,40 @@ failing op and the reason, and goes back to Claude for a correction, at most twi
 the selected scene as context, pick a model, and press **Propose** (⌘↵). The panel shows the
 explanation, the change summary, warnings and the cost. **Accept** applies the change as one
 undo step; **Reject** discards it. A proposal made before the timeline changed cannot be
-accepted. The backend runs `vimmer edit --dry-run --json`. In the desktop app that is the
-`propose_edit` Tauri command; with `npm run editor` it is a dev-server endpoint that answers
-local requests only (loopback peer, localhost Host and Origin, JSON body). Both look for the
-CLI in `rust-core/target/{release,debug}/vimmer` or `$VIMMER_BIN`, so build it first
-(`cargo build -p vimmer-cli`). When the key is not in their environment, they start the CLI
-through `zsh -c 'source ~/.zshrc; ...'`, so only that child process ever holds the key. It
-never reaches the page or the bundle. Without a key, helper or CLI, the panel says what to set
-up and the rest of the editor keeps working. A static build (`npm run editor:build`) has no
-backend.
+accepted.
+
+The backend produces the same JSON as `vimmer edit --dry-run --json`, from the same library code
+(`vimmer_storyboard::edit_claude`: `propose_edit`, then `proposal_json` / `failure_json`).
+
+- **Desktop app.** The `propose_edit` Tauri command runs the edit in-process on a worker thread,
+  so no prebuilt CLI is needed and none can be stale. The API key is handled as in "generate
+  from text": inherited when the app has `ANTHROPIC_API_KEY`, else read once from the login
+  shell (`~/.zshrc`), kept in memory, and handed only to the helper process. It is scrubbed from
+  every result and never logged or written. A proposal may take 6 minutes at most.
+- **Browser editor** (`npm run editor`). A dev-server endpoint, answering local requests only
+  (loopback peer, localhost Host and Origin, JSON body), runs the CLI from
+  `rust-core/target/{release,debug}/vimmer` or `$VIMMER_BIN`. It first checks that the binary
+  has `vimmer edit` (`vimmer edit --help`); if it is missing or too old, the panel says to
+  build it (`cd rust-core && cargo build -p vimmer-cli`). When the key is not in the dev
+  server's environment, the CLI is started through `zsh -c 'source ~/.zshrc; ...'`, so only
+  that child process holds it.
+
+The key never reaches the page or the bundle. Problems are named by cause, and the rest of the
+editor keeps working:
+
+| Kind | Cause | What the panel says |
+|---|---|---|
+| `no_api_key` | no `ANTHROPIC_API_KEY` in the environment or `~/.zshrc` | set it in `~/.zshrc` |
+| `auth` | Claude rejected the key | check the key in `~/.zshrc` |
+| `helper_missing` | the helper venv or its `anthropic` SDK is not installed | run `install_llm.sh` |
+| `helper` | the helper ran but failed (crash, no result) | its error |
+| `rate_limit`, `connection`, `api_error`, ... | the API call failed | the API's error |
+| `invalid` | Claude's patch kept failing the checks | rephrase or make it smaller |
+| `input` | empty instruction, unknown scene, not a timeline | what is wrong |
+| `no_binary` | browser editor only: CLI missing or too old | build the CLI |
+
+A `clarify` or `refused` answer is a normal result, not an error. A static build
+(`npm run editor:build`) has no backend.
 
 **Eval.** `rust-core/crates/vimmer-storyboard/examples/edit-eval/` has 53 cases in zh, en and ja
 over the three examples and the fixtures: easy, multi-scene, ambiguous, impossible and hostile

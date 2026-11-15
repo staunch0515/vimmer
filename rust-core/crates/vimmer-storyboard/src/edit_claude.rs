@@ -514,3 +514,43 @@ pub fn propose_edit_with_key_check(
         usage,
     ))
 }
+
+/// The failure kind as `vimmer edit --json` names it: `no_api_key`, `helper`, `invalid`,
+/// `timed_out`, `cancelled`, or the helper's API error kind (`auth`, `rate_limit`, ...).
+pub fn failure_kind_name(kind: &FailureKind) -> String {
+    match kind {
+        FailureKind::NoApiKey => "no_api_key".into(),
+        FailureKind::Helper => "helper".into(),
+        FailureKind::Api(k) => k.clone(),
+        FailureKind::Invalid => "invalid".into(),
+        FailureKind::TimedOut => "timed_out".into(),
+        FailureKind::Cancelled => "cancelled".into(),
+    }
+}
+
+/// A proposal as `vimmer edit --json` prints it: the [`Proposal`] fields plus `ok: true`,
+/// `retries` and `written` (where the edited timeline was saved; `None` for a dry run). The
+/// desktop app's assistant returns the same object.
+pub fn proposal_json(p: &Proposal, written: Option<&Path>) -> Value {
+    let mut v = serde_json::to_value(p).expect("a proposal serializes");
+    v["ok"] = Value::Bool(true);
+    v["retries"] = p.retries().into();
+    v["written"] = written.map(|p| p.display().to_string()).into();
+    v
+}
+
+/// A failure as `vimmer edit --json` prints it: `ok: false`, `error` (`kind`, `message`),
+/// `attempts` and `usage` (what the calls made so far cost).
+pub fn failure_json(f: &GenerateFailure) -> Value {
+    serde_json::json!({
+        "ok": false,
+        "error": {"kind": failure_kind_name(&f.kind), "message": f.message},
+        "attempts": f.attempts,
+        "usage": f.usage,
+    })
+}
+
+/// The `--json` answer when the helper's Python cannot be found (no call was made).
+pub fn helper_missing_json(message: &str) -> Value {
+    serde_json::json!({"ok": false, "error": {"kind": "helper", "message": message}})
+}

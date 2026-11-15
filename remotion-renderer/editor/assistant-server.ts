@@ -2,11 +2,15 @@
 // own Tauri command). POST /__vimmer/edit runs `vimmer edit - <instruction> --dry-run --json`
 // with the timeline on stdin and returns its JSON. Local requests only.
 //
+// The desktop app does not use this file: it runs the edit in-process through the Rust library.
+// This endpoint needs a built CLI that has `vimmer edit`; a missing or too old binary is reported
+// as "build the CLI" (see `checkEditCli`), never blamed on the Claude helper.
+//
 // The API key is never read here. When ANTHROPIC_API_KEY is not in this process's environment,
 // the CLI is started through `zsh -c 'source ~/.zshrc; exec "$@"'`, so only the child sees it.
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
@@ -96,6 +100,52 @@ export const cliArgs = (a: Args, publicDir: string): string[] => {
 };
 
 let busy = false;
+
+const BUILD_CLI = "Build the CLI: cd rust-core && cargo build -p vimmer-cli (or set VIMMER_BIN).";
+
+/** True when `help` (the output of `vimmer edit --help`) is from a CLI that has the edit options this endpoint passes. */
+export const helpHasEdit = (help: string): boolean => ["--dry-run", "--json", "--public-dir", "--scene"].every((o) => help.includes(o));
+
+const probed = new Map<string, boolean>();
+
+/** Null when `bin` has `vimmer edit --dry-run --json`, else what to do. Probed once per build (path and mtime). */
+export const checkEditCli = async (bin: string): Promise<string | null> => {
+  let stamp: string;
+  try {
+    stamp = `${bin}@${statSync(bin).mtimeMs}`;
+  } catch {
+    return `The vimmer CLI was not found. ${BUILD_CLI}`;
+  }
+  let ok = probed.get(stamp);
+  if (ok === undefined) {
+    const out = await new Promise<string>((done) => {
+      const child = spawn(bin, ["edit", "--help"], { stdio: ["ignore", "pipe", "pipe"] });
+      let text = "";
+      const timer = setTimeout(() => child.kill("SIGTERM"), 10_000);
+      child.stdout.on("data", (d: Buffer) => (text += d.toString("utf8")));
+      child.on("error", () => {
+        clearTimeout(timer);
+        done("");
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        done(code === 0 ? text : "");
+      });
+    });
+    ok = helpHasEdit(out);
+    probed.set(stamp, ok);
+  }
+  return ok ? null : `The vimmer CLI at ${bin} is too old: it has no \`vimmer edit --dry-run --json\`. ${BUILD_CLI}`;
+};
+
+/** The CLI names install_llm.sh only when the helper's Python or its SDK is missing. */
+export const refineKind = (body: unknown): unknown => {
+  const b = body as { ok?: unknown; error?: { kind?: unknown; message?: unknown } } | null;
+  if (b && b.ok === false && b.error?.kind === "helper" && String(b.error.message ?? "").includes("install_llm.sh")) {
+    return { ...b, error: { ...b.error, kind: "helper_missing" } };
+  }
+  return body;
+};
 
 const run = (bin: string, args: string[], stdin: string): Promise<{ code: number | null; stdout: string; stderr: string }> =>
   new Promise((ok) => {
@@ -305,17 +355,19 @@ export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
         const args = parseArgs(raw);
         if (typeof args === "string") return fail(res, 400, "input", args);
         const bin = findVimmer(repo);
-        if (!bin) return fail(res, 200, "no_binary", "The vimmer CLI was not found in rust-core/target.");
+        if (!bin) return fail(res, 200, "no_binary", `The vimmer CLI was not found in rust-core/target. ${BUILD_CLI}`);
+        const stale = await checkEditCli(bin);
+        if (stale) return fail(res, 200, "no_binary", stale);
         if (busy) return fail(res, 200, "busy", "Another proposal is still running.");
         busy = true;
         try {
           const out = await run(bin, cliArgs(args, publicDir), args.timelineJson);
           const line = out.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
           try {
-            return send(res, 200, JSON.parse(line));
+            return send(res, 200, refineKind(JSON.parse(line)));
           } catch {
             const tail = out.stderr.trim().split("\n").slice(-3).join(" | ");
-            return fail(res, 200, "helper", `vimmer edit failed (exit ${out.code}): ${tail || "no output"}`);
+            return fail(res, 200, "cli", `vimmer edit failed (exit ${out.code}): ${tail || "no output"}`);
           }
         } finally {
           busy = false;

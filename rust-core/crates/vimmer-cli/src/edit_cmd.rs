@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::Parser;
-use serde_json::{json, Value};
+use serde_json::Value;
 use vimmer_storyboard::edit_claude::{
-    propose_edit, EditOptions, EditStatus, Proposal, DEFAULT_EFFORT, DEFAULT_MAX_RETRIES,
-    DEFAULT_MODEL,
+    failure_json, helper_missing_json, proposal_json, propose_edit, EditOptions, EditStatus,
+    Proposal, DEFAULT_EFFORT, DEFAULT_MAX_RETRIES, DEFAULT_MODEL,
 };
-use vimmer_storyboard::generate::{FailureKind, GenerateFailure, LlmHelper, EFFORTS};
+use vimmer_storyboard::generate::{GenerateFailure, LlmHelper, EFFORTS};
 
 /// Edit a timeline JSON with an instruction in plain language, e.g.
 /// `vimmer edit t.json "第二段节奏快一点，加一个淡入转场"`.
@@ -70,17 +70,6 @@ pub struct EditCli {
     /// Save the raw API replies here.
     #[arg(long)]
     save_dir: Option<PathBuf>,
-}
-
-fn failure_kind(kind: &FailureKind) -> String {
-    match kind {
-        FailureKind::NoApiKey => "no_api_key".into(),
-        FailureKind::Helper => "helper".into(),
-        FailureKind::Api(k) => k.clone(),
-        FailureKind::Invalid => "invalid".into(),
-        FailureKind::TimedOut => "timed_out".into(),
-        FailureKind::Cancelled => "cancelled".into(),
-    }
 }
 
 fn status_name(s: EditStatus) -> &'static str {
@@ -143,10 +132,7 @@ pub async fn run_edit(cli: EditCli) -> Result<(), Box<dyn std::error::Error>> {
         Ok(h) => h,
         Err(message) => {
             if cli.json {
-                println!(
-                    "{}",
-                    json!({"ok": false, "error": {"kind": "helper", "message": message}})
-                );
+                println!("{}", helper_missing_json(&message));
             }
             return Err(message.into());
         }
@@ -202,11 +188,7 @@ fn finish(
         std::fs::write(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     }
     if cli.json {
-        let mut v = serde_json::to_value(p)?;
-        v["ok"] = json!(true);
-        v["retries"] = json!(p.retries());
-        v["written"] = json!(write_to.map(|p| p.display().to_string()));
-        println!("{}", serde_json::to_string(&v)?);
+        println!("{}", serde_json::to_string(&proposal_json(p, write_to))?);
         return Ok(());
     }
     eprintln!("{}: {}", status_name(p.status), p.explanation);
@@ -255,13 +237,7 @@ fn first_problem(e: &str) -> &str {
 
 fn report_failure(cli: &EditCli, f: &GenerateFailure) {
     if cli.json {
-        let v = json!({
-            "ok": false,
-            "error": {"kind": failure_kind(&f.kind), "message": f.message},
-            "attempts": f.attempts,
-            "usage": f.usage,
-        });
-        println!("{v}");
+        println!("{}", failure_json(f));
         return;
     }
     for a in &f.attempts {
