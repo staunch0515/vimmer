@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  MAX_CHARS, MAX_TURNS, buildConversation, busy, chatReducer, initialChat, nextExchangeId, openProposal,
+  DEFAULT_MODEL, MAX_CHARS, MAX_TURNS, buildConversation, busy, chatReducer, initialChat, modelChangeClears, nextExchangeId,
+  openProposal,
   type ChatAction, type ChatState,
 } from "../editor/src/chat.ts";
 import type { EditFailure, EditProposal } from "../editor/src/assistant.ts";
@@ -89,6 +90,62 @@ test("opening another document clears the chat; the same document keeps it", () 
   assert.deepEqual(late.exchanges, []);
   // Ids keep counting, so no answer can land on a new exchange by accident.
   assert.ok(nextExchangeId(other) > 2);
+});
+
+test("one model per chat: an empty chat just switches, a busy one never does", () => {
+  const s = initialChat();
+  assert.equal(s.model, DEFAULT_MODEL);
+  assert.equal(DEFAULT_MODEL, "claude-opus-5-5");
+  assert.equal(modelChangeClears(s, "claude-haiku-5-5"), false);
+  const switched = chatReducer(s, { type: "setModel", model: "claude-haiku-5-5" });
+  assert.equal(switched.model, "claude-haiku-5-5");
+  assert.equal(switched.generation, s.generation);
+  // The same model is a no-op.
+  assert.equal(chatReducer(switched, { type: "setModel", model: "claude-haiku-5-5", confirmed: true }), switched);
+  // Every message records the chat's model.
+  const sent = chatReducer(switched, { type: "send", instruction: "慢一点", sceneId: null, base: "T0" });
+  assert.equal(sent.exchanges[0].model, "claude-haiku-5-5");
+  // In flight: the model cannot change, even confirmed.
+  assert.equal(chatReducer(sent, { type: "setModel", model: "claude-opus-5-5", confirmed: true }), sent);
+});
+
+test("switching model in a chat with messages needs confirmation and starts a new chat", () => {
+  let s = say(initialChat(), "慢一点", proposal("edited", "ok", ["a"]));
+  assert.equal(s.exchanges[0].model, "claude-opus-5-5");
+  assert.equal(modelChangeClears(s, "claude-sonnet-5-5"), true);
+  assert.equal(modelChangeClears(s, "claude-opus-5-5"), false);
+  // Not confirmed: nothing changes, the old model stays.
+  assert.equal(chatReducer(s, { type: "setModel", model: "claude-sonnet-5-5" }), s);
+  assert.equal(chatReducer(s, { type: "setModel", model: "claude-sonnet-5-5", confirmed: false }), s);
+  // Confirmed: cleared like New chat, and the new model is used.
+  const switched = chatReducer(s, { type: "setModel", model: "claude-sonnet-5-5", confirmed: true });
+  assert.deepEqual(switched.exchanges, []);
+  assert.equal(switched.model, "claude-sonnet-5-5");
+  assert.ok(switched.generation > s.generation);
+  s = say(switched, "再慢一点", proposal("clarify", "?"));
+  assert.equal(s.exchanges[0].model, "claude-sonnet-5-5");
+  assert.ok(nextExchangeId(s) > 2);
+});
+
+test("an answer to a request from before a model switch is dropped", () => {
+  // Busy chats cannot switch; but an answer racing a clear-then-switch is still dropped.
+  let s = chatReducer(say(initialChat(), "a", proposal("clarify", "?")), { type: "send", instruction: "b", sceneId: null, base: "T0" });
+  const gen = s.generation;
+  s = chatReducer(s, { type: "clear" });
+  s = chatReducer(s, { type: "setModel", model: "claude-haiku-5-5" });
+  assert.equal(s.model, "claude-haiku-5-5");
+  const late = chatReducer(s, { type: "answer", id: 2, generation: gen, result: proposal("edited", "late", ["x"]) });
+  assert.deepEqual(late.exchanges, []);
+});
+
+test("the model is kept across New chat and opening another document", () => {
+  let s = chatReducer(initialChat(1), { type: "setModel", model: "claude-sonnet-5-5" });
+  s = say(s, "慢一点", proposal("clarify", "?"));
+  const cleared = chatReducer(s, { type: "clear" });
+  assert.equal(cleared.model, "claude-sonnet-5-5");
+  const other = chatReducer(s, { type: "openDocument", doc: 2 });
+  assert.equal(other.model, "claude-sonnet-5-5");
+  assert.deepEqual(other.exchanges, []);
 });
 
 test("the conversation marks decisions and skips failures and the message in flight", () => {
