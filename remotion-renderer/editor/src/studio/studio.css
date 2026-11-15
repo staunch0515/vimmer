@@ -214,3 +214,4 @@
 .st-plain p { margin: 0; }
 .st-plain .btn { align-self: flex-start; margin-top: 4px; }
 .st-drop-target { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.st-sidebar-head .btn { flex: none; white-space: nowrap; }
