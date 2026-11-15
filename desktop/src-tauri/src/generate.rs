@@ -4,16 +4,13 @@
 //! Money: nothing is sent to Claude before the user has seen `generate_estimate` and confirmed
 //! (`start_generate` refuses without `confirmed`). The finished event carries the actual cost.
 //!
-//! The API key: when `ANTHROPIC_API_KEY` is in this process's environment the helper inherits
-//! it, as in the CLI. Otherwise (the app was started from Finder) it is read from the user's
-//! shell on the first generation, kept in memory only, and handed to the helper process alone
-//! (`LlmHelper.env`). It is never written to an event, an error, a log, the project folder or
-//! the settings; as a last line of defence every message is scrubbed of the value before it
-//! leaves this module.
+//! The API key: see [`crate::api_key`] (inherited from this process, else read from the login
+//! shell once, handed to the helper process alone). It is never written to an event, an error,
+//! a log, the project folder or the settings; as a last line of defence every message is
+//! scrubbed of the value before it leaves this module.
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -23,11 +20,12 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vimmer_media::{Limits, TtsEngine};
 use vimmer_storyboard::generate::{
-    generate_with_key_check, FailureKind, GenerateOptions, LlmHelper, Usage, ENV_API_KEY,
+    generate_with_key_check, FailureKind, GenerateOptions, LlmHelper, Usage,
 };
 use vimmer_storyboard::illustrate::{self, illustrate_with_key_check, IllustrateOptions, IllustrationReport, PRICES};
 use vimmer_storyboard::{Language, Orientation};
 
+use crate::api_key::{helper_key, scrub, NO_KEY_MESSAGE};
 use crate::studio::{ProjectSummary, Studio, SOURCE_DIR, TIMELINE_FILE};
 
 pub const PROGRESS_EVENT: &str = "generate-progress";
@@ -38,14 +36,10 @@ pub const MODELS: [&str; 2] = ["claude-opus-5-5", "claude-sonnet-5-5"];
 const MAX_TEXT_CHARS: usize = 60_000;
 /// Input tokens of the fixed prompt and schema (README, "Cost").
 const PROMPT_TOKENS: f64 = 2_600.0;
-const NO_KEY_MESSAGE: &str =
-    "ANTHROPIC_API_KEY was not found. Set ANTHROPIC_API_KEY in ~/.zshrc (export ANTHROPIC_API_KEY=...), then try again.";
 
 #[derive(Default)]
 pub struct GenerateState {
     current: Mutex<Option<Arc<AtomicBool>>>,
-    /// The key as read from the user's shell. Memory only.
-    key: Mutex<Option<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -233,14 +227,6 @@ impl GenerateFinished {
         self.error = self.error.map(|e| scrub(&e, secret));
         self.warnings = self.warnings.iter().map(|w| scrub(w, secret)).collect();
         self
-    }
-}
-
-/// `text` without `secret` in it.
-fn scrub(text: &str, secret: Option<&str>) -> String {
-    match secret.filter(|s| s.len() >= 8) {
-        Some(s) => text.replace(s, "[api key removed]"),
-        None => text.to_string(),
     }
 }
 
@@ -449,37 +435,6 @@ fn pretty<T: Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".into()) + "\n"
 }
 
-/// The key when it is not in this process's environment: asked from the user's shell once and
-/// remembered in memory. `None`: it is not set there either.
-fn shell_key(state: &GenerateState) -> Option<String> {
-    let mut cached = state.key.lock().unwrap_or_else(|e| e.into_inner());
-    if cached.is_none() {
-        *cached = read_key_from_shell();
-    }
-    cached.clone()
-}
-
-/// `$ANTHROPIC_API_KEY` as a login shell that has read `~/.zshrc` sees it. Only stdout is read;
-/// nothing is logged.
-fn read_key_from_shell() -> Option<String> {
-    if !Path::new("/bin/zsh").is_file() {
-        return None;
-    }
-    let script = format!(r#"source ~/.zshrc >/dev/null 2>&1; printf %s "${ENV_API_KEY}""#);
-    let out = Command::new("/bin/zsh")
-        .args(["-lc", &script])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|k| !k.is_empty())
-}
-
-fn key_in_env() -> bool {
-    std::env::var_os(ENV_API_KEY).is_some_and(|v| !v.to_string_lossy().trim().is_empty())
-}
-
 /// The cost estimate for the dialog. Makes no API call and does not read the key.
 #[tauri::command]
 pub async fn generate_estimate(args: GenerateArgs) -> Result<Estimate, String> {
@@ -508,17 +463,15 @@ pub fn start_generate(app: AppHandle, state: State<'_, GenerateState>, args: Gen
         let none = Usage::default();
         let finished = (|| {
             // The key: inherited when this process has it, else from the shell, to the helper only.
-            let secret = if key_in_env() { None } else { shell_key(&state) };
-            if !key_in_env() && secret.is_none() {
+            let Some(key) = helper_key() else {
                 return GenerateFinished::failed("no_api_key", NO_KEY_MESSAGE, &none);
-            }
+            };
+            let secret = key.secret().map(str::to_string);
             let mut helper = match LlmHelper::locate(None) {
                 Ok(h) => h,
                 Err(e) => return GenerateFinished::failed("helper", e, &none),
             };
-            if let Some(key) = &secret {
-                helper.env.set(ENV_API_KEY, key.clone());
-            }
+            key.give_to(&mut helper);
             let remotion_dir = crate::render::default_remotion_dir();
             let work_dir = cache.join(format!("generate-{}", crate::render::unix_millis()));
             let env = GenerateEnv {
@@ -562,6 +515,8 @@ pub fn cancel_generate(state: State<'_, GenerateState>) -> bool {
 mod tests {
     use super::*;
     use crate::studio::tests::Fixture;
+    use std::path::Path;
+    use vimmer_storyboard::generate::ENV_API_KEY;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex as StdMutex;
 
