@@ -4,6 +4,7 @@ import { checkClip, checkLayers } from "./layers";
 import { templateProblems } from "./templates";
 import { boxProblems } from "./subtitleBox";
 import { nothingToSpeak } from "./narration";
+import { lookProblems } from "../../src/motion/look";
 
 export const MAX_DURATION_MS = 200_000;
 export const ALLOWED_RESOLUTIONS = [
@@ -46,7 +47,9 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
     problems.push(...checkSceneMotion(s, t.scenes.indexOf(s)));
     problems.push(...checkLayers(s));
     problems.push(...checkSfx(s));
+    if (s.look) problems.push(...lookProblems(s.look).map((p) => `Scene “${s.id}” look: ${p}`));
   }
+  if (t.look) problems.push(...lookProblems(t.look).map((p) => `Look: ${p}`));
   const total = totalMs(t);
   if (total > MAX_DURATION_MS) problems.push(`Timeline is ${(total / 1000).toFixed(1)} s; the limit is 200 s.`);
   if (t.music) {

@@ -1267,6 +1267,7 @@ mod tests {
             transition_in: None,
             keyframes: vec![],
             layers: vec![],
+            look: None,
         }
     }
 
@@ -1286,6 +1287,7 @@ mod tests {
             subtitles: vec![],
             music: None,
             subtitle_box: None,
+            look: None,
         };
         t.scenes[0].audio = None; // not narrated by us: ignored
         let cfg = SchedulerConfig::new(
@@ -1345,6 +1347,7 @@ mod tests {
             subtitles: vec![SubtitleCue::new(0, 2000, "你好世界。")],
             music: None,
             subtitle_box: None,
+            look: None,
         };
         // Words from an earlier text, and times that no longer fit the edited cue.
         t.subtitles[0].words = ["再", "见", "。"]
@@ -1406,6 +1409,7 @@ mod tests {
             subtitles: vec![SubtitleCue::new(0, 1000, "Hello")],
             music: None,
             subtitle_box: None,
+            look: None,
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -1466,6 +1470,7 @@ mod tests {
             subtitles: vec![],
             music: None,
             subtitle_box: None,
+            look: None,
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -1536,6 +1541,7 @@ mod tests {
             subtitles: vec![],
             music: None,
             subtitle_box: None,
+            look: None,
         };
         let mut clips = narration_clips(
             &t,
@@ -1619,6 +1625,7 @@ mod tests {
             subtitles: vec![SubtitleCue::new(0, 1000, "Hello.")],
             music: None,
             subtitle_box: None,
+            look: None,
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -1743,6 +1750,7 @@ mod tests {
             subtitles: vec![],
             music: None,
             subtitle_box: None,
+            look: None,
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -1965,6 +1973,7 @@ mod tests {
             subtitles: vec![],
             music: None,
             subtitle_box: None,
+            look: None,
         }
     }
 

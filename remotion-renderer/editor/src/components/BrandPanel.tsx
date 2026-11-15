@@ -7,6 +7,8 @@ import { pickToOpen, saveTimeline } from "../project";
 import { CATALOG, parseBrand, templateInfo, type ParamSpec } from "../templates";
 import { Field, MediaInput } from "./Inspector";
 import { TextStyleFields, withPart } from "./TextStyleFields";
+import { LookFields } from "./LookFields";
+import { autoPreset } from "../../../src/motion/look";
 
 type Props = {
   timeline: VideoTimeline;
@@ -195,6 +197,14 @@ export const BrandEditor = ({ timeline, selection, dispatch }: Props) => {
           </button>
         ))}
       </div>
+      <div className="section-title">画面氛围 Look · all scenes</div>
+      <div className="dim">The default grade and overlays of every scene. A scene can override them in its own Look section.</div>
+      <LookFields
+        scope="timeline"
+        look={timeline.look}
+        autoAs={autoPreset(timeline)}
+        onChange={(look) => dispatch({ type: "setLook", look: look ?? null })}
+      />
     </div>
   );
 };

@@ -19,6 +19,8 @@ import type { DetectedBeats } from "../beats";
 import { MoodMusicFields, MusicModeSwitch } from "./MusicPanel";
 import type { MusicLibrary, PickedTrack } from "../music";
 import { withSpokenLine, withVoice } from "../narration";
+import { LookFields } from "./LookFields";
+import { autoPreset } from "../../../src/motion/look";
 
 export type InspectorTab = "scene" | "subtitles" | "music" | "brand" | "assistant";
 
@@ -185,6 +187,14 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs }: Pr
           ))}
         </select>
       </Field>
+      <div className="section-title">画面氛围 Look</div>
+      <LookFields
+        scope="scene"
+        look={scene.look}
+        inherited={timeline.look}
+        autoAs={autoPreset(timeline)}
+        onChange={(look) => patch({ look })}
+      />
       <LayerPanel
         scene={scene}
         sceneIndex={index}

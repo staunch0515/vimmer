@@ -11,7 +11,9 @@ import { layoutScenes, msToFrames, totalFrames, type SceneLayout } from "../layo
 import { transitionPose } from "../motion/transitions";
 import { holdWindow, inHoldWindow, type HoldWindow } from "../motion/hold";
 import { DEFAULT_SFX_VOLUME, sfxFrame } from "../motion/sfx";
-import type { Music, Scene, SubtitleCue, Transition, VideoTimeline } from "../types/timeline";
+import { LookedScene } from "../components/Atmosphere";
+import { autoPreset, drawsAnything, effectiveLook, type GradePreset } from "../motion/look";
+import type { Look, Music, Scene, SubtitleCue, Transition, VideoTimeline } from "../types/timeline";
 
 // Gain at a frame: the music volume, faded in and out at the timeline's ends.
 const musicVolume = (music: Music, timeline: VideoTimeline) => {
@@ -54,6 +56,24 @@ const SceneBody: React.FC<{ scene: Scene; durationInFrames: number }> = ({ scene
   </AbsoluteFill>
 );
 
+// How a scene's look is drawn: the timeline default, what `auto` stands for, and the scene's first
+// frame in the full timeline (chunk offset included).
+type LookContext = { defaultLook: Look | null | undefined; autoAs: GradePreset; startFrame: number };
+
+// A scene with its look (components/Atmosphere.tsx). Without a look that draws something, exactly
+// the SceneBody of before: no extra element, no filter.
+const SceneVisual: React.FC<{ scene: Scene; durationInFrames: number; look: LookContext }> = ({ scene, durationInFrames, look }) => {
+  const body = <SceneBody scene={scene} durationInFrames={durationInFrames} />;
+  if (!look.defaultLook && !scene.look) return body;
+  const effective = effectiveLook(look.defaultLook, scene.look);
+  if (!drawsAnything(effective, look.autoAs)) return body;
+  return (
+    <LookedScene look={effective} autoAs={look.autoAs} startFrame={look.startFrame} sceneId={scene.id}>
+      {body}
+    </LookedScene>
+  );
+};
+
 // Plays the incoming scene over the held last frame of the previous one (see motion/transitions.ts).
 // Rendered inside the incoming scene's own Sequence, so its frame counts from the scene start.
 const TransitionIn: React.FC<{ transition: Transition; children: React.ReactNode }> = ({ transition, children }) => {
@@ -73,17 +93,19 @@ const TransitionIn: React.FC<{ transition: Transition; children: React.ReactNode
 // Deliberately not inside a <Sequence>: there, Remotion would clamp the frozen frame to the
 // composition length and hold an earlier frame whenever the composition ends soon after the
 // transition (a render chunk, or a timeline whose last scenes are short).
-const HeldFrame: React.FC<{ hold: HoldWindow; scene: Scene; durationInFrames: number }> = ({
+const HeldFrame: React.FC<{ hold: HoldWindow; scene: Scene; durationInFrames: number; look: LookContext }> = ({
   hold,
   scene,
   durationInFrames,
+  look,
 }) => {
   const frame = useCurrentFrame();
   if (!inHoldWindow(hold, frame)) return null;
   return (
     <AbsoluteFill>
       <Freeze frame={hold.freezeFrame}>
-        <SceneBody scene={scene} durationInFrames={durationInFrames} />
+        {/* The held scene keeps its own look (its overlays stand still with the frame). */}
+        <SceneVisual scene={scene} durationInFrames={durationInFrames} look={look} />
       </Freeze>
     </AbsoluteFill>
   );
@@ -99,6 +121,9 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
   const assetUrl = useContext(AssetUrlContext);
   const layouts = layoutScenes(timeline);
   const brand = timeline.brand ?? null;
+  const chunkStart = timeline.chunk?.start_frame ?? 0;
+  const autoAs = autoPreset(timeline);
+  const lookAt = (from: number): LookContext => ({ defaultLook: timeline.look, autoAs, startFrame: chunkStart + from });
   return (
     <BrandContext.Provider value={brand}>
     <AbsoluteFill style={{ backgroundColor: brandColor(brand, "background", BUILTIN.background) }}>
@@ -116,15 +141,16 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
                 hold={holdWindow(hold, layout, transitionFrames)}
                 scene={hold.scene}
                 durationInFrames={hold.durationInFrames}
+                look={lookAt(hold.from)}
               />
             ) : null}
             <Sequence from={from} durationInFrames={durationInFrames} name={scene.id}>
               {transition ? (
                 <TransitionIn transition={transition}>
-                  <SceneBody scene={scene} durationInFrames={durationInFrames} />
+                  <SceneVisual scene={scene} durationInFrames={durationInFrames} look={lookAt(from)} />
                 </TransitionIn>
               ) : (
-                <SceneBody scene={scene} durationInFrames={durationInFrames} />
+                <SceneVisual scene={scene} durationInFrames={durationInFrames} look={lookAt(from)} />
               )}
               {scene.audio ? (
                 <Sequence from={msToFrames(scene.audio.offset_ms, timeline.fps)}>

@@ -1,0 +1,165 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "look": {
+    "grade": {
+      "preset": "auto",
+      "strength": 0.8
+    },
+    "overlays": [
+      {
+        "kind": "dust",
+        "intensity": 0.4
+      }
+    ]
+  },
+  "scenes": [
+    {
+      "id": "snow",
+      "duration_ms": 3000,
+      "text": "初雪 First snow",
+      "highlights": [
+        "First snow"
+      ],
+      "image": "assets/sample.jpeg",
+      "motion": "zoom_in",
+      "audio": null,
+      "look": {
+        "grade": {
+          "preset": "tech_blue",
+          "strength": 0.5
+        },
+        "overlays": [
+          {
+            "kind": "snow",
+            "intensity": 0.65
+          }
+        ]
+      }
+    },
+    {
+      "id": "dust-warm",
+      "duration_ms": 3000,
+      "text": "温暖文艺 Warm light",
+      "highlights": [
+        "Warm light"
+      ],
+      "image": "assets/quizbuks-taker-cover-center.png",
+      "motion": "pan_left",
+      "audio": null,
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 400
+      },
+      "look": {
+        "grade": {
+          "preset": "warm",
+          "strength": 1.0
+        },
+        "overlays": [
+          {
+            "kind": "dust",
+            "intensity": 0.7,
+            "color": "#ffe2b0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "bokeh-tech",
+      "duration_ms": 3000,
+      "text": "科技蓝 Tech blue",
+      "highlights": [
+        "Tech blue"
+      ],
+      "image": "assets/sample.png",
+      "motion": "static",
+      "audio": null,
+      "look": {
+        "grade": {
+          "preset": "tech_blue",
+          "strength": 0.9
+        },
+        "overlays": [
+          {
+            "kind": "bokeh",
+            "intensity": 0.6,
+            "color": "#8fd0ff"
+          }
+        ]
+      }
+    },
+    {
+      "id": "grain-noir",
+      "duration_ms": 3000,
+      "text": "悬疑暗调 Noir",
+      "highlights": [
+        "Noir"
+      ],
+      "image": "assets/design.png",
+      "motion": "zoom_out",
+      "audio": null,
+      "transition_in": {
+        "kind": "slide_left",
+        "duration_ms": 500
+      },
+      "look": {
+        "grade": {
+          "preset": "noir",
+          "strength": 1.0
+        },
+        "overlays": [
+          {
+            "kind": "film_grain",
+            "intensity": 0.6
+          }
+        ]
+      }
+    },
+    {
+      "id": "inherits",
+      "duration_ms": 3000,
+      "text": "默认氛围 The default look",
+      "highlights": [],
+      "image": "assets/sample.jpeg",
+      "motion": "pan_right",
+      "audio": null
+    }
+  ],
+  "subtitles": [
+    {
+      "start_ms": 300,
+      "end_ms": 2700,
+      "text": "Subtitles stay ungraded and on top"
+    },
+    {
+      "start_ms": 9300,
+      "end_ms": 11700,
+      "text": "字幕不受调色影响"
+    },
+    {
+      "start_ms": 12300,
+      "end_ms": 14700,
+      "text": "This scene inherits the timeline look: auto grade from the music mood, plus dust"
+    }
+  ],
+  "music": {
+    "pick": {
+      "mood": "calm"
+    },
+    "volume": 0.3,
+    "fade_in_ms": 500,
+    "fade_out_ms": 1000
+  },
+  "brand": {
+    "logo": {
+      "src": "assets/brand/vimmer-logo.png",
+      "corner": "top_right",
+      "size": 0.06,
+      "margin": 0.05
+    }
+  }
+}

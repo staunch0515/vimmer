@@ -7,6 +7,7 @@ pub mod beatsync;
 pub mod brand;
 pub mod layer;
 pub mod library;
+pub mod look;
 pub mod model;
 pub mod srt;
 pub mod template;
@@ -29,6 +30,10 @@ pub use layer::{
 pub use library::{
     list_json, pick_json, pick_seed, resolve_music_pick, track_json, wanted_pick, LibraryError, LibraryTrack, MusicLibrary, PickChoice, TrackCredit,
     FAR_ENERGY, LIBRARY_DIR, LIBRARY_INDEX,
+};
+pub use look::{
+    auto_preset, preset_for_mood, replace_auto_grades, resolve_auto_grades, EffectiveLook, Grade, Look, Overlay, GRADE_PRESETS,
+    MAX_OVERLAYS, OVERLAY_KINDS, TINTED_OVERLAYS,
 };
 pub use model::{
     AudioMapping, BeatGrid, BeatSync, Duck, Easing, Keyframe, LayerEvent, MotionType, Music,

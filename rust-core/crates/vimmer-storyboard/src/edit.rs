@@ -56,6 +56,9 @@ pub const MAX_KEYFRAME_ROTATION: f32 = 360.0;
 pub const MAX_FADE_MS: u64 = 30_000;
 pub const MAX_SUBTITLES: usize = 500;
 pub const MAX_ASSET_PATH_CHARS: usize = 200;
+/// Most atmosphere overlays an edit may stack on one look (validation allows
+/// [`vimmer_dsl::MAX_OVERLAYS`]; more than three at once gets busy).
+pub const MAX_EDIT_OVERLAYS: usize = 3;
 
 /// One JSON Patch operation.
 #[derive(Debug, Clone, PartialEq)]
@@ -618,6 +621,11 @@ enum Kind {
     SfxTrigger,
     /// A scene's background `video` clip.
     Video,
+    /// A `look` (timeline default or a scene's): its `grade`, its `overlays` list and one overlay.
+    Look,
+    Grade,
+    Overlays,
+    Overlay,
     /// The timeline's `subtitle_box`: where the subtitles sit.
     SubtitleBox,
     /// The timeline's `brand` and its parts.
@@ -650,7 +658,11 @@ impl Kind {
                 ("music", Music),
                 ("brand", Brand),
                 ("subtitle_box", SubtitleBox),
+                ("look", Look),
             ],
+            Look => &[("grade", Grade), ("overlays", Overlays)],
+            Grade => &[("preset", Leaf), ("strength", Leaf)],
+            Overlay => &[("kind", Leaf), ("intensity", Leaf), ("color", Leaf)],
             SubtitleBox => &[("x", Leaf), ("y", Leaf)],
             Brand => &[
                 ("colors", BrandColors),
@@ -694,6 +706,7 @@ impl Kind {
                 ("layers", Layers),
                 ("template", Template),
                 ("sfx", SfxList),
+                ("look", Look),
             ],
             Sfx => &[
                 ("src", Leaf),
@@ -780,6 +793,7 @@ impl Kind {
             Kind::Words => Some(Kind::Word),
             Kind::HideOn | Kind::ParamList | Kind::PickExclude => Some(Kind::Leaf),
             Kind::SfxList => Some(Kind::Sfx),
+            Kind::Overlays => Some(Kind::Overlay),
             _ => None,
         }
     }
@@ -820,6 +834,10 @@ impl Kind {
             Kind::Sfx => "a sound effect",
             Kind::SfxTrigger => "a sound effect's layer trigger",
             Kind::Video => "a scene background video",
+            Kind::Look => "a look (grade and overlays)",
+            Kind::Grade => "a color grade",
+            Kind::Overlays => "an overlay list",
+            Kind::Overlay => "an atmosphere overlay",
             Kind::SubtitleBox => "the subtitle box",
             Kind::Brand => "the brand",
             Kind::BrandColors => "the brand colors",
@@ -1500,6 +1518,19 @@ fn sanity_problems(t: &VideoTimeline) -> Vec<String> {
             t.subtitles.len()
         ));
     }
+    let looks = t.look.iter().map(|l| ("the timeline look".to_string(), l)).chain(
+        t.scenes
+            .iter()
+            .filter_map(|s| s.look.as_ref().map(|l| (format!("scene `{}` look", s.id), l))),
+    );
+    for (what, look) in looks {
+        let n = look.overlays.as_ref().map_or(0, Vec::len);
+        if n > MAX_EDIT_OVERLAYS {
+            out.push(format!(
+                "{what} stacks {n} overlays; keep it to at most {MAX_EDIT_OVERLAYS}"
+            ));
+        }
+    }
     if let Some(m) = &t.music {
         if m.fade_in_ms > MAX_FADE_MS || m.fade_out_ms > MAX_FADE_MS {
             out.push(format!("music fades may be at most {MAX_FADE_MS} ms each"));
@@ -2134,6 +2165,7 @@ fn show_field(key: &str, v: &Value) -> String {
             Err(_) if v.is_null() => "none".into(),
             Err(_) => show(v),
         },
+        "look" => show_look(v),
         "highlights" => match v {
             Value::Array(a) if a.is_empty() => "none".into(),
             Value::Array(a) => a
@@ -2144,6 +2176,36 @@ fn show_field(key: &str, v: &Value) -> String {
             _ => show(v),
         },
         _ => show(v),
+    }
+}
+
+/// A look as the change summary shows it: `warm 80% + snow 50%, dust 30%`.
+fn show_look(v: &Value) -> String {
+    let Ok(look) = serde_json::from_value::<vimmer_dsl::Look>(v.clone()) else {
+        return show(v);
+    };
+    let pct = |f: f32| format!("{}%", (f * 100.0).round());
+    let mut parts = Vec::new();
+    if let Some(g) = &look.grade {
+        parts.push(format!("grade {} {}", g.preset, pct(g.strength)));
+    }
+    match &look.overlays {
+        Some(list) if list.is_empty() => parts.push("no overlays".into()),
+        Some(list) => parts.push(
+            list.iter()
+                .map(|o| {
+                    let tint = o.color.as_deref().map_or(String::new(), |c| format!(" {c}"));
+                    format!("{} {}{tint}", o.kind, pct(o.intensity))
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+        None => {}
+    }
+    if parts.is_empty() {
+        "none".into()
+    } else {
+        parts.join(" + ")
     }
 }
 
@@ -2219,13 +2281,11 @@ pub fn summarize(before: &VideoTimeline, after: &VideoTimeline) -> Vec<String> {
                 ));
             }
         }
-        // A removed text style is a key that is no longer written.
-        if let (Some(old_style), None) = (a.get("text_style"), b.get("text_style")) {
-            changes.push(format!(
-                "{} {} -> none",
-                label("text_style"),
-                show_field("text_style", old_style)
-            ));
+        // A removed text style or look is a key that is no longer written.
+        for key in ["text_style", "look"] {
+            if let (Some(old), None) = (a.get(key), b.get(key)) {
+                changes.push(format!("{} {} -> none", label(key), show_field(key, old)));
+            }
         }
         if !changes.is_empty() {
             out.push(format!("{}: {}", s.id, changes.join("; ")));
@@ -2300,6 +2360,18 @@ pub fn summarize(before: &VideoTimeline, after: &VideoTimeline) -> Vec<String> {
             "music: {} -> {}",
             describe(&before.music),
             describe(&after.music)
+        ));
+    }
+    if before.look != after.look {
+        let describe = |l: &Option<vimmer_dsl::Look>| {
+            l.as_ref().map_or("none".to_string(), |l| {
+                show_look(&serde_json::to_value(l).unwrap_or(Value::Null))
+            })
+        };
+        out.push(format!(
+            "look (all scenes): {} -> {}",
+            describe(&before.look),
+            describe(&after.look)
         ));
     }
     let (t0, t1) = (before.total_duration_ms(), after.total_duration_ms());

@@ -98,7 +98,7 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
         })
         .collect();
 
-    VideoTimeline {
+    let mut out = VideoTimeline {
         // The brand draws the logo and sets fonts and default colors in every chunk.
         brand: timeline.brand.clone(),
         // Where the subtitles sit: the same in every chunk.
@@ -109,7 +109,12 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
         subtitles,
         // Music is mixed once, over the joined video, so chunks never carry it.
         music: None,
-    }
+        // The default look of every scene, as in the full render.
+        look: timeline.look.clone(),
+    };
+    // Without the music, an `auto` grade could not see the mood: settle it from the full timeline.
+    vimmer_dsl::replace_auto_grades(&mut out, vimmer_dsl::auto_preset(timeline));
+    out
 }
 
 /// Render props for one chunk: the self-contained [`chunk_timeline`] plus a [`ChunkSubtitles`]
@@ -197,6 +202,7 @@ mod tests {
             transition_in: None,
             keyframes: vec![],
             layers: vec![],
+            look: None,
         }
     }
 
@@ -216,7 +222,41 @@ mod tests {
             subtitles: vec![],
             music: None,
             subtitle_box: None,
+            look: None,
         }
+    }
+
+    #[test]
+    fn every_chunk_keeps_the_look_and_auto_follows_the_full_timelines_mood() {
+        let mut t = timeline(&[3_000, 3_000, 3_000]);
+        t.look = Some(
+            serde_json::from_str(r#"{"grade":{"preset":"auto"},"overlays":[{"kind":"snow"}]}"#)
+                .unwrap(),
+        );
+        t.scenes[2].look =
+            Some(serde_json::from_str(r#"{"grade":{"preset":"auto","strength":0.4}}"#).unwrap());
+        t.music = Some(
+            serde_json::from_str(
+                r#"{"pick":{"mood":"warm"},"volume":0.3,"fade_in_ms":0,"fade_out_ms":0}"#,
+            )
+            .unwrap(),
+        );
+        let chunks = plan_chunks(&t, 3_000);
+        assert_eq!(chunks.len(), 3);
+        for c in &chunks {
+            let ct = chunk_timeline(&t, c);
+            assert!(ct.music.is_none());
+            let look = ct.look.as_ref().unwrap();
+            assert_eq!(look.grade.as_ref().unwrap().preset, "warm");
+            assert_eq!(look.overlays.as_ref().unwrap()[0].kind, "snow");
+        }
+        let last = chunk_timeline(&t, &chunks[2]);
+        let g = last.scenes[0].look.as_ref().unwrap().grade.as_ref().unwrap();
+        assert_eq!((g.preset.as_str(), g.strength), ("warm", 0.4));
+        // Without a look, the chunk has none (and writes no key).
+        let plain = timeline(&[3_000]);
+        let ct = chunk_timeline(&plain, &plan_chunks(&plain, 3_000)[0]);
+        assert!(!serde_json::to_string(&ct).unwrap().contains("\"look\""));
     }
 
     #[test]

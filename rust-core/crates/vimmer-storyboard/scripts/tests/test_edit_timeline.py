@@ -193,6 +193,21 @@ class EditHelperTest(unittest.TestCase):
         self.assertIn("/scenes/i/narration/text", prompt)
         self.assertIn("台词", prompt)
 
+    def test_prompt_documents_the_look(self):
+        with open(PROMPT, encoding="utf-8") as f:
+            prompt = f.read()
+        for want in ["`look`", "加点雪花", "整体调成温暖色调", "film_grain", "tech_blue", "`auto`"]:
+            self.assertIn(want, prompt)
+
+    def test_scene_table_shows_a_look_only_when_set(self):
+        t = timeline()
+        before, _ = et.scene_table(t)
+        self.assertFalse(any("look=" in line for line in before))
+        t["scenes"][1]["look"] = {"overlays": [{"kind": "snow", "intensity": 0.6}]}
+        lines, _ = et.scene_table(t)
+        self.assertIn('look={"overlays":[{"kind":"snow","intensity":0.6}]}', lines[1])
+        self.assertEqual(lines[0], before[0])
+
     def test_system_prompt_is_identical_across_requests(self):
         a, b = FakeClient(message("{}")), FakeClient(message("{}"))
         run_main(request(), a)

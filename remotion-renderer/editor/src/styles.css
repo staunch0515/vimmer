@@ -529,3 +529,8 @@ textarea { resize: vertical; width: 100%; }
 .snap-line { position: absolute; background: #f472b6; pointer-events: none; }
 .snap-line.v { top: 0; bottom: 0; width: 1px; margin-left: -0.5px; }
 .snap-line.h { left: 0; right: 0; height: 1px; margin-top: -0.5px; }
+
+/* 画面氛围 Look fields */
+.look-fields { display: flex; flex-direction: column; gap: 6px; }
+.look-overlay { border: 1px solid var(--border, #2a2a30); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.look-overlay input[type="color"] { width: 36px; height: 24px; padding: 0; border: none; background: none; }

@@ -144,6 +144,10 @@ pub enum ValidationError {
     BadBrand(String),
     #[error("subtitle_box: {0}")]
     BadSubtitleBox(String),
+    #[error("look: {0}")]
+    BadLook(String),
+    #[error("scene `{scene}` look: {message}")]
+    BadSceneLook { scene: String, message: String },
     #[error("scene `{scene}` sfx {index}: {message}")]
     BadSfx {
         scene: String,
@@ -835,6 +839,9 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
                 .map(ValidationError::BadSubtitleBox),
         );
     }
+    if let Some(look) = &timeline.look {
+        errors.extend(look.problems().into_iter().map(ValidationError::BadLook));
+    }
     let result = if timeline.scenes.iter().any(|s| s.template.is_some()) {
         let mut expanded = timeline.clone();
         match crate::template::expand_templates(&mut expanded) {
@@ -887,6 +894,16 @@ fn validate_expanded(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError
         let has_image = scene.image.as_deref().is_some_and(|i| !i.trim().is_empty());
         if !has_text && !has_image && scene.video.is_none() && scene.layers.is_empty() {
             errors.push(ValidationError::EmptyScene(scene.id.clone()));
+        }
+        if let Some(look) = &scene.look {
+            errors.extend(
+                look.problems()
+                    .into_iter()
+                    .map(|message| ValidationError::BadSceneLook {
+                        scene: scene.id.clone(),
+                        message,
+                    }),
+            );
         }
         if let Some(video) = &scene.video {
             if scene.image.is_some() {
@@ -1059,6 +1076,7 @@ mod tests {
             transition_in: None,
             keyframes: vec![],
             layers: vec![],
+            look: None,
         }
     }
 
@@ -1074,12 +1092,36 @@ mod tests {
             subtitles: vec![],
             music: None,
             subtitle_box: None,
+            look: None,
         }
     }
 
     #[test]
     fn valid_timeline_passes() {
         assert!(validate(&timeline(vec![scene("a", 15_000)])).is_ok());
+    }
+
+    #[test]
+    fn looks_are_optional_and_checked_at_both_levels() {
+        let mut t = timeline(vec![scene("a", 1_000), scene("b", 1_000)]);
+        assert!(!serde_json::to_string(&t).unwrap().contains("look"));
+        t.look = Some(
+            serde_json::from_str(r#"{"grade":{"preset":"auto","strength":0.7},"overlays":[{"kind":"snow"}]}"#)
+                .unwrap(),
+        );
+        t.scenes[1].look = Some(serde_json::from_str(r#"{"overlays":[]}"#).unwrap());
+        assert!(validate(&t).is_ok());
+        t.look = Some(serde_json::from_str(r#"{"grade":{"preset":"pink"}}"#).unwrap());
+        t.scenes[1].look =
+            Some(serde_json::from_str(r#"{"overlays":[{"kind":"snow","intensity":2}]}"#).unwrap());
+        let errs = validate(&t).unwrap_err();
+        let shown: Vec<String> = errs.iter().map(ToString::to_string).collect();
+        assert_eq!(shown.len(), 2, "{shown:?}");
+        assert!(shown[0].starts_with("look: grade preset `pink` is unknown"), "{shown:?}");
+        assert!(
+            shown[1].starts_with("scene `b` look: overlay 0 intensity 2"),
+            "{shown:?}"
+        );
     }
 
     #[test]
@@ -1122,6 +1164,7 @@ mod tests {
             subtitles: vec![],
             music: None,
             subtitle_box: None,
+            look: None,
         };
         let errs = validate(&t).unwrap_err();
         assert!(errs.contains(&ValidationError::UnsupportedFps(24)));
