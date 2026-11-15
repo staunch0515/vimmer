@@ -260,6 +260,22 @@ fn convert_scene(
     if text.is_empty() {
         return Err(scene_err(n, "text", "must not be empty"));
     }
+    // A spoken line only when it says something other than the text; it is what the narration
+    // reads, so it also sizes the scene.
+    let spoken = spec
+        .spoken
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != text);
+    if spoken.is_some() && !sb.narration {
+        warnings.push(Warning {
+            scene: Some(n),
+            field: "spoken",
+            message: "narration is off, so the spoken line is not used".into(),
+        });
+    }
+    let spoken = spoken.filter(|_| sb.narration);
+    let said = spoken.unwrap_or(text);
 
     let duration_ms = match spec.duration_ms {
         Some(0) => return Err(scene_err(n, "duration_ms", "must be greater than 0")),
@@ -271,7 +287,7 @@ fn convert_scene(
             ))
         }
         Some(d) => d,
-        None => estimate_duration_ms(text, sb.language, engine),
+        None => estimate_duration_ms(said, sb.language, engine),
     };
 
     // Emphasis -> DSL `highlights` (only words that occur in the text can be highlighted).
@@ -382,9 +398,12 @@ fn convert_scene(
         // No voice by default: each speech engine picks one from the text (kana → Japanese).
         // Only Japanese text without kana, which would be read as Chinese, gets `Kyoko`.
         let voice = sb.voice.clone().or_else(|| {
-            (sb.language == crate::Language::Ja && !has_kana(text)).then(|| "Kyoko".to_owned())
+            (sb.language == crate::Language::Ja && !has_kana(said)).then(|| "Kyoko".to_owned())
         });
         scene["narration"] = json!({ "voice": voice });
+        if let Some(line) = spoken {
+            scene["narration"]["text"] = json!(line);
+        }
     }
 
     Ok(scene)

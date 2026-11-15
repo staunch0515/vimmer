@@ -66,8 +66,12 @@ pub struct MoodMusic {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneSpec {
-    /// Narration and on-screen text.
+    /// On-screen text, also spoken as narration unless `spoken` is set.
     pub text: String,
+    /// What the narration says when it differs from `text` (the spoken line, 台词). Omit to
+    /// speak `text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoken: Option<String>,
     /// Milliseconds. Omit to estimate from the text length.
     #[serde(default)]
     pub duration_ms: Option<u64>,

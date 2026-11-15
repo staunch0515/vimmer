@@ -41,12 +41,24 @@ pub struct AudioMapping {
     pub offset_ms: u64,
 }
 
-/// Generate narration for a scene from its `text` with a local speech engine.
+/// Generate narration for a scene with a local speech engine: its spoken line (台词) when set,
+/// else the scene's `text` (see [`Scene::spoken_text`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Narration {
     /// Voice name for the speech engine. Empty = pick by language (CJK text gets a Chinese voice).
     #[serde(default)]
     pub voice: Option<String>,
+    /// What the narration says when it differs from what is shown. Absent or blank: the scene's
+    /// `text` is spoken, as before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+impl Narration {
+    /// The spoken line, if set and not blank.
+    pub fn spoken_line(&self) -> Option<&str> {
+        self.text.as_deref().filter(|t| !t.trim().is_empty())
+    }
 }
 
 fn default_scale() -> f32 {
@@ -197,7 +209,8 @@ pub struct Scene {
     pub video: Option<VideoClip>,
     #[serde(default)]
     pub audio: Option<AudioMapping>,
-    /// When set and `audio` is empty, the scene's text is synthesized as narration at render time.
+    /// When set and `audio` is empty, the scene's spoken text ([`Scene::spoken_text`]) is
+    /// synthesized as narration at render time.
     #[serde(default)]
     pub narration: Option<Narration>,
     /// Transition from the previous scene. Ignored on the first scene (validation rejects it).
@@ -219,6 +232,16 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// What this scene's narration says: the narration's own spoken line when set, else the
+    /// scene's `text`. `None` when the scene has no narration or nothing to say. It ignores
+    /// `audio` (a scene with its own audio is not narrated); callers check that themselves.
+    pub fn spoken_text(&self) -> Option<&str> {
+        let narration = self.narration.as_ref()?;
+        narration
+            .spoken_line()
+            .or_else(|| self.text.as_deref().filter(|t| !t.trim().is_empty()))
+    }
+
     /// Outline, box and shadow of the scene text as drawn: each part the scene's own, else the
     /// brand's (the renderer adds its built-in soft shadow when neither sets a shadow).
     pub fn effective_text_style(&self, brand: Option<&Brand>) -> TextStyle {
@@ -631,6 +654,43 @@ impl VideoTimeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn narrated(text: Option<&str>, line: Option<&str>) -> Scene {
+        let mut json = serde_json::json!({"id": "a", "duration_ms": 1000, "narration": {}});
+        if let Some(t) = text {
+            json["text"] = t.into();
+        }
+        if let Some(l) = line {
+            json["narration"]["text"] = l.into();
+        }
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn spoken_text_is_the_spoken_line_else_the_scene_text() {
+        assert_eq!(narrated(Some("Shown"), None).spoken_text(), Some("Shown"));
+        assert_eq!(narrated(Some("Shown"), Some("Said")).spoken_text(), Some("Said"));
+        assert_eq!(narrated(None, Some("Said")).spoken_text(), Some("Said"));
+        // A blank spoken line falls back to the scene text.
+        assert_eq!(narrated(Some("Shown"), Some("  ")).spoken_text(), Some("Shown"));
+        assert_eq!(narrated(None, Some("")).spoken_text(), None);
+        assert_eq!(narrated(Some(" "), None).spoken_text(), None);
+        let mut silent = narrated(Some("Shown"), Some("Said"));
+        silent.narration = None;
+        assert_eq!(silent.spoken_text(), None, "no narration, nothing spoken");
+    }
+
+    #[test]
+    fn narration_without_a_spoken_line_round_trips_as_before() {
+        for json in [r#"{"voice":null}"#, r#"{"voice":"Tingting"}"#] {
+            let n: Narration = serde_json::from_str(json).unwrap();
+            assert_eq!(n.text, None);
+            assert_eq!(serde_json::to_string(&n).unwrap(), json);
+        }
+        let n: Narration = serde_json::from_str(r#"{"voice":null,"text":"Hi"}"#).unwrap();
+        assert_eq!(n.text.as_deref(), Some("Hi"));
+        assert_eq!(serde_json::to_string(&n).unwrap(), r#"{"voice":null,"text":"Hi"}"#);
+    }
 
     #[test]
     fn scene_without_new_fields_gets_defaults() {

@@ -25,7 +25,8 @@ You are a video storyboard writer. Turn the source text into a short narrated vi
   "narration": "boolean, default true: each scene's text is read aloud",
   "scenes": [
     {
-      "text": "required. The narration AND the on-screen text. One or two short sentences.",
+      "text": "required. The on-screen text, also read aloud. One or two short sentences.",
+      "spoken": "optional. Only when the narration should say something other than `text` (e.g. a short headline on screen, a full sentence spoken). Omit to read `text` aloud.",
       "duration_ms": "optional integer > 0. Omit to let the tool estimate from text length.",
       "emphasis": ["words copied EXACTLY from this scene's text, 0-2 per scene"],
       "camera": "static | push_in | pull_out | pan_left | pan_right | ken_burns",
@@ -58,7 +59,7 @@ Unknown field names are rejected. Do not add fields.
 {{MUSIC}}
 
 ## Duration rules (when you omit `duration_ms`)
-- The tool estimates how long the local speech engine takes to read `text`: roughly `zh` 250 ms per character, `ja` 200 ms per character, `en` 400 ms per word, a short pause at each comma or sentence end, and more for numbers written as digits; then +600 ms, minimum 2000 ms.
+- The tool estimates how long the local speech engine takes to read `text` (or `spoken`, when set): roughly `zh` 250 ms per character, `ja` 200 ms per character, `en` 400 ms per word, a short pause at each comma or sentence end, and more for numbers written as digits; then +600 ms, minimum 2000 ms.
 - So keep a scene's text to roughly: zh 8-30 characters, ja 10-35 characters, en 6-20 words.
 - Set `duration_ms` yourself only when a scene should hold longer than its narration.
 

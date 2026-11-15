@@ -8,9 +8,12 @@ export type AudioMapping = {
   offset_ms: number;
 };
 
-// Narration is synthesized from `text` at render time (local speech engine).
+// Narration is synthesized at render time (local speech engine). It speaks its own `text` (the
+// spoken line, 台词) when set and not blank, else the scene's `text`.
 export type Narration = {
   voice: string | null;
+  // Absent: the scene text is spoken, as before this field existed.
+  text?: string;
 };
 
 // Easing of the segment that leaves a keyframe. Mirrors `Easing` in model.rs.

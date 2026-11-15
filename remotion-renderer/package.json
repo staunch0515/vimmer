@@ -10,7 +10,7 @@
     "editor": "vite --config editor/vite.config.ts",
     "editor:build": "vite build --config editor/vite.config.ts",
     "typecheck:editor": "tsc --noEmit -p editor/tsconfig.json",
-    "test:motion": "node --experimental-strip-types --test test/motion.test.ts test/editor-normalize.test.ts test/render-options.test.ts test/editor-keyframes.test.ts test/editor-history.test.ts test/editor-subtitle-box.test.ts test/editor-layout.test.ts test/studio-format.test.ts test/text-style.test.ts",
+    "test:motion": "node --experimental-strip-types --test test/motion.test.ts test/editor-normalize.test.ts test/render-options.test.ts test/editor-keyframes.test.ts test/editor-history.test.ts test/editor-subtitle-box.test.ts test/editor-layout.test.ts test/studio-format.test.ts test/text-style.test.ts test/editor-narration.test.ts",
     "test:words": "node --experimental-strip-types --test test/word-subtitles.test.ts"
   },
   "dependencies": {

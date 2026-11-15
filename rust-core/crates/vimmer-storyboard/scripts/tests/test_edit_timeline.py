@@ -165,6 +165,34 @@ class EditHelperTest(unittest.TestCase):
         self.assertIn("video=assets/clips/counter-6s.mp4", lines[0])
         self.assertNotIn("video=", lines[1])
 
+    def test_scene_table_shows_a_spoken_line_only_when_set(self):
+        t = timeline()
+        before, _ = et.scene_table(t)
+        self.assertFalse(any("spoken=" in line for line in before))
+        t["scenes"][1]["narration"] = {"voice": None, "text": "这是另一句台词。"}
+        lines, _ = et.scene_table(t)
+        self.assertIn('spoken="这是另一句台词。"', lines[1])
+        self.assertEqual(lines[0], before[0])
+        self.assertEqual(lines[1].split("  spoken=")[0], before[1])
+
+    def test_a_reply_that_sets_the_spoken_line_passes_through(self):
+        reply = {
+            "status": "edited",
+            "explanation": "第二段的台词改了，屏幕文字不变。",
+            "patch": [{"op": "add", "path": "/scenes/1/narration/text", "from": "",
+                       "value_json": json.dumps("它已经有六百多年历史了。", ensure_ascii=False)}],
+        }
+        client = FakeClient(message(json.dumps(reply, ensure_ascii=False)))
+        code, result, _ = run_main(request(instruction="第二段台词改成：它已经有六百多年历史了"), client)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(result["reply_json"]), reply)
+
+    def test_prompt_documents_the_spoken_line(self):
+        with open(PROMPT, encoding="utf-8") as f:
+            prompt = f.read()
+        self.assertIn("/scenes/i/narration/text", prompt)
+        self.assertIn("台词", prompt)
+
     def test_system_prompt_is_identical_across_requests(self):
         a, b = FakeClient(message("{}")), FakeClient(message("{}"))
         run_main(request(), a)

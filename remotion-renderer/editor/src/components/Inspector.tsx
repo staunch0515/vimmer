@@ -18,6 +18,7 @@ import { BeatSyncFields, SfxList, type BeatStatus } from "./SoundPanel";
 import type { DetectedBeats } from "../beats";
 import { MoodMusicFields, MusicModeSwitch } from "./MusicPanel";
 import type { MusicLibrary, PickedTrack } from "../music";
+import { withSpokenLine, withVoice } from "../narration";
 
 export type InspectorTab = "scene" | "subtitles" | "music" | "brand" | "assistant";
 
@@ -114,6 +115,19 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs }: Pr
       <Field label="Text" hint={scene.template ? "drawn over the template" : undefined}>
         <textarea rows={3} value={scene.text ?? ""} onChange={(e) => patch({ text: e.target.value || null })} />
       </Field>
+      {/* What the narration says, when it differs from the text on screen. Empty: it reads the
+          text above; clearing it removes `narration.text`. */}
+      {scene.narration && (
+        <Field label="台词 Spoken line" hint={scene.audio ? "Manual audio is used instead" : "可选，与屏幕文字不同时填写"}>
+          <textarea
+            rows={2}
+            data-spoken-line
+            value={scene.narration.text ?? ""}
+            placeholder="留空 = 念屏幕上的文字"
+            onChange={(e) => patch({ narration: withSpokenLine(scene.narration!, e.target.value) })}
+          />
+        </Field>
+      )}
       <Field label="Highlights" hint="Comma-separated words">
         <input
           value={(scene.highlights ?? []).join(", ")}
@@ -243,7 +257,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs }: Pr
         <Field label="Voice" hint={scene.audio ? "Manual audio is used instead" : ""}>
           <select
             value={scene.narration.voice ?? ""}
-            onChange={(e) => patch({ narration: { voice: e.target.value || null } })}
+            onChange={(e) => patch({ narration: withVoice(scene.narration!, e.target.value || null) })}
           >
             <option value="">Auto (by language)</option>
             <option value="Samantha">Samantha (English)</option>
