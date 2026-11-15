@@ -2,13 +2,13 @@ import { useEffect, useReducer, useRef, useState, type Dispatch } from "react";
 import type { VideoTimeline } from "../../../src/types/timeline";
 import type { Selection } from "../model";
 import type { Action } from "../state";
-import { serialize } from "../project";
+import { confirmDiscard, serialize } from "../project";
 import {
   ASSISTANT_MODELS, failureHint, formatCost, proposeEdit,
   type AssistantModel, type EditProposal,
 } from "../assistant";
 import {
-  buildConversation, busy as isBusy, chatReducer, failureOf, initialChat, nextExchangeId, openProposal,
+  buildConversation, busy as isBusy, chatReducer, failureOf, initialChat, modelChangeClears, nextExchangeId, openProposal,
   type Exchange,
 } from "../chat";
 
@@ -28,6 +28,12 @@ const DECISION_LABEL = {
   superseded: "Not applied 未采用 (you moved on)",
 } as const;
 
+/** "Claude Opus 5.5" -> "Opus 5.5", for the answer cards. */
+const shortModel = (id: AssistantModel): string =>
+  (ASSISTANT_MODELS.find((m) => m.id === id)?.label ?? id).replace(/^Claude /, "");
+
+const CONFIRM_SWITCH = "换模型会开始新对话，当前对话会清空。继续吗？\n\nSwitching model starts a new chat. The current conversation will be cleared. Continue?";
+
 const selectedSceneId = (t: VideoTimeline, s: Selection): string | null => {
   const index = s.kind === "scene" ? s.index : s.kind === "keyframe" || s.kind === "layer" ? s.sceneIndex : -1;
   return t.scenes[index]?.id ?? null;
@@ -40,9 +46,9 @@ const selectedSceneId = (t: VideoTimeline, s: Selection): string | null => {
 export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props) => {
   const [instruction, setInstruction] = useState("");
   const [useScene, setUseScene] = useState(true);
-  const [model, setModel] = useState<AssistantModel>("claude-opus-5-5");
   const [chat, chatDispatch] = useReducer(chatReducer, docKey, initialChat);
   const logEnd = useRef<HTMLDivElement>(null);
+  const model = chat.model;
   const sceneId = selectedSceneId(timeline, selection);
   const current = serialize(timeline);
   const busy = isBusy(chat);
@@ -74,6 +80,15 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
     chatDispatch({ type: "answer", id, generation, result });
   };
 
+  // One model per chat: switching in a chat with messages starts a new one, after asking.
+  // The reducer checks again (still idle, still the same switch) when the answer comes back.
+  const changeModel = async (next: AssistantModel) => {
+    if (busy || next === model) return;
+    const clears = modelChangeClears(chat, next);
+    if (clears && !(await confirmDiscard(CONFIRM_SWITCH))) return; // the controlled select stays on the old model
+    chatDispatch({ type: "setModel", model: next, confirmed: clears });
+  };
+
   const accept = (e: Exchange, p: EditProposal) => {
     if (e.base !== current) return;
     dispatch({ type: "applyAssistant", timeline: p.outcome.timeline });
@@ -95,6 +110,14 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
         >
           新对话 New chat
         </button>
+      </div>
+      <div className="assistant-row chat-header">
+        <label className="chat-model" title="Each chat uses one model. Switching model starts a new chat.">
+          <span className="dim small">模型 Model</span>
+          <select value={model} onChange={(e) => void changeModel(e.target.value as AssistantModel)} disabled={busy} aria-label="Model 模型">
+            {ASSISTANT_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </label>
       </div>
 
       <div className="chat-log" aria-live="polite">
@@ -133,10 +156,7 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
         <input type="checkbox" checked={useScene && !!sceneId} disabled={!sceneId} onChange={(e) => setUseScene(e.target.checked)} />
         {sceneId ? <>About the selected scene <span className="mono">{sceneId}</span></> : "No scene selected"}
       </label>
-      <div className="assistant-row">
-        <select value={model} onChange={(e) => setModel(e.target.value as AssistantModel)} aria-label="Model">
-          {ASSISTANT_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-        </select>
+      <div className="assistant-row chat-send">
         <button className="btn primary" onClick={() => void send()} disabled={!instruction.trim() || busy}>
           {busy ? "Thinking… 思考中" : "Send 发送"}
         </button>
@@ -169,7 +189,10 @@ const ExchangeView = ({ exchange: e, current, onAccept, onReject }: ExchangeProp
           <div className="assistant-status">Assistant unavailable 助手不可用</div>
           <div>{failure.error.message}</div>
           {failureHint(failure) && <div className="dim">{failureHint(failure)}</div>}
-          {failure.usage && failure.usage.cost_usd > 0 && <div className="dim mono small">{formatCost(failure.usage)}</div>}
+          <div className="dim mono small">
+            {shortModel(e.model)}
+            {failure.usage && failure.usage.cost_usd > 0 ? ` · ${formatCost(failure.usage)}` : ""}
+          </div>
         </div>
       )}
       {e.result?.ok && (
@@ -182,8 +205,8 @@ const ExchangeView = ({ exchange: e, current, onAccept, onReject }: ExchangeProp
             </ul>
           )}
           {e.result.outcome.warnings.map((w) => <div key={w} className="assistant-warning">⚠ {w}</div>)}
-          <div className="dim mono small">
-            {formatCost(e.result.usage)}
+          <div className="dim mono small" title={e.model}>
+            {shortModel(e.model)} · {formatCost(e.result.usage)}
             {e.result.retries > 0 ? ` · ${e.result.retries} correction${e.result.retries > 1 ? "s" : ""}` : ""}
           </div>
           {stale && <div className="assistant-warning">The timeline changed since this was proposed. Ask again. 时间线已变，请重新提问。</div>}

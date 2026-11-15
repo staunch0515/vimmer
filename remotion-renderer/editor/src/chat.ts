@@ -7,7 +7,10 @@
 // whether each proposed edit was accepted. Old timelines are never resent. This is not the
 // backend's retry `history` (the rejected attempts of one request); it is a separate field.
 
-import type { EditFailure, EditProposal, EditResult } from "./assistant";
+import type { AssistantModel, EditFailure, EditProposal, EditResult } from "./assistant";
+
+/** The model a chat starts with (the user's choice is kept across New chat and documents). */
+export const DEFAULT_MODEL: AssistantModel = "claude-opus-5-5";
 
 export type Decision = "pending" | "accepted" | "rejected" | "superseded";
 
@@ -22,6 +25,8 @@ export type Exchange = {
   base: string;
   /** What the user did with an `edited` proposal; "pending" for everything else. */
   decision: Decision;
+  /** The model that answered (the chat's model when the message was sent). */
+  model: AssistantModel;
 };
 
 export type ChatState = {
@@ -31,6 +36,8 @@ export type ChatState = {
   generation: number;
   nextId: number;
   exchanges: Exchange[];
+  /** One model per chat: every message of this chat goes to it. */
+  model: AssistantModel;
 };
 
 export type ChatAction =
@@ -39,14 +46,26 @@ export type ChatAction =
   | { type: "accept"; id: number }
   | { type: "reject"; id: number }
   | { type: "clear" }
-  | { type: "openDocument"; doc: number };
+  | { type: "openDocument"; doc: number }
+  /**
+   * Switch the chat's model. An empty chat just switches. A chat with messages switches only
+   * when `confirmed` (the user agreed to start over), and is then cleared like New chat.
+   * Ignored while a request runs.
+   */
+  | { type: "setModel"; model: AssistantModel; confirmed?: boolean };
 
-export const initialChat = (doc = 0): ChatState => ({ doc, generation: 0, nextId: 1, exchanges: [] });
+export const initialChat = (doc = 0, model: AssistantModel = DEFAULT_MODEL): ChatState => ({
+  doc, generation: 0, nextId: 1, exchanges: [], model,
+});
 
 export const busy = (s: ChatState): boolean => s.exchanges.some((e) => e.result === null);
 
 /** The exchange a new message gets (for the caller to know its id before dispatching). */
 export const nextExchangeId = (s: ChatState): number => s.nextId;
+
+/** Whether switching to `model` would clear this chat (so the user has to confirm it). */
+export const modelChangeClears = (s: ChatState, model: AssistantModel): boolean =>
+  model !== s.model && s.exchanges.length > 0;
 
 const isEdit = (e: Exchange): e is Exchange & { result: EditProposal } => !!e.result?.ok && e.result.status === "edited";
 
@@ -61,7 +80,7 @@ export const chatReducer = (s: ChatState, a: ChatAction): ChatState => {
       if (busy(s)) return s;
       // Moving on without deciding: an open proposal is no longer offered.
       const exchanges = s.exchanges.map((e) => (isEdit(e) && e.decision === "pending" ? { ...e, decision: "superseded" as const } : e));
-      const added: Exchange = { id: s.nextId, instruction: a.instruction, sceneId: a.sceneId, result: null, base: a.base, decision: "pending" };
+      const added: Exchange = { id: s.nextId, instruction: a.instruction, sceneId: a.sceneId, result: null, base: a.base, decision: "pending", model: s.model };
       return { ...s, nextId: s.nextId + 1, exchanges: [...exchanges, added] };
     }
     case "answer":
@@ -74,7 +93,12 @@ export const chatReducer = (s: ChatState, a: ChatAction): ChatState => {
     case "clear":
       return { ...s, generation: s.generation + 1, exchanges: [] };
     case "openDocument":
-      return a.doc === s.doc ? s : { ...initialChat(a.doc), generation: s.generation + 1, nextId: s.nextId };
+      return a.doc === s.doc ? s : { ...initialChat(a.doc, s.model), generation: s.generation + 1, nextId: s.nextId };
+    case "setModel":
+      if (a.model === s.model || busy(s)) return s;
+      if (s.exchanges.length === 0) return { ...s, model: a.model };
+      if (!a.confirmed) return s;
+      return { ...s, model: a.model, generation: s.generation + 1, exchanges: [] };
   }
 };
 

@@ -529,3 +529,8 @@ textarea { resize: vertical; width: 100%; }
 .snap-line { position: absolute; background: #f472b6; pointer-events: none; }
 .snap-line.v { top: 0; bottom: 0; width: 1px; margin-left: -0.5px; }
 .snap-line.h { left: 0; right: 0; height: 1px; margin-top: -0.5px; }
+
+/* Assistant chat: model picker in the header, Send alone in the input row */
+.chat-model { display: flex; gap: 6px; align-items: center; flex: 1; min-width: 0; white-space: nowrap; }
+.assistant-row .chat-model select { flex: 1; min-width: 0; }
+.assistant-row.chat-send { justify-content: flex-end; }
