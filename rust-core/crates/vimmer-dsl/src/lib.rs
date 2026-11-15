@@ -10,6 +10,7 @@ pub mod library;
 pub mod model;
 pub mod srt;
 pub mod template;
+pub mod text_style;
 pub mod validation;
 
 pub use beatsync::{
@@ -21,7 +22,7 @@ pub use layer::{
     is_hex_color, typing_units, Anchor, BarChartLayer, ChartBar, ChartOrientation, CounterLayer,
     FitTime, IconLayer, ImageFit, ImageLayer, Layer, LayerAnimation, LayerAnimationKind,
     LayerContent, LowerThirdLayer, ProgressRingLayer, ShapeKind, ShapeLayer, TextAlign,
-    TextBackground, TextLayer, TextReveal, VideoClip, CLIP_EXTENSIONS, DEFAULT_TYPING_CPS,
+    TextBackground, TextBorder, TextLayer, TextReveal, VideoClip, CLIP_EXTENSIONS, DEFAULT_TYPING_CPS,
     MAX_BARS, MAX_BAR_LABEL_CHARS, MAX_CLIP_SPEED, MAX_LAYERS, MAX_LAYER_KEYFRAMES,
     MAX_LAYER_TEXT_CHARS, MAX_RING_LABEL_CHARS, MAX_TYPING_CPS, MAX_VIDEO_LAYERS, MIN_CLIP_SPEED,
 };
@@ -38,5 +39,8 @@ pub use model::{
 pub use srt::{parse_srt, SrtError};
 pub use template::{
     expand_scene, expand_templates, SceneTemplate, TemplateError, TemplateInfo, CATALOG,
+};
+pub use text_style::{
+    style_scale, CustomShadow, ShadowPreset, TextOutline, TextShadow, TextStyle, MAX_OUTLINE_PX,
 };
 pub use validation::{sfx_problems, validate, ValidationError, MAX_SFX_PER_SCENE, SFX_EXTENSIONS};

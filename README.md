@@ -109,6 +109,8 @@ Kind fields (lengths that are not positions are fractions of the **frame height*
 - `text`: `text` (≤ 400 characters), `font_size` (0.06), `color` (`#fafafa`), `weight`
   (100..900, 600), `align` (`left`/`center`/`right`, center), `line_height` (1.2),
   `background` `{ color, padding = 0.4, radius = 0.3 }` (padding and radius in font sizes),
+  `outline` and `shadow` (see [Text style](#text-style-outline-box-shadow); unset: the brand's
+  `text_style`, else none; a `background` unset here also falls back to the brand's box),
   `highlights` (accent color, as in the scene text), `reveal` `none`, `words` (word by word,
   like the scene text) or `typewriter`, `typing_cps` (20), `cursor` (false). Same font as the
   scene text.
@@ -267,6 +269,54 @@ at 0.5 over ducked music, and a clip continued across the `--chunk-ms 3000` seam
 `fixtures/video-clips-frames.json` checks frame accuracy with a clip that carries its frame number
 as a bit strip (`public/assets/clips/README.md`).
 
+### Text style (outline, box, shadow)
+
+Text over a light picture needs help to stay readable. A text style has three optional parts:
+
+| part | value | meaning |
+|---|---|---|
+| `outline` | `{ "color" = "#000000", "width" = 4 }` | a ring `width` px (at 1080p, 0..16; 0 = off) outside every glyph |
+| `background` | `{ "color", "padding" = 0.4, "radius" = 0.3, "border" }` | a box behind the text (the text layer `background` type; padding and radius in font sizes). The scene text gets one per line, hugging the lines; a text layer's box fills its width as before. Without `color` it has no fill |
+| `background.border` | `{ "color", "width" = 2 }` | a line around the box (alpha allowed, px at 1080p, 0..16) following its corner radius. With a border, the scene text's lines move apart so each line is its own framed box; `{ "background": { "border": … } }` alone frames the text |
+| `shadow` | `"none"`, `"soft"`, `"strong"` or `{ "color", "x", "y", "blur" }` | `soft` is the scene text's built-in shadow; x/y within ±40, blur 0..80 px at 1080p |
+
+Where it goes: `scene.text_style` (the scene text), a text layer's own `outline`, `background`
+and `shadow` fields, and `brand.text_style` (the default for both). Each part is picked on its
+own: the element's, else the brand's, else the built-in look (no outline, no box; the scene text
+keeps its soft shadow, text layers have none). To switch off a part the brand sets, set it to
+nothing on the element: `"outline": { "width": 0 }`, `"shadow": "none"`, or a box color with
+alpha 0 (`#00000000`). Px lengths scale with the frame's shorter side over 1080 (both supported
+resolutions draw them 1:1). Nothing set renders exactly as before.
+
+给场景文字加黑色描边，并让所有文字默认带描边和阴影；再给一段文字加白色边框 (a black outline on one
+scene's text, an outline and shadow on all text by default, and a white frame around another):
+
+```json
+"brand": { "text_style": { "outline": { "color": "#111827", "width": 4 }, "shadow": "strong" } },
+"scenes": [
+  { "id": "s1", "duration_ms": 4000, "text": "描边让文字更清晰 縁取りで読みやすく",
+    "image": "assets/design.png",
+    "text_style": { "outline": { "color": "#000000", "width": 6 } } },
+  { "id": "s2", "duration_ms": 4000, "text": "字幕框贴合每一行",
+    "image": "assets/design.png",
+    "text_style": { "background": { "color": "#09090bcc", "padding": 0.3 }, "outline": { "width": 0 } } },
+  { "id": "s3", "duration_ms": 4000, "text": "给文字加一个白色边框",
+    "image": "assets/design.png",
+    "text_style": { "background": { "border": { "color": "#ffffff", "width": 3 } } } }
+]
+```
+
+The outline is drawn with `-webkit-text-stroke` at twice the width under the fill
+(`paint-order: stroke fill`): the fill covers the stroke's inner half, so glyphs keep their full
+weight. That matters for CJK, whose thin strokes a plain stroke eats into; layered text-shadows
+(8-16 offset copies) give a lumpy ring at 4 px and up. `fixtures/text-style-demo.json` (and
+`-9x16`) shows an outline over a light image, a boxed scene text, a text layer with outline and
+shadow, a framed (border-only) and a filled + bordered scene text, the brand default, and two texts that `vimmer check` still flags (a pale outline, and a
+scene that turns the brand outline off). In the editor the controls are under **Text style** in
+the Scene tab, next to Background in the layer panel (outline, shadow), and in the Brand tab.
+Templates draw their text as text layers, so they follow `brand.text_style` too; lower thirds,
+counters and charts do not use it.
+
 ### Brand kit (`brand`)
 
 One set of colors, fonts and a logo that every scene uses. Put it in the timeline, or keep it in
@@ -315,6 +365,10 @@ weight: it is declared for weights 100-900, so the browser never fakes a bold or
 A missing font or logo file stops the render before it starts
 (`brand heading font: file not found: …`). The demo font is Fira Sans Thin under the SIL Open Font
 License (`public/assets/fonts/OFL.txt`; its embedded license was checked before copying it).
+
+**Text style.** `text_style` is the default outline, box and shadow of the scene text and of
+text layers (see [Text style](#text-style-outline-box-shadow)); `brand.contrast` checks the brand
+text color against its outline color and against its box.
 
 **Logo.** A PNG or JPEG (`src`), `size` tall (fraction of the frame height; the width follows the
 image), `margin` from the two nearest edges (a fraction of the frame width and of the height:
@@ -1479,7 +1533,7 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | code | severity | rule |
 |---|---|---|
 | `dsl.invalid` | error | the DSL validation fails (cue and word-timing problems are reported by the codes below instead) |
-| `text.overflow` | error / warning | a text layer or lower third with a `height` needs more lines than its box holds (same width model, its own font size), or scene text needs more lines than fit between the top padding and the 260 px bottom inset: 6 lines at 1920x1080, 14 at 1080x1920 (92 px font, 1.2 line height, 73.9% of the width per line). Error when it still overflows with every width 12% narrower (3% when the brand font is measured, below) |
+| `text.overflow` | error / warning | a text layer or lower third with a `height` needs more lines than its box holds (same width model, its own font size), or scene text needs more lines than fit between the top padding and the 260 px bottom inset: 6 lines at 1920x1080, 14 at 1080x1920 (92 px font, 1.2 line height, 73.9% of the width per line). A text style's box padding, border and outline width come off every line's width (a bordered scene text box also spaces its lines out) and off the room above (the scene text's box also takes one word gap per line). Error when it still overflows with every width 12% narrower (3% when the brand font is measured, below) |
 | `text.reading_speed` | warning | scene text without narration, or a text layer over its shown time, faster than the reading limit (below) |
 | `subtitle.too_long` | error / warning | a cue needs more than 2 lines in the band (font 5% of the short side, text width 86% of the frame minus padding); error at 4+ lines even with 12% narrower widths. The fix splits the cue in two |
 | `subtitle.reading_speed` | warning | a cue without word timing above en 20, zh 9, ja 4 characters per second (Netflix limits; en counts spaces, zh/ja skip punctuation). Cues with word timing or over a narrated scene follow the speech and are not checked |
@@ -1495,8 +1549,8 @@ Output is grouped by scene; a cue belongs to the scene it starts in.
 | `chart.label_overflow` | warning | a bar label or value label is wider than its room (vertical: the bar's slot; horizontal: the label / value column) |
 | `chart.cramped` | warning | a vertical chart leaves under 2 font sizes for its bars, or a horizontal chart's rows are shorter than 1.25 font sizes |
 | `ring.label_overflow` | warning | a progress ring's center text (custom label, or 100 % with its decimals) is wider than 92 % of the ring's hole |
-| `brand.contrast` | warning | text against the solid color behind it (the frame background on a scene without a picture, a shape layer that covers it, a text or lower-third box, the subtitle box) below the WCAG ratio: 4.5:1 for body text, 3:1 for large text (at least 6 % of the frame height, or 4.5 % at weight 700+). One finding per color pair; text over pictures is `text.contrast_media` |
-| `text.contrast_media` | warning | scene text, a text layer, counter or lower third over the scene's image or video is below the same WCAG ratios against the pixels under it. The background is rebuilt as the renderer draws it (letterbox, Ken Burns motion or keyframes, video frame via ffmpeg at the clip time, `cover`/`contain`), at quarter size, with the scene text's dark gradient, shapes under the text and translucent text boxes on top; up to 160 points of the text box at up to 3 moments, and the box's lowest 20 % is the value. Skipped for remote or missing files (reported elsewhere), text over image or video layers, and opaque boxes (`brand.contrast`); at most 12 video frames per check |
+| `brand.contrast` | warning | text against the solid color behind it (the frame background on a scene without a picture, a shape layer that covers it, a text or lower-third box, the subtitle box, a text style's box or outline wide enough to read against, the brand `text_style` colors) below the WCAG ratio: 4.5:1 for body text, 3:1 for large text (at least 6 % of the frame height, or 4.5 % at weight 700+). One finding per color pair; text over pictures is `text.contrast_media` |
+| `text.contrast_media` | warning | scene text, a text layer, counter or lower third over the scene's image or video is below the same WCAG ratios against the pixels under it. The background is rebuilt as the renderer draws it (letterbox, Ken Burns motion or keyframes, video frame via ffmpeg at the clip time, `cover`/`contain`), at quarter size, with the scene text's dark gradient, shapes under the text and translucent text boxes (including a text style's box; a border-only box has no fill and counts as no box) on top; text with an outline at least 2 px (or 2 % of the font size) wide is compared with the outline color instead; up to 160 points of the text box at up to 3 moments, and the box's lowest 20 % is the value. Skipped for remote or missing files (reported elsewhere), text over image or video layers, and text layers with opaque boxes (`brand.contrast`); at most 12 video frames per check |
 | `brand.logo_overlap` | warning / info | the logo's box (same geometry as the renderer: corner, `margin`, `size`, the image's aspect ratio) overlaps text (scene text, text layers, lower thirds, counters, charts, rings: warning) or a small image, icon, shape or video layer (info; layers of a quarter of the frame or more are backdrops and not reported) while both are shown. The fix moves the logo to a corner where it covers no text, else hides it on that scene |
 | `brand.logo_safe_area` | warning | the logo leaves the title-safe area (its `margin` is under 0.05); width from the image's shape |
 | `brand.logo_subtitles` | warning | the logo overlaps the two-line subtitle band while a cue shows on a scene where the logo is drawn |

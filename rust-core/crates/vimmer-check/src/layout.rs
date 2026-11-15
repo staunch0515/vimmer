@@ -8,7 +8,7 @@
 //! graphics-safe area for 16:9, used here for 9:16 as well. Phone apps cover more of a 9:16
 //! frame with their own buttons and captions; that is not checked.
 
-use vimmer_dsl::{Resolution, SubtitleBox, VideoTimeline};
+use vimmer_dsl::{style_scale, Resolution, SubtitleBox, TextStyle, VideoTimeline};
 
 use crate::fonts::Fonts;
 use crate::text::{cue_lines_with, scene_text_lines_with, shown_text, MAX_CUE_LINES};
@@ -27,6 +27,8 @@ pub const SCENE_WORD_GAP_EM: f64 = 0.25;
 /// `padding: "8% 8% 260px"`: top and sides are 8% of the frame width.
 pub const SCENE_PADDING_FRAC: f64 = 0.08;
 pub const SCENE_BOTTOM_INSET_PX: f64 = 260.0;
+/// Extra space between the lines of a scene text box with a border, beyond its padding and border.
+pub const SCENE_BORDER_LINE_GAP_EM: f64 = 0.12;
 /// `maxWidth: "88%"` of the padded box.
 pub const SCENE_MAX_WIDTH_FRAC: f64 = 0.88;
 
@@ -55,7 +57,69 @@ pub struct SceneTextArea {
     pub bottom_y: f64,
 }
 
+/// How far a text style reaches beyond the glyphs, px.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StyleReach {
+    /// The box's padding on every side (0 without a box).
+    pub pad: f64,
+    /// The box's border width (0 without one).
+    pub border: f64,
+    /// The outline's width outside the glyphs (0 without one).
+    pub outline: f64,
+}
+
+impl StyleReach {
+    pub fn of(style: &TextStyle, font_px: f64, res: Resolution) -> Self {
+        Self {
+            pad: style
+                .background
+                .as_ref()
+                .map_or(0.0, |b| f64::from(b.padding) * font_px),
+            border: style.background.as_ref().map_or(0.0, |b| {
+                f64::from(b.border_px()) * style_scale(res.width, res.height)
+            }),
+            outline: style.drawn_outline().map_or(0.0, |o| {
+                f64::from(o.width) * style_scale(res.width, res.height)
+            }),
+        }
+    }
+
+    /// Beyond the glyphs on each side.
+    pub fn total(self) -> f64 {
+        self.pad + self.border + self.outline
+    }
+}
+
 impl SceneTextArea {
+    /// The scene text's area with its style: a box (`AnimatedText.tsx` draws it per line, with
+    /// the padding plus one word gap of horizontal room on each line) and an outline take width
+    /// from every line, and room above the top line.
+    pub fn styled(res: Resolution, style: &TextStyle) -> (Self, StyleReach) {
+        let mut area = Self::new(res);
+        let reach = StyleReach::of(style, area.font_px, res);
+        if reach == StyleReach::default() {
+            return (area, reach);
+        }
+        let gap = if style.background.is_some() {
+            area.word_gap_em * area.font_px
+        } else {
+            0.0
+        };
+        area.line_width = (area.line_width - 2.0 * reach.total() - gap).max(1.0);
+        // With a border every line is its own framed box: the lines move apart by the padding,
+        // the border and a small gap (`AnimatedText.tsx` BoxedWords).
+        if reach.border > 0.0 {
+            let pad_em = style.background.as_ref().map_or(0.0, |b| f64::from(b.padding));
+            area.line_height_px = area.font_px
+                * (SCENE_LINE_HEIGHT + 2.0 * pad_em + SCENE_BORDER_LINE_GAP_EM)
+                + 2.0 * reach.border;
+        }
+        let (w, h) = (f64::from(res.width), f64::from(res.height));
+        let avail = h - w * SCENE_PADDING_FRAC - SCENE_BOTTOM_INSET_PX - reach.total();
+        area.max_lines = (avail / area.line_height_px).floor().max(0.0) as u32;
+        (area, reach)
+    }
+
     pub fn new(res: Resolution) -> Self {
         let (w, h) = (f64::from(res.width), f64::from(res.height));
         let line_width = w * (1.0 - 2.0 * SCENE_PADDING_FRAC) * SCENE_MAX_WIDTH_FRAC;
@@ -153,7 +217,6 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
     let mut out = Vec::new();
     let res = timeline.resolution;
     let (safe_l, safe_t, _safe_r, safe_b) = title_safe(res);
-    let area = SceneTextArea::new(res);
     let starts = scene_starts_ms(timeline);
 
     // Scene text grows upward from a fixed bottom edge. Overflow past the padded area is
@@ -162,11 +225,13 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
         let Some(text) = scene.text.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
         };
+        let style = scene.effective_text_style(timeline.brand.as_ref());
+        let (area, reach) = SceneTextArea::styled(res, &style);
         let lines = scene_text_lines_with(text, &area, 1.0, fonts, Role::Heading);
         if lines > area.max_lines {
             continue;
         }
-        let top = area.bottom_y - f64::from(lines) * area.line_height_px;
+        let top = area.bottom_y - f64::from(lines) * area.line_height_px - reach.total();
         if top < safe_t {
             out.push(
                 Finding::new(

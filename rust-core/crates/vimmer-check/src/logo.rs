@@ -74,7 +74,9 @@ fn items(t: &VideoTimeline, fonts: &Fonts) -> Vec<Item> {
         if let Some(b) = scene
             .text
             .as_deref()
-            .and_then(|s| textbox::scene_text(s, res, fonts))
+            .and_then(|s| {
+                textbox::scene_text(s, res, fonts, &scene.effective_text_style(t.brand.as_ref()))
+            })
         {
             out.push(Item {
                 scene: si,
@@ -93,7 +95,7 @@ fn items(t: &VideoTimeline, fonts: &Fonts) -> Vec<Item> {
             if to_ms <= layer.start_ms {
                 continue;
             }
-            let rest = textbox::layer_box(layer, res, fonts);
+            let rest = textbox::layer_box(layer, res, fonts, t.brand.as_ref());
             let text = is_text(layer);
             if !text && rest.2 * rest.3 >= BACKDROP_FRAC * frame_area {
                 continue;

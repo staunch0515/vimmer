@@ -478,6 +478,8 @@ impl Ctx<'_> {
                 align: t.align,
                 line_height: t.line_height,
                 background: None,
+                outline: None,
+                shadow: None,
                 highlights: Vec::new(),
                 reveal: TextReveal::None,
                 typing_cps: None,

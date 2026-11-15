@@ -164,7 +164,7 @@ export const parseBrand = (text: string): Brand => {
   const b = v as Record<string, unknown>;
   if ("fps" in b || "scenes" in b) throw new Error("This is a timeline, not a brand file.");
   for (const key of Object.keys(b)) {
-    if (!["colors", "fonts", "logo"].includes(key)) throw new Error(`Unknown brand field “${key}”.`);
+    if (!["colors", "fonts", "logo", "text_style"].includes(key)) throw new Error(`Unknown brand field “${key}”.`);
   }
   return b as Brand;
 };

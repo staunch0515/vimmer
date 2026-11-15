@@ -1,7 +1,7 @@
 // Editor helpers for scene layers: defaults for new layers, stacking moves, and the checks that
 // mirror vimmer-dsl validation (rust-core/crates/vimmer-dsl/src/validation.rs, layer_problems).
 
-import type { Layer, LayerAnimationKind, LayerKind, Resolution, Scene, VideoClip } from "../../src/types/timeline";
+import type { Layer, LayerAnimationKind, LayerKind, Resolution, Scene, TextStyle, VideoClip } from "../../src/types/timeline";
 import { MAX_CLIP_SPEED, MIN_CLIP_SPEED } from "../../src/motion/video";
 import { splitLayers } from "../../src/motion/layers";
 import { keyframeProblems } from "./layerKeyframes";
@@ -142,9 +142,43 @@ export const checkClip = (name: string, c: VideoClip): string[] => {
   return out;
 };
 
+const inRange = (v: unknown, lo: number, hi: number): boolean => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+
+/** Problems of a text style (outline, box with its border, shadow): the DSL's rules
+ * (vimmer-dsl/src/text_style.rs). A box without `color` has no fill and is fine. */
+export const textStyleProblems = (name: string, st: TextStyle | null | undefined): string[] => {
+  const out: string[] = [];
+  const color = (what: string, c: unknown) => {
+    if (!isColor(c)) out.push(`${name}: ${what} color must be #rgb, #rrggbb or #rrggbbaa.`);
+  };
+  const o = st?.outline;
+  if (o) {
+    if (o.color !== undefined) color("outline", o.color);
+    if (o.width !== undefined && !inRange(o.width, 0, 16)) out.push(`${name}: outline width must be 0 to 16 px.`);
+  }
+  const b = st?.background;
+  if (b) {
+    if (b.color !== undefined) color("background", b.color);
+    if ((b.padding !== undefined && !inRange(b.padding, 0, 3)) || (b.radius !== undefined && !inRange(b.radius, 0, 3)))
+      out.push(`${name}: background padding and radius must be 0 to 3 font sizes.`);
+    if (b.border) {
+      color("border", b.border.color);
+      if (b.border.width !== undefined && !inRange(b.border.width, 0, 16)) out.push(`${name}: border width must be 0 to 16 px.`);
+    }
+  }
+  const sh = st?.shadow;
+  if (sh && typeof sh === "object") {
+    color("shadow", sh.color);
+    if (!inRange(sh.x ?? 0, -40, 40) || !inRange(sh.y ?? 0, -40, 40) || !inRange(sh.blur ?? 0, 0, 80))
+      out.push(`${name}: shadow x/y must be within ±40 px and blur 0 to 80 px.`);
+  }
+  return out;
+};
+
 /** Problems with the scene's layers, in words for the problem bar. */
 export const checkLayers = (s: Scene): string[] => {
   const out: string[] = [];
+  out.push(...textStyleProblems(`Scene “${s.id}” text style`, s.text_style));
   const layers = s.layers ?? [];
   if (layers.length > MAX_LAYERS) out.push(`Scene “${s.id}” has ${layers.length} layers; the limit is ${MAX_LAYERS}.`);
   const videos = layers.filter((l) => l.kind === "video").length;
@@ -171,7 +205,7 @@ export const checkLayers = (s: Scene): string[] => {
         if (!l.text.trim()) out.push(`${name}: the text is empty.`);
         if (l.text.length > MAX_LAYER_TEXT_CHARS) out.push(`${name}: the text is over ${MAX_LAYER_TEXT_CHARS} characters.`);
         if (l.color !== undefined && !isColor(l.color)) out.push(`${name}: color must be #rgb, #rrggbb or #rrggbbaa.`);
-        if (l.background && !isColor(l.background.color)) out.push(`${name}: background color must be #rgb, #rrggbb or #rrggbbaa.`);
+        out.push(...textStyleProblems(name, { outline: l.outline, background: l.background, shadow: l.shadow }));
         if (l.typing_cps !== undefined && !(l.typing_cps >= 1 && l.typing_cps <= 200)) out.push(`${name}: typing speed must be 1 to 200 characters per second.`);
         break;
       case "shape":

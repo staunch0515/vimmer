@@ -21,6 +21,12 @@
 //! `fixtures/check-contrast-media.json` the gaps between its glyphs are within 1 level of the
 //! scrim alone (the 32 px blur spreads it too thin), and the scrim matched to within 4 levels.
 //!
+//! Text styles (`vimmer_dsl::text_style`: the element's, else the brand's): a box is composited
+//! over the background like any translucent background (an opaque one is all the text is
+//! compared with); an outline at least [`min_readable_outline_px`] wide (2 px, or 2 % of the font
+//! size) replaces the picture as what the text is read against, so the text is compared with the
+//! outline color (composited over the picture when it is translucent). Shadows are not counted.
+//!
 //! The text box is [`crate::textbox`]; a grid of at most [`GRID_POINTS`] points inside it is
 //! sampled at up to [`TIMES`] moments while the text shows (one when nothing moves). At each moment
 //! the contrast of each point is computed, and its 20th percentile ([`PERCENTILE`]) is the
@@ -37,8 +43,8 @@
 //!
 //! # What is not checked
 //!
-//! Text over an image or video *layer* (only the scene background is rebuilt), text that has an
-//! opaque background or a shape under it (`brand.contrast` checks that), subtitles (their band is
+//! Text over an image or video *layer* (only the scene background is rebuilt), text layers with
+//! an opaque background or a shape under it (`brand.contrast` checks that), subtitles (their band is
 //! checked by `brand.contrast` against the frame background), remote or missing files (reported
 //! by the asset checks), and keyframe opacity. ffmpeg runs at most [`MAX_VIDEO_FRAMES`] times.
 
@@ -50,8 +56,8 @@ use image::{imageops, imageops::FilterType, RgbImage};
 use serde_json::json;
 use vimmer_dsl::brand::{contrast_ratio, over, DEFAULT_LOWER_THIRD_SUBTITLE};
 use vimmer_dsl::{
-    Brand, FitTime, ImageFit, Layer, LayerContent, MotionType, Resolution, Scene, VideoClip,
-    VideoTimeline,
+    style_scale, Brand, FitTime, ImageFit, Layer, LayerContent, MotionType, Resolution, Scene,
+    TextStyle, VideoClip, VideoTimeline,
 };
 
 use crate::brand::{behind, hex, is_large, rgb, BODY_MIN_RATIO, LARGE_MIN_RATIO};
@@ -407,6 +413,19 @@ fn underlays(scene: &Scene, index: Option<usize>, res: Resolution) -> Vec<Underl
         .collect()
 }
 
+/// The thinnest outline (px on the frame) that the text is read against instead of the picture:
+/// 2 px, or 2 % of the font size for bigger text.
+pub fn min_readable_outline_px(font_px: f64) -> f64 {
+    (font_px * 0.02).max(2.0)
+}
+
+/// The outline color of `style`, when its outline is wide enough for text of `font_px`.
+fn reads_on_outline(style: &TextStyle, font_px: f64, res: Resolution) -> Option<[u8; 4]> {
+    let o = style.drawn_outline()?;
+    let px = f64::from(o.width) * style_scale(res.width, res.height);
+    (px >= min_readable_outline_px(font_px)).then(|| rgb(&o.color)).flatten()
+}
+
 /// One text to check.
 struct Text {
     what: String,
@@ -417,6 +436,9 @@ struct Text {
     under_scrim: bool,
     /// The text's own translucent background.
     box_color: Option<[u8; 4]>,
+    /// An outline wide enough to read the text against ([`reads_on_outline`]): the text is then
+    /// compared with the outline color over what is under it.
+    outline: Option<[u8; 4]>,
     underlays: Vec<Underlay>,
     from_ms: u64,
     to_ms: u64,
@@ -430,25 +452,53 @@ fn texts(scene: &Scene, si: usize, t: &VideoTimeline, fonts: &Fonts) -> Vec<Text
     let text_color = Brand::text(brand).to_string();
     let brand_text = brand.and_then(|b| b.colors.text.as_ref()).is_some();
     let mut out = Vec::new();
+    let style = scene.effective_text_style(brand);
     if let Some(rect) = scene
         .text
         .as_deref()
-        .and_then(|s| textbox::scene_text(s, res, fonts))
+        .and_then(|s| textbox::scene_text(s, res, fonts, &style))
     {
+        let outline = reads_on_outline(&style, SCENE_FONT_PX, res);
+        let fix = if outline.is_some() {
+            Suggestion::field(
+                "use an outline color that differs more from the text color",
+                if scene.text_style.as_ref().is_some_and(|s| s.outline.is_some()) {
+                    format!("/scenes/{si}/text_style/outline/color")
+                } else {
+                    "/brand/text_style/outline/color".into()
+                },
+            )
+        } else {
+            let outline = json!({"color": "#000000", "width": 4});
+            match &scene.text_style {
+                None => Suggestion::set(
+                    "give the scene text a black outline (or use a darker, calmer picture behind it)",
+                    format!("/scenes/{si}/text_style"),
+                    json!({ "outline": outline }),
+                ),
+                Some(ts) => {
+                    let mut ts = serde_json::to_value(ts).unwrap_or_else(|_| json!({}));
+                    ts["outline"] = outline;
+                    Suggestion::set(
+                        "give the scene text a black outline (or use a darker, calmer picture behind it)",
+                        format!("/scenes/{si}/text_style"),
+                        ts,
+                    )
+                }
+            }
+        };
         out.push(Text {
             what: "the scene text".into(),
             fg: text_color.clone(),
             rect,
             large: is_large(SCENE_FONT_PX / fh, 600),
             under_scrim: false,
-            box_color: None,
+            box_color: style.background.as_ref().and_then(|b| rgb(&b.color)),
+            outline,
             underlays: underlays(scene, None, res),
             from_ms: 0,
             to_ms: scene.duration_ms,
-            fix: Suggestion::field(
-                "use a picture that is darker or calmer behind the text (lower part of the frame), or put the text in a text layer with a background",
-                format!("/scenes/{si}/{}", if scene.image.is_some() { "image" } else { "video" }),
-            ),
+            fix,
         });
     }
     for (li, layer) in scene.layers.iter().enumerate() {
@@ -458,7 +508,7 @@ fn texts(scene: &Scene, si: usize, t: &VideoTimeline, fonts: &Fonts) -> Vec<Text
         }
         let lp = |f: &str| format!("/scenes/{si}/layers/{li}/{f}");
         let name = format!("layer `{}`", layer.id);
-        let rect = textbox::layer_box(layer, res, fonts);
+        let rect = textbox::layer_box(layer, res, fonts, brand);
         let to_ms = layer.end_ms_in(scene.duration_ms);
         let base = |what: String, fg: String, large: bool, box_color: Option<[u8; 4]>, fix| Text {
             what,
@@ -467,6 +517,7 @@ fn texts(scene: &Scene, si: usize, t: &VideoTimeline, fonts: &Fonts) -> Vec<Text
             large,
             under_scrim: layer.z < 0,
             box_color,
+            outline: None,
             underlays: underlays(scene, Some(li), res),
             from_ms: layer.start_ms,
             to_ms,
@@ -474,21 +525,37 @@ fn texts(scene: &Scene, si: usize, t: &VideoTimeline, fonts: &Fonts) -> Vec<Text
         };
         match &layer.content {
             LayerContent::Text(tl) => {
-                let box_color = tl.background.as_ref().and_then(|b| rgb(&b.color));
+                let style = tl.effective_style(brand);
+                let box_color = style.background.as_ref().and_then(|b| rgb(&b.color));
                 if box_color.is_some_and(|c| c[3] == 255) {
                     continue;
                 }
-                out.push(base(
-                    name,
-                    tl.color.clone().unwrap_or_else(|| text_color.clone()),
-                    is_large(f64::from(tl.font_size), tl.weight),
-                    box_color,
+                let outline = reads_on_outline(&style, f64::from(tl.font_size) * fh, res);
+                let fix = if outline.is_some() {
+                    Suggestion::field(
+                        "use an outline color that differs more from the text color",
+                        if tl.outline.is_some() {
+                            lp("outline/color")
+                        } else {
+                            "/brand/text_style/outline/color".into()
+                        },
+                    )
+                } else {
                     Suggestion::set(
                         "give the text a dark background box",
                         lp("background"),
                         json!({"color": "#09090bcc"}),
-                    ),
-                ));
+                    )
+                };
+                let mut item = base(
+                    name,
+                    tl.color.clone().unwrap_or_else(|| text_color.clone()),
+                    is_large(f64::from(tl.font_size), tl.weight),
+                    box_color,
+                    fix,
+                );
+                item.outline = outline;
+                out.push(item);
             }
             LayerContent::Counter(c) => out.push(base(
                 name,
@@ -648,6 +715,9 @@ fn contrast_at(
         if let Some(c) = text.box_color {
             bg = over(c, bg);
         }
+        if let Some(c) = text.outline {
+            bg = over(c, bg);
+        }
         let mut f = over(fg, bg);
         if text.under_scrim {
             bg = mix(SCRIM, scrim, bg);
@@ -766,6 +836,7 @@ mod tests {
             large,
             under_scrim: false,
             box_color: None,
+            outline: None,
             underlays: Vec::new(),
             from_ms: 0,
             to_ms: 1000,
@@ -807,6 +878,25 @@ mod tests {
         boxed.box_color = rgb("#09090bcc");
         let (ratio, _) = contrast_at(&boxed, false, &pale, &still(), RES).unwrap();
         assert!(ratio > BODY_MIN_RATIO, "{ratio}");
+    }
+
+    #[test]
+    fn a_wide_outline_is_what_the_text_is_read_against() {
+        let white = solid([255, 255, 255]);
+        let r = (200.0, 100.0, 600.0, 100.0);
+        let mut t = text("#fafafa", r, true);
+        t.outline = rgb("#000000");
+        let (ratio, _) = contrast_at(&t, false, &white, &still(), RES).unwrap();
+        assert!(ratio > 18.0, "{ratio}");
+        t.outline = rgb("#e4e4e7");
+        let (ratio, _) = contrast_at(&t, false, &white, &still(), RES).unwrap();
+        assert!(ratio < 1.5, "{ratio}");
+        // Too thin to count: 1 px at 1080p on 92 px text.
+        let thin: TextStyle = serde_json::from_str(r##"{"outline":{"color":"#000","width":1}}"##).unwrap();
+        assert_eq!(reads_on_outline(&thin, 92.0, RES), None);
+        let ok: TextStyle = serde_json::from_str(r##"{"outline":{"color":"#000","width":2}}"##).unwrap();
+        assert_eq!(reads_on_outline(&ok, 92.0, RES), Some([0, 0, 0, 255]));
+        assert!((min_readable_outline_px(200.0) - 4.0).abs() < 1e-9);
     }
 
     #[test]

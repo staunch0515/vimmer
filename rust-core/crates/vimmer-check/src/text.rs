@@ -337,11 +337,20 @@ pub(crate) fn measured_note(fonts: &Fonts, role: Role) -> String {
 pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
     let mut out = Vec::new();
     let res = timeline.resolution;
-    let area = SceneTextArea::new(res);
     let starts = scene_starts_ms(timeline);
     for (i, scene) in timeline.scenes.iter().enumerate() {
         let Some(text) = scene.text.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
+        };
+        let style = scene.effective_text_style(timeline.brand.as_ref());
+        let (area, reach) = SceneTextArea::styled(res, &style);
+        let styled_note = if reach.total() > 0.0 {
+            format!(
+                " (with the text style's {:.0} px box padding and outline)",
+                reach.total()
+            )
+        } else {
+            String::new()
         };
         let role = Role::Heading;
         let nominal = scene_text_lines_with(text, &area, 1.0, fonts, role);
@@ -365,7 +374,7 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
                     severity,
                     "text.overflow",
                     format!(
-                        "scene text needs about {nominal} lines at {} px{} but only {} fit above the subtitle area ({}x{}); the top lines run off the frame",
+                        "scene text needs about {nominal} lines at {} px{}{styled_note} but only {} fit above the subtitle area ({}x{}); the top lines run off the frame",
                         area.font_px, measured_note(fonts, role), area.max_lines, res.width, res.height
                     ),
                     Suggestion::field(

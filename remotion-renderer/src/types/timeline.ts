@@ -66,6 +66,8 @@ export type Scene = {
   duration_ms: number;
   text: string | null;
   highlights: string[];
+  // Outline, box and shadow of `text`. Absent: brand.text_style, else the built-in look.
+  text_style?: TextStyle | null;
   image: string | null;
   motion: MotionType;
   // A clip as the background, in the image's place (motion / keyframes move it). Not with `image`.
@@ -138,9 +140,32 @@ export type ImageLayer = LayerCommon & {
 };
 
 export type TextBackground = {
-  color: string;
+  color?: string; // absent: no fill (transparent), e.g. a border-only frame
   padding?: number; // font sizes, default 0.4
   radius?: number; // font sizes, default 0.3
+  border?: TextBorder | null; // a line around the box, following its corner radius
+};
+
+// Mirrors `TextBorder` in vimmer-dsl/src/layer.rs.
+export type TextBorder = {
+  color: string;
+  width?: number; // px at 1080p, 0..16, default 2
+};
+
+// Mirrors vimmer-dsl/src/text_style.rs. Lengths are px on a 1080p frame (scaled by the shorter
+// frame side / 1080); each part falls back to brand.text_style, then to the built-in look.
+export type TextOutline = {
+  color?: string; // default #000000
+  width?: number; // px at 1080p outside the glyph edge, 0..16, default 4; 0 = no outline
+};
+export type ShadowPreset = "none" | "soft" | "strong";
+export type CustomShadow = { color: string; x?: number; y?: number; blur?: number };
+export type TextShadow = ShadowPreset | CustomShadow;
+export type TextStyle = {
+  outline?: TextOutline | null;
+  // Scene text: drawn per line, hugging the lines. Text layers keep their full-width box.
+  background?: TextBackground | null;
+  shadow?: TextShadow | null;
 };
 
 export type TextLayer = LayerCommon & {
@@ -153,6 +178,8 @@ export type TextLayer = LayerCommon & {
   align?: "left" | "center" | "right"; // default center
   line_height?: number; // default 1.2
   background?: TextBackground | null;
+  outline?: TextOutline | null; // default: brand text_style.outline, else none
+  shadow?: TextShadow | null; // default: brand text_style.shadow, else none
   highlights?: string[];
   // typewriter: unit by unit (motion/typewriter.ts) at typing_cps from the layer start
   reveal?: "none" | "words" | "typewriter"; // default none
@@ -361,6 +388,8 @@ export type Brand = {
   colors?: BrandColors;
   fonts?: { heading?: BrandFont | null; body?: BrandFont | null };
   logo?: Logo | null;
+  // Default style of the scene text and of text layers that set none (part by part).
+  text_style?: TextStyle | null;
 };
 
 export type VideoTimeline = {

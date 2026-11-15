@@ -23,7 +23,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::brand::FontRole;
+use crate::brand::{Brand, FontRole};
+use crate::text_style::{TextOutline, TextShadow, TextStyle};
 use crate::model::{Easing, Keyframe};
 
 /// Most layers one scene may have.
@@ -177,14 +178,44 @@ fn default_box_radius() -> f32 {
     0.3
 }
 
-/// A filled box behind a text layer. `padding` and `radius` are fractions of the font size.
+fn transparent() -> String {
+    "#00000000".into()
+}
+
+/// A box behind a text (a text layer's `background`, a text style's box). `padding` and
+/// `radius` are fractions of the font size. Without `color` the box has no fill (transparent),
+/// which with a `border` frames the text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextBackground {
+    #[serde(default = "transparent")]
     pub color: String,
     #[serde(default = "default_box_padding")]
     pub padding: f32,
     #[serde(default = "default_box_radius")]
     pub radius: f32,
+    /// A line around the box, following its corner radius.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<TextBorder>,
+}
+
+impl TextBackground {
+    /// Border width in px at 1080p (0 without a border).
+    pub fn border_px(&self) -> f32 {
+        self.border.as_ref().map_or(0.0, |b| b.width.max(0.0))
+    }
+}
+
+fn default_border_width() -> f32 {
+    2.0
+}
+
+/// The line around a text box: `color` (alpha allowed) and `width` in px at 1080p.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextBorder {
+    pub color: String,
+    /// px at 1080p, 0..=16 (0 draws none).
+    #[serde(default = "default_border_width")]
+    pub width: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -250,6 +281,12 @@ pub struct TextLayer {
     pub line_height: f32,
     #[serde(default)]
     pub background: Option<TextBackground>,
+    /// A ring around the glyphs. Absent: the brand's `text_style.outline`, else none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<TextOutline>,
+    /// Absent: the brand's `text_style.shadow`, else none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<TextShadow>,
     /// Words drawn in the accent color, as in the scene text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub highlights: Vec<String>,
@@ -265,6 +302,16 @@ pub struct TextLayer {
 }
 
 impl TextLayer {
+    /// Outline, box and shadow as drawn: each the layer's own, else the brand's.
+    pub fn effective_style(&self, brand: Option<&Brand>) -> TextStyle {
+        TextStyle {
+            outline: self.outline.clone(),
+            background: self.background.clone(),
+            shadow: self.shadow.clone(),
+        }
+        .or(brand.and_then(|b| b.text_style.as_ref()))
+    }
+
     /// How long the typewriter takes to type the whole text, in ms (0 for other reveals).
     pub fn typing_ms(&self) -> u64 {
         if self.reveal != TextReveal::Typewriter {

@@ -11,15 +11,19 @@
 //! * Lower thirds: the bar plus the padded text panel, which shrinks to its widest line.
 //! * Counters: the box, one line tall unless `height` is set. Charts and rings: the box.
 //!
+//! * Text styles: the scene text's box grows by the box padding and the outline width on every
+//!   side, and its lines are narrower by the same (plus one word gap for the box); a text layer's
+//!   lines are narrower by its padding and outline (the box padding already was).
+//!
 //! Rotation and entrance/exit animations are ignored (the box at rest).
 
-use vimmer_dsl::{Layer, LayerContent, Resolution, TextAlign, TextLayer};
+use vimmer_dsl::{Brand, Layer, LayerContent, Resolution, TextAlign, TextLayer, TextStyle};
 
 use crate::fonts::Fonts;
 use crate::layers::{
     lower_third_height, place, text_area, Rect, LT_BAR_EM, LT_PAD_H_EM, LT_SUB_SCALE,
 };
-use crate::layout::SceneTextArea;
+use crate::layout::{SceneTextArea, StyleReach};
 use crate::text::scene_text_lines_with;
 
 /// Width in px of `text` set as word spans (as `scene_text_lines`), without the trailing gap.
@@ -39,12 +43,18 @@ pub enum Role {
     Body,
 }
 
-/// The scene text's box, or `None` without text.
-pub(crate) fn scene_text(text: &str, res: Resolution, fonts: &Fonts) -> Option<Rect> {
+/// The scene text's box with its `style` (box padding and outline around the glyphs), or `None`
+/// without text.
+pub(crate) fn scene_text(
+    text: &str,
+    res: Resolution,
+    fonts: &Fonts,
+    style: &TextStyle,
+) -> Option<Rect> {
     if text.trim().is_empty() {
         return None;
     }
-    let area = SceneTextArea::new(res);
+    let (area, reach) = SceneTextArea::styled(res, style);
     let lines = scene_text_lines_with(text, &area, 1.0, fonts, Role::Heading).max(1);
     let total = words_width(text, &area, fonts, Role::Heading);
     let w = if lines == 1 {
@@ -54,13 +64,20 @@ pub(crate) fn scene_text(text: &str, res: Resolution, fonts: &Fonts) -> Option<R
     };
     let h = f64::from(lines) * area.line_height_px;
     let left = (f64::from(res.width) - w) / 2.0;
-    Some((left, area.bottom_y - h, w, h))
+    let r = reach.total();
+    Some((left - r, area.bottom_y - h - r, w + 2.0 * r, h + 2.0 * r))
 }
 
 /// The box a text layer's glyphs (or its background) take.
-pub(crate) fn text_layer(t: &TextLayer, layer: &Layer, res: Resolution, fonts: &Fonts) -> Rect {
+pub(crate) fn text_layer(
+    t: &TextLayer,
+    layer: &Layer,
+    res: Resolution,
+    fonts: &Fonts,
+    brand: Option<&Brand>,
+) -> Rect {
     let role = text_role(t);
-    let (area, pad) = text_area(t, layer, res);
+    let (area, pad) = text_area(t, layer, res, brand);
     let lines = scene_text_lines_with(&t.text, &area, 1.0, fonts, role).max(1);
     let content_h = f64::from(lines) * area.line_height_px + 2.0 * pad;
     let fixed_h = layer.height.map(|v| f64::from(v) * f64::from(res.height));
@@ -70,10 +87,13 @@ pub(crate) fn text_layer(t: &TextLayer, layer: &Layer, res: Resolution, fonts: &
         Some(fh) if content_h < fh => (top + (fh - content_h) / 2.0, content_h),
         _ => (top, h),
     };
-    if t.background.is_some() || lines > 1 {
+    let style = t.effective_style(brand);
+    if style.background.is_some() || lines > 1 {
         return (l, top, w, h);
     }
-    let tw = words_width(&t.text, &area, fonts, role).min(w);
+    // An outline reaches past the glyphs (the layer's box when it does not fit).
+    let o = StyleReach::of(&style, area.font_px, res).outline;
+    let tw = (words_width(&t.text, &area, fonts, role) + 2.0 * o).min(w);
     let left = match t.align {
         TextAlign::Left => l,
         TextAlign::Center => l + (w - tw) / 2.0,
@@ -90,11 +110,16 @@ pub(crate) fn text_role(t: &TextLayer) -> Role {
 }
 
 /// The box of any layer, as drawn at rest. Text-bearing layers use the boxes above.
-pub(crate) fn layer_box(layer: &Layer, res: Resolution, fonts: &Fonts) -> Rect {
+pub(crate) fn layer_box(
+    layer: &Layer,
+    res: Resolution,
+    fonts: &Fonts,
+    brand: Option<&Brand>,
+) -> Rect {
     let fh = f64::from(res.height);
     let fixed_h = layer.height.map(|v| f64::from(v) * fh);
     match &layer.content {
-        LayerContent::Text(t) => text_layer(t, layer, res, fonts),
+        LayerContent::Text(t) => text_layer(t, layer, res, fonts, brand),
         LayerContent::LowerThird(lt) => {
             let h = fixed_h.unwrap_or_else(|| lower_third_height(lt, layer, res, fonts).0);
             let (l, top, w, h) = place(layer, res, h);

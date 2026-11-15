@@ -13,14 +13,16 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 use vimmer_dsl::{
-    count_frames, frame_progress, typing_units, Anchor, BarChartLayer, ChartOrientation,
+    count_frames, frame_progress, typing_units, Anchor, BarChartLayer, Brand, ChartOrientation,
     CounterLayer, ImageFit, Layer, LayerContent, LowerThirdLayer, ProgressRingLayer, Resolution,
     Scene, TextLayer, TextReveal, VideoTimeline,
 };
 
 use crate::assets::{UPSCALE_INFO, UPSCALE_WARN};
 use crate::fonts::Fonts;
-use crate::layout::{title_safe, SceneTextArea, SCENE_LETTER_SPACING_EM, SCENE_WORD_GAP_EM};
+use crate::layout::{
+    title_safe, SceneTextArea, StyleReach, SCENE_LETTER_SPACING_EM, SCENE_WORD_GAP_EM,
+};
 use crate::text::{
     capacity_chars_with, cps_limit, measured_note, reading_chars, scene_text_lines_with, Lang,
 };
@@ -47,15 +49,24 @@ pub(crate) fn place(layer: &Layer, res: Resolution, height_px: f64) -> Rect {
 
 /// Where a text layer's words go: the line box and how many lines fit (`u32::MAX` without a
 /// fixed height).
-pub(crate) fn text_area(t: &TextLayer, layer: &Layer, res: Resolution) -> (SceneTextArea, f64) {
+///
+/// The box padding is the layer's `background`, else the brand's `text_style.background`; an
+/// outline (the layer's or the brand's) takes its width from each side of the line too. The
+/// returned padding is the box's padding plus its border (0 without a box).
+pub(crate) fn text_area(
+    t: &TextLayer,
+    layer: &Layer,
+    res: Resolution,
+    brand: Option<&Brand>,
+) -> (SceneTextArea, f64) {
     let h = f64::from(res.height);
     let font_px = f64::from(t.font_size) * h;
-    let pad = t
-        .background
-        .as_ref()
-        .map_or(0.0, |b| f64::from(b.padding) * font_px);
+    let reach = StyleReach::of(&t.effective_style(brand), font_px, res);
+    // The box's padding and border are inside the layer's box (`box-sizing: border-box`).
+    let pad = reach.pad + reach.border;
     let line_height_px = font_px * f64::from(t.line_height);
-    let line_width = (f64::from(layer.width) * f64::from(res.width) - 2.0 * pad).max(1.0);
+    let line_width =
+        (f64::from(layer.width) * f64::from(res.width) - 2.0 * reach.total()).max(1.0);
     let max_lines = match layer.height {
         Some(bh) => ((f64::from(bh) * h - 2.0 * pad) / line_height_px)
             .floor()
@@ -123,7 +134,7 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
             let mut box_h = fixed_h.unwrap_or(0.0);
 
             if let LayerContent::Text(t) = &layer.content {
-                let (area, pad) = text_area(t, layer, res);
+                let (area, pad) = text_area(t, layer, res, timeline.brand.as_ref());
                 let role = text_role(t);
                 let nominal = scene_text_lines_with(&t.text, &area, 1.0, fonts, role);
                 let optimistic =
@@ -734,4 +745,59 @@ pub fn check_assets(timeline: &VideoTimeline, public_dir: &Path) -> Vec<Finding>
         }
     }
     out
+}
+
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+
+    const RES: Resolution = Resolution {
+        width: 1920,
+        height: 1080,
+    };
+
+    fn text_layer(json: &str) -> (Layer, TextLayer) {
+        let layer: Layer = serde_json::from_str(json).unwrap();
+        let LayerContent::Text(t) = layer.content.clone() else {
+            panic!("not text")
+        };
+        (layer, t)
+    }
+
+    #[test]
+    fn box_padding_border_and_outline_narrow_the_lines() {
+        let base = r##"{"id":"t","kind":"text","x":0,"y":0,"width":0.5,"height":0.2,"text":"x","font_size":0.05"##;
+        let (l, t) = text_layer(&format!("{base}}}"));
+        let (plain, pad) = text_area(&t, &l, RES, None);
+        assert_eq!((plain.line_width, pad), (960.0, 0.0));
+        let (l, t) = text_layer(&format!(
+            r##"{base},"background":{{"padding":0.2,"border":{{"color":"#fff","width":4}}}},"outline":{{"width":3}}}}"##
+        ));
+        let (styled, pad) = text_area(&t, &l, RES, None);
+        // padding 0.2 x 54 px = 10.8, border 4, outline 3 on each side.
+        assert!((pad - 14.8).abs() < 1e-4, "{pad}");
+        assert!((styled.line_width - (960.0 - 2.0 * 17.8)).abs() < 1e-4, "{}", styled.line_width);
+        assert!(styled.max_lines <= plain.max_lines);
+        // The brand's box applies to a layer without its own.
+        let brand: Brand = serde_json::from_str(
+            r##"{"text_style":{"background":{"color":"#000","padding":0.5,"border":{"color":"#fff","width":2}}}}"##,
+        )
+        .unwrap();
+        let (l, t) = text_layer(&format!("{base}}}"));
+        let (_, pad) = text_area(&t, &l, RES, Some(&brand));
+        assert!((pad - 29.0).abs() < 1e-4, "{pad}");
+    }
+
+    #[test]
+    fn scene_text_border_spaces_the_lines() {
+        let style: vimmer_dsl::TextStyle = serde_json::from_str(
+            r##"{"background":{"padding":0.3,"border":{"color":"#fff","width":3}}}"##,
+        )
+        .unwrap();
+        let (area, reach) = SceneTextArea::styled(RES, &style);
+        assert_eq!(reach.border, 3.0);
+        // 92 x (1.2 + 0.6 + 0.12) + 6
+        assert!((area.line_height_px - (92.0 * 1.92 + 6.0)).abs() < 1e-4);
+        assert!(area.max_lines < SceneTextArea::new(RES).max_lines);
+    }
 }
