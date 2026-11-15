@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::brand::Brand;
 use crate::layer::{Layer, VideoClip};
 use crate::template::SceneTemplate;
+use crate::text_style::TextStyle;
 
 /// Target frame rate for every render.
 pub const TARGET_FPS: u32 = 30;
@@ -181,6 +182,10 @@ pub struct Scene {
     /// Words in `text` to render with the animated accent treatment.
     #[serde(default)]
     pub highlights: Vec<String>,
+    /// Outline, box and shadow of `text`. Absent: the brand's `text_style`, else the built-in look
+    /// (see [`crate::text_style`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<TextStyle>,
     /// Path or URL of the background image, relative to the public dir.
     #[serde(default)]
     pub image: Option<String>,
@@ -214,6 +219,15 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Outline, box and shadow of the scene text as drawn: each part the scene's own, else the
+    /// brand's (the renderer adds its built-in soft shadow when neither sets a shadow).
+    pub fn effective_text_style(&self, brand: Option<&Brand>) -> TextStyle {
+        self.text_style
+            .clone()
+            .unwrap_or_default()
+            .or(brand.and_then(|b| b.text_style.as_ref()))
+    }
+
     /// Duration in frames at `fps`, rounded to the nearest frame.
     pub fn duration_frames(&self, fps: u32) -> u32 {
         ((self.duration_ms * u64::from(fps) + 500) / 1000) as u32

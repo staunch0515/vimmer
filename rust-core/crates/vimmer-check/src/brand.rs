@@ -17,7 +17,8 @@ use vimmer_dsl::brand::{
 };
 use vimmer_dsl::template::param_of_layer;
 use vimmer_dsl::{
-    Anchor, Brand, Corner, Layer, LayerContent, Resolution, Scene, SceneTemplate, VideoTimeline,
+    style_scale, Anchor, Brand, Corner, Layer, LayerContent, Resolution, Scene, SceneTemplate,
+    TextStyle, VideoTimeline,
 };
 
 use crate::layout::{title_safe, SubtitleBand, SCENE_FONT_PX};
@@ -127,16 +128,51 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
         }
     };
     let mut out = Vec::new();
+    // The brand's text style against the brand text color: the box over the frame background,
+    // and an outline wide enough to read the text against. First, so that elements sharing
+    // these colors are grouped under the brand field.
+    if let Some(ts) = brand.and_then(|b| b.text_style.as_ref()) {
+        let large = is_large(SCENE_FONT_PX / h, 600);
+        if let Some(bx) = ts.background.as_ref() {
+            if let (Some(bg), true) = (flatten(&bx.color, frame_bg), rgb(&bx.color).is_some_and(|c| c[3] > 0)) {
+                if let Some(fg) = flatten(text, bg) {
+                    out.push(Sample {
+                        scene: usize::MAX,
+                        what: "text in the brand text style's box".into(),
+                        fg,
+                        bg,
+                        large,
+                        path: "/brand/text_style/background/color".into(),
+                    });
+                }
+            }
+        }
+        if let Some(o) = reads_on(ts, SCENE_FONT_PX, t.resolution) {
+            let bg = over(o, frame_bg);
+            if let Some(fg) = flatten(text, bg) {
+                out.push(Sample {
+                    scene: usize::MAX,
+                    what: "text with the brand text style's outline".into(),
+                    fg,
+                    bg,
+                    large,
+                    path: "/brand/text_style/outline/color".into(),
+                });
+            }
+        }
+    }
     for (si, scene) in t.scenes.iter().enumerate() {
         let picture = scene.image.is_some() || scene.video.is_some();
         let base = (!picture).then_some(frame_bg);
         if scene.text.as_deref().is_some_and(|s| !s.trim().is_empty()) && !picture {
-            if let Some(fg) = flatten(text, frame_bg) {
+            let style = scene.effective_text_style(brand);
+            let bg = styled_bg(&style, SCENE_FONT_PX, t.resolution, frame_bg);
+            if let Some(fg) = flatten(text, bg) {
                 out.push(Sample {
                     scene: si,
                     what: "the scene text".into(),
                     fg,
-                    bg: frame_bg,
+                    bg,
                     large: is_large(SCENE_FONT_PX / h, 600),
                     path: text_path(false, scene_path(si, "text")),
                 });
@@ -147,16 +183,22 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
             let name = format!("layer `{}`", layer.id);
             let under = behind(scene, li, base);
             let mut items: Vec<Item> = Vec::new();
+            // A text layer's outline wide enough to read against.
+            let mut outline: Option<[u8; 4]> = None;
             match &layer.content {
-                LayerContent::Text(tl) => items.push((
-                    name.clone(),
-                    tl.color.clone().unwrap_or_else(|| text.to_string()),
-                    lp("color"),
-                    tl.color.is_none().then_some("text"),
-                    tl.background.as_ref().map(|b| b.color.clone()),
-                    f64::from(tl.font_size),
-                    tl.weight,
-                )),
+                LayerContent::Text(tl) => {
+                    let style = tl.effective_style(brand);
+                    outline = reads_on(&style, f64::from(tl.font_size) * h, t.resolution);
+                    items.push((
+                        name.clone(),
+                        tl.color.clone().unwrap_or_else(|| text.to_string()),
+                        lp("color"),
+                        tl.color.is_none().then_some("text"),
+                        style.background.as_ref().map(|b| b.color.clone()),
+                        f64::from(tl.font_size),
+                        tl.weight,
+                    ))
+                }
                 LayerContent::Counter(c) => items.push((
                     name.clone(),
                     c.color.clone().unwrap_or_else(|| text.to_string()),
@@ -241,6 +283,11 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
                     (Some(b), None) => rgb(b).filter(|c| c[3] == 255).map(|c| [c[0], c[1], c[2]]),
                     (None, u) => u,
                 };
+                // Over a picture (`bg` unknown) `text.contrast_media` compares with the outline.
+                let bg = match (bg, outline) {
+                    (Some(b), Some(o)) => Some(over(o, b)),
+                    (b, _) => b,
+                };
                 let (Some(bg), Some(c)) = (bg, rgb(&color)) else {
                     continue;
                 };
@@ -280,6 +327,27 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
         }
     }
     out
+}
+
+/// The outline color of `style` when it is wide enough to read text of `font_px` against.
+fn reads_on(style: &TextStyle, font_px: f64, res: Resolution) -> Option<[u8; 4]> {
+    let o = style.drawn_outline()?;
+    let px = f64::from(o.width) * style_scale(res.width, res.height);
+    (px >= crate::media::min_readable_outline_px(font_px))
+        .then(|| rgb(&o.color))
+        .flatten()
+}
+
+/// What styled text is read against on the solid `under`: its box over it, then its outline.
+fn styled_bg(style: &TextStyle, font_px: f64, res: Resolution, under: [u8; 3]) -> [u8; 3] {
+    let mut bg = under;
+    if let Some(c) = style.background.as_ref().and_then(|b| rgb(&b.color)) {
+        bg = over(c, bg);
+    }
+    if let Some(o) = reads_on(style, font_px, res) {
+        bg = over(o, bg);
+    }
+    bg
 }
 
 pub(crate) fn hex(c: [u8; 3]) -> String {

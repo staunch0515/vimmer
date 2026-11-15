@@ -136,6 +136,8 @@ pub enum ValidationError {
     },
     #[error("scene `{scene}` template: {message}")]
     BadTemplate { scene: String, message: String },
+    #[error("scene `{scene}` {message}")]
+    BadTextStyle { scene: String, message: String },
     #[error("brand: {0}")]
     BadBrand(String),
     #[error("subtitle_box: {0}")]
@@ -461,6 +463,7 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
             }
             opt_color("color", &t.color, &mut out);
             if let Some(bg) = &t.background {
+                out.extend(crate::text_style::border_problems(bg, ""));
                 color("background color", &bg.color, &mut out);
                 if !in_range(bg.padding, 0.0, 3.0) || !in_range(bg.radius, 0.0, 3.0) {
                     out.push(
@@ -468,6 +471,12 @@ fn layer_problems(layer: &Layer, scene_ms: u64) -> Vec<String> {
                             .to_string(),
                     );
                 }
+            }
+            if let Some(o) = &t.outline {
+                out.extend(crate::text_style::outline_problems(o, ""));
+            }
+            if let Some(sh) = &t.shadow {
+                out.extend(crate::text_style::shadow_problems(sh, ""));
             }
             if t.highlights.iter().any(|h| h.trim().is_empty()) {
                 out.push("a highlight is empty".to_string());
@@ -893,6 +902,14 @@ fn validate_expanded(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError
                 errors.push(ValidationError::EmptyAudioSource(scene.id.clone()));
             }
         }
+        if let Some(ts) = &scene.text_style {
+            for message in ts.problems("text_style.") {
+                errors.push(ValidationError::BadTextStyle {
+                    scene: scene.id.clone(),
+                    message,
+                });
+            }
+        }
         validate_transition(scene, i, &mut errors);
         validate_keyframes(scene, &mut errors);
         validate_layers(scene, &mut errors);
@@ -1024,6 +1041,7 @@ mod tests {
             duration_ms: ms,
             text: Some("hello".into()),
             highlights: vec![],
+            text_style: None,
             image: None,
             motion: MotionType::Static,
             video: None,
@@ -1917,4 +1935,35 @@ mod tests {
             assert!(asset_path_problem(bad).is_some(), "{bad}");
         }
     }
+
+    #[test]
+    fn scene_and_layer_text_styles_are_validated() {
+        let mut t = timeline(vec![scene("a", 1000)]);
+        t.scenes[0].text_style = Some(
+            serde_json::from_str(r##"{"outline":{"color":"black"},"shadow":{"color":"#000","blur":-2}}"##)
+                .unwrap(),
+        );
+        let errs = validate(&t).unwrap_err();
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert!(errs[0]
+            .to_string()
+            .starts_with("scene `a` text_style.outline color `black`"));
+        t.scenes[0].text_style =
+            Some(serde_json::from_str(r##"{"outline":{"width":3},"shadow":"strong"}"##).unwrap());
+        assert!(validate(&t).is_ok());
+        t.scenes[0].layers = vec![serde_json::from_str(
+            r##"{"id":"t","kind":"text","x":0.1,"y":0.1,"width":0.8,"text":"Hi","outline":{"color":"#000","width":99}}"##,
+        )
+        .unwrap()];
+        let errs = validate(&t).unwrap_err();
+        assert!(errs[0].to_string().contains("outline width"), "{errs:?}");
+        t.brand = Some(
+            serde_json::from_str(r##"{"text_style":{"background":{"color":"#00000g"}}}"##).unwrap(),
+        );
+        assert!(validate(&t)
+            .unwrap_err()
+            .iter()
+            .any(|e| e.to_string().contains("brand: text_style.background color")));
+    }
+
 }

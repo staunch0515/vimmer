@@ -340,6 +340,7 @@ mod tests {
             duration_ms: ms,
             text: text.map(String::from),
             highlights: vec![],
+            text_style: None,
             image: None,
             motion: MotionType::Static,
             video: None,

@@ -929,3 +929,108 @@ fn brand_font_widths_are_measured_from_the_font_file() {
     assert_eq!(over[0].scene_id.as_deref(), Some("narrow-letters"));
     assert!(!over[0].message.contains("measured"));
 }
+
+#[test]
+fn text_style_fixes_contrast_where_it_should_and_only_there() {
+    if !have_ffmpeg() {
+        return;
+    }
+    for name in ["text-style-demo.json", "text-style-demo-9x16.json"] {
+        let t = repo_fixture(name);
+        let fs = run(&t, Some(&repo_public()));
+        let hits = find(&fs, "text.contrast_media", None, None);
+        let at = |scene: &str| hits.iter().filter(|f| f.scene_id.as_deref() == Some(scene)).count();
+        // Outline, box and the brand's default outline fix the text over the pale picture...
+        assert_eq!(
+            at("outline") + at("boxed") + at("framed") + at("fill-border") + at("brand-default"),
+            0,
+            "{name}: {hits:#?}"
+        );
+        // ...a pale outline and a scene that switches the brand outline off do not.
+        assert!(hits.iter().any(|f| f.message.contains("`pale-outline`")), "{name}: {hits:#?}");
+        assert_eq!(at("unstyled"), 1, "{name}: {hits:#?}");
+        assert_eq!(hits.len(), 2, "{name}: {hits:#?}");
+        // The suggested black outline fixes the unstyled scene.
+        let unstyled = hits.iter().find(|f| f.scene_id.as_deref() == Some("unstyled")).unwrap();
+        let after = run(&apply(&t, unstyled), Some(&repo_public()));
+        assert!(
+            !find(&after, "text.contrast_media", None, None)
+                .iter()
+                .any(|f| f.scene_id.as_deref() == Some("unstyled")),
+            "{name}"
+        );
+        // Without a picture behind it nothing else about the style warns.
+        assert!(find(&fs, "brand.contrast", None, None).is_empty(), "{name}: {fs:#?}");
+        assert!(find(&fs, "text.overflow", None, None).is_empty(), "{name}");
+    }
+}
+
+#[test]
+fn box_padding_and_outline_take_room_from_the_scene_text() {
+    // Six lines fit at 1920x1080 without a style; a wide box pushes the same text over.
+    let mut t = fixture("bad-text.json");
+    t.scenes.truncate(1);
+    let words = "word ".repeat(60);
+    t.scenes[0].text = Some(words.trim().to_string());
+    t.scenes[0].narration = None;
+    t.scenes[0].duration_ms = 60_000;
+    let plain = run(&t, None);
+    let fits = find(&plain, "text.overflow", None, None).is_empty();
+    t.scenes[0].text_style = Some(
+        serde_json::from_str(r##"{"background":{"color":"#000000","padding":1.5},"outline":{"width":16}}"##)
+            .unwrap(),
+    );
+    let styled = run(&t, None);
+    let over = find(&styled, "text.overflow", None, None);
+    assert!(fits || !over.is_empty());
+    if fits {
+        assert_eq!(over.len(), 1, "{over:#?}");
+        assert!(over[0].message.contains("box padding and outline"), "{}", over[0].message);
+    }
+}
+
+#[test]
+fn brand_text_style_colors_are_contrast_checked() {
+    let mut t = fixture("bad-text.json");
+    t.scenes.truncate(1);
+    t.subtitles.clear();
+    t.brand = Some(
+        serde_json::from_str(
+            r##"{"text_style":{"outline":{"color":"#eeeeee","width":4},"background":{"color":"#dddddd"}}}"##,
+        )
+        .unwrap(),
+    );
+    let fs = run(&t, None);
+    let hits = find(&fs, "brand.contrast", None, None);
+    assert!(
+        hits.iter().any(|f| f.suggestion.path.as_deref() == Some("/brand/text_style/outline/color")),
+        "{hits:#?}"
+    );
+    assert!(
+        hits.iter().any(|f| f.suggestion.path.as_deref() == Some("/brand/text_style/background/color")),
+        "{hits:#?}"
+    );
+    // Dark ones pass.
+    t.brand = Some(
+        serde_json::from_str(
+            r##"{"text_style":{"outline":{"color":"#000000","width":4},"background":{"color":"#000000cc"}}}"##,
+        )
+        .unwrap(),
+    );
+    assert!(find(&run(&t, None), "brand.contrast", None, None).is_empty());
+}
+
+#[test]
+fn a_border_only_box_is_no_box_for_contrast_but_takes_room() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let mut t = repo_fixture("text-style-demo.json");
+    let i = t.scenes.iter().position(|s| s.id == "framed").unwrap();
+    // Without the brand outline, a frame alone does not make the text readable.
+    t.scenes[i].text_style.as_mut().unwrap().outline =
+        Some(serde_json::from_str(r#"{"width":0}"#).unwrap());
+    let fs = run(&t, Some(&repo_public()));
+    assert!(find(&fs, "text.contrast_media", Some("framed"), None).len() == 1, "{fs:#?}");
+}
+

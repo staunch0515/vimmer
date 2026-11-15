@@ -188,6 +188,7 @@ mod tests {
             duration_ms: ms,
             text: Some("x".into()),
             highlights: vec![],
+            text_style: None,
             image: None,
             motion: MotionType::Static,
             video: None,

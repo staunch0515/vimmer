@@ -20,6 +20,9 @@
 //! | subtitle box                              | `subtitle_background`| `#09090bb8` |
 //! | subtitle text                             | `text`               | `#fafafa`   |
 //!
+//! Text style (`text_style`: outline, box, shadow) is a default too, part by part: the scene
+//! text and text layers use the brand's when they set none (see [`crate::text_style`]).
+//!
 //! Fonts: `heading` is used by the scene text, lower-third titles, counters and template
 //! headings (text layers with `font: heading`); `body` by subtitles, text layers, lower-third
 //! subtitles, chart and ring labels. A font with a `src` is loaded from that file before the first
@@ -28,6 +31,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::layer::is_hex_color;
+use crate::text_style::TextStyle;
 use crate::validation::asset_path_problem;
 
 /// Built-in colors (no brand). Mirrored in `remotion-renderer/src/brand.ts`.
@@ -153,6 +157,10 @@ pub struct Brand {
     pub fonts: BrandFonts,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logo: Option<Logo>,
+    /// Default outline, box and shadow of the scene text and of text layers that set none
+    /// (each part on its own; see [`crate::text_style`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<TextStyle>,
 }
 
 /// The color to use: the element's own, else the brand's, else the built-in one.
@@ -259,6 +267,9 @@ impl Brand {
                     out.push(format!("fonts.{name}.src: {p}"));
                 }
             }
+        }
+        if let Some(ts) = &self.text_style {
+            out.extend(ts.problems("text_style."));
         }
         if let Some(logo) = &self.logo {
             if let Some(p) = file_problem(&logo.src, &LOGO_EXTENSIONS, "a logo") {

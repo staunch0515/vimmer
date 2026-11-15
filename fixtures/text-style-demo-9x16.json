@@ -1,0 +1,220 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1080,
+    "height": 1920
+  },
+  "brand": {
+    "colors": {},
+    "fonts": {},
+    "text_style": {
+      "outline": {
+        "color": "#111827",
+        "width": 4
+      },
+      "shadow": "strong"
+    }
+  },
+  "scenes": [
+    {
+      "id": "outline",
+      "duration_ms": 4000,
+      "text": "Outline keeps text readable 描边更清晰",
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "text_style": {
+        "outline": {
+          "color": "#000000",
+          "width": 6
+        },
+        "shadow": "none"
+      },
+      "keyframes": [
+        {
+          "at_ms": 0,
+          "scale": 1.78
+        }
+      ]
+    },
+    {
+      "id": "boxed",
+      "duration_ms": 4000,
+      "text": "Boxes hug each line 每行一个框",
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "text_style": {
+        "background": {
+          "color": "#09090bcc",
+          "padding": 0.3,
+          "radius": 0.25
+        },
+        "outline": {
+          "width": 0
+        }
+      },
+      "keyframes": [
+        {
+          "at_ms": 0,
+          "scale": 1.78
+        }
+      ]
+    },
+    {
+      "id": "framed",
+      "duration_ms": 4000,
+      "text": "Framed text 边框文字",
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "keyframes": [
+        {
+          "at_ms": 0,
+          "scale": 1.78
+        }
+      ],
+      "text_style": {
+        "background": {
+          "padding": 0.3,
+          "radius": 0.3,
+          "border": {
+            "color": "#facc15",
+            "width": 4
+          }
+        }
+      }
+    },
+    {
+      "id": "fill-border",
+      "duration_ms": 4000,
+      "text": "Fill and border 填充加边框",
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "keyframes": [
+        {
+          "at_ms": 0,
+          "scale": 1.78
+        }
+      ],
+      "text_style": {
+        "background": {
+          "color": "#09090bcc",
+          "padding": 0.3,
+          "radius": 0.3,
+          "border": {
+            "color": "#ffffff",
+            "width": 3
+          }
+        },
+        "outline": {
+          "width": 0
+        }
+      }
+    },
+    {
+      "id": "layer-outline",
+      "duration_ms": 5000,
+      "text": null,
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "ja-outline",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.14,
+          "width": 0.84,
+          "text": "縁取りと影 Outline + shadow",
+          "font_size": 0.05,
+          "weight": 700,
+          "outline": {
+            "color": "#000000",
+            "width": 5
+          },
+          "shadow": {
+            "color": "#000000b3",
+            "x": 0,
+            "y": 4,
+            "blur": 12
+          },
+          "reveal": "words"
+        },
+        {
+          "id": "pale-outline",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.45,
+          "width": 0.84,
+          "text": "A pale outline does not help",
+          "font_size": 0.04,
+          "outline": {
+            "color": "#e4e4e7",
+            "width": 4
+          }
+        }
+      ],
+      "keyframes": [
+        {
+          "at_ms": 0,
+          "scale": 1.78
+        }
+      ]
+    },
+    {
+      "id": "brand-default",
+      "duration_ms": 4000,
+      "text": "Brand default 品牌样式",
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "layers": [
+        {
+          "id": "brand-layer",
+          "kind": "text",
+          "x": 0.08,
+          "y": 0.16,
+          "width": 0.84,
+          "text": "Text layers follow the brand style",
+          "font_size": 0.04
+        }
+      ],
+      "keyframes": [
+        {
+          "at_ms": 0,
+          "scale": 1.78
+        }
+      ]
+    },
+    {
+      "id": "unstyled",
+      "duration_ms": 4000,
+      "text": "No outline: still warns",
+      "highlights": [],
+      "image": "assets/design.png",
+      "motion": "static",
+      "audio": null,
+      "text_style": {
+        "outline": {
+          "width": 0
+        },
+        "shadow": "soft"
+      },
+      "keyframes": [
+        {
+          "at_ms": 0,
+          "scale": 1.78
+        }
+      ]
+    }
+  ],
+  "subtitles": []
+}

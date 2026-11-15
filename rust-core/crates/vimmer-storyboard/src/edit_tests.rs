@@ -1587,3 +1587,140 @@ fn bad_beat_sync_and_sound_effects_are_rejected() {
     );
     assert!(text(&r).contains("audio file"), "{}", text(&r));
 }
+
+// --- text style -----------------------------------------------------------------------------------
+
+#[test]
+fn black_outline_on_the_scene_text() {
+    // "给文字加黑色描边" on the selected scene.
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/text_style", "value": {"outline": {"color": "#000000", "width": 4}}}]),
+    );
+    assert_eq!(out.timeline["scenes"][0]["text_style"]["outline"]["color"], "#000000");
+    assert!(
+        out.summary.iter().any(|l| l.starts_with("a:") && l.contains("text_style")),
+        "{:?}",
+        out.summary
+    );
+    // Then a box and a preset shadow, part by part.
+    let doc = out.timeline;
+    let out = ok(
+        &doc,
+        json!([
+            {"op": "add", "path": "/scenes/0/text_style/background", "value": {"color": "#00000099"}},
+            {"op": "add", "path": "/scenes/0/text_style/shadow", "value": "strong"},
+            {"op": "replace", "path": "/scenes/0/text_style/outline/width", "value": 6}
+        ]),
+    );
+    let ts = &out.timeline["scenes"][0]["text_style"];
+    assert_eq!(ts["shadow"], "strong");
+    assert_eq!(ts["background"]["color"], "#00000099");
+    assert_eq!(ts["outline"]["width"].as_f64(), Some(6.0));
+    // Removing the style is reported too.
+    let out = ok(
+        &out.timeline,
+        json!([{"op": "remove", "path": "/scenes/0/text_style"}]),
+    );
+    assert!(
+        out.summary.iter().any(|l| l.contains("-> none")),
+        "{:?}",
+        out.summary
+    );
+    assert!(out.timeline["scenes"][0].get("text_style").is_none());
+}
+
+#[test]
+fn text_layer_outline_and_shadow() {
+    let out = ok(
+        &with_layers(),
+        json!([
+            {"op": "add", "path": "/scenes/1/layers/1/outline", "value": {"color": "#000", "width": 3}},
+            {"op": "add", "path": "/scenes/1/layers/1/shadow", "value": {"color": "#000000aa", "y": 3, "blur": 10}}
+        ]),
+    );
+    let layer = &out.timeline["scenes"][1]["layers"][1];
+    assert_eq!(layer["outline"]["width"].as_f64(), Some(3.0));
+    assert_eq!(layer["shadow"]["blur"].as_f64(), Some(10.0));
+    let line = out
+        .summary
+        .iter()
+        .find(|l| l.contains("layer `title`"))
+        .expect("title line");
+    assert!(line.contains("outline") && line.contains("shadow"), "{line}");
+    // A shape layer has no outline.
+    let e = err(
+        &with_layers(),
+        json!([{"op": "add", "path": "/scenes/1/layers/0/outline", "value": {"color": "#000"}}]),
+    );
+    assert!(text(&e).contains("outline"), "{e}");
+}
+
+#[test]
+fn brand_text_style_is_a_default() {
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/brand", "value": {"text_style": {"outline": {"color": "#111827", "width": 4}, "shadow": "soft"}}}]),
+    );
+    assert_eq!(out.timeline["brand"]["text_style"]["shadow"], "soft");
+}
+
+#[test]
+fn bad_text_styles_are_rejected() {
+    let cases = [
+        (json!({"outline": {"color": "black", "width": 4}}), "outline color `black`"),
+        (json!({"outline": {"color": "#000", "width": 40}}), "outline width"),
+        (json!({"outline": {"colour": "#000"}}), "unknown field `colour`"),
+        (json!({"shadow": {"color": "#000", "blur": 500}}), "shadow blur"),
+        (json!({"background": {"color": "#000", "padding": 9}}), "padding"),
+        (json!({"glow": true}), "unknown field `glow`"),
+    ];
+    for (value, want) in cases {
+        let e = err(
+            &small(),
+            json!([{"op": "add", "path": "/scenes/0/text_style", "value": value}]),
+        );
+        assert!(text(&e).contains(want), "{want}: {e}");
+    }
+    // A shadow preset that does not exist fails to parse.
+    err(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/text_style", "value": {"shadow": "huge"}}]),
+    );
+}
+
+#[test]
+fn white_frame_around_the_text() {
+    // "给文字加一个白色边框": a border-only box on the scene text.
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/text_style", "value": {"background": {"border": {"color": "#ffffff", "width": 3}}}}]),
+    );
+    assert_eq!(
+        out.timeline["scenes"][0]["text_style"]["background"]["border"]["color"],
+        "#ffffff"
+    );
+    // A border on a text layer's existing box, and on the brand default.
+    let mut doc = with_layers();
+    doc["scenes"][1]["layers"][1]["background"] = json!({"color": "#000000aa"});
+    let out = ok(
+        &doc,
+        json!([
+            {"op": "add", "path": "/scenes/1/layers/1/background/border", "value": {"color": "#ffffffcc", "width": 2}},
+            {"op": "add", "path": "/brand", "value": {"text_style": {"background": {"color": "#00000088", "border": {"color": "#fff"}}}}}
+        ]),
+    );
+    assert_eq!(out.timeline["scenes"][1]["layers"][1]["background"]["color"], "#000000aa");
+    // Bad colors, widths and fields are rejected.
+    for (value, want) in [
+        (json!({"color": "white", "width": 2}), "border color `white`"),
+        (json!({"color": "#fff", "width": 30}), "border width"),
+        (json!({"color": "#fff", "style": "dashed"}), "unknown field `style`"),
+    ] {
+        let e = err(
+            &small(),
+            json!([{"op": "add", "path": "/scenes/0/text_style", "value": {"background": {"border": value}}}]),
+        );
+        assert!(text(&e).contains(want), "{want}: {e}");
+    }
+}

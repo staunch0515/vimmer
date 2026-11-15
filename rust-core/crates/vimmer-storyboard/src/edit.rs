@@ -590,6 +590,13 @@ enum Kind {
     Layer,
     LayerAnimation,
     TextBackground,
+    /// A text style (`scene.text_style`, `brand.text_style`), its outline and an explicit shadow
+    /// (a shadow may also be a preset string, which is a plain value).
+    TextStyle,
+    TextOutline,
+    TextShadow,
+    /// A text box's `border`.
+    TextBorder,
     /// A bar chart's `bars` list and one bar.
     Bars,
     Bar,
@@ -649,6 +656,7 @@ impl Kind {
                 ("colors", BrandColors),
                 ("fonts", BrandFonts),
                 ("logo", Logo),
+                ("text_style", TextStyle),
             ],
             BrandColors => &[
                 ("primary", Leaf),
@@ -675,6 +683,7 @@ impl Kind {
                 ("duration_ms", Leaf),
                 ("text", Leaf),
                 ("highlights", Highlights),
+                ("text_style", TextStyle),
                 ("image", Leaf),
                 ("motion", Leaf),
                 ("video", Video),
@@ -697,7 +706,20 @@ impl Kind {
             // Every field any layer kind has; `check_value` narrows it to the value's `kind`.
             Layer => LAYER_FIELDS_ALL,
             LayerAnimation => &[("kind", Leaf), ("duration_ms", Leaf), ("ease", Leaf)],
-            TextBackground => &[("color", Leaf), ("padding", Leaf), ("radius", Leaf)],
+            TextBackground => &[
+                ("color", Leaf),
+                ("padding", Leaf),
+                ("radius", Leaf),
+                ("border", TextBorder),
+            ],
+            TextBorder => &[("color", Leaf), ("width", Leaf)],
+            TextStyle => &[
+                ("outline", TextOutline),
+                ("background", TextBackground),
+                ("shadow", TextShadow),
+            ],
+            TextOutline => &[("color", Leaf), ("width", Leaf)],
+            TextShadow => &[("color", Leaf), ("x", Leaf), ("y", Leaf), ("blur", Leaf)],
             Bar => &[("label", Leaf), ("value", Leaf), ("color", Leaf)],
             Audio => &[("source", Leaf), ("offset_ms", Leaf)],
             Narration => &[("voice", Leaf)],
@@ -777,7 +799,11 @@ impl Kind {
             Kind::Layers => "a layer list",
             Kind::Layer => "a layer",
             Kind::LayerAnimation => "a layer enter/exit animation",
-            Kind::TextBackground => "a text layer background",
+            Kind::TextBackground => "a text background box",
+            Kind::TextStyle => "a text style",
+            Kind::TextOutline => "a text outline",
+            Kind::TextShadow => "a text shadow",
+            Kind::TextBorder => "a text box border",
             Kind::Bars => "a bar list",
             Kind::Bar => "a chart bar",
             Kind::Subtitles => "the subtitle list",
@@ -860,6 +886,8 @@ const LAYER_KIND_FIELDS: &[(&str, &[(&str, Kind)])] = &[
             ("align", Kind::Leaf),
             ("line_height", Kind::Leaf),
             ("background", Kind::TextBackground),
+            ("outline", Kind::TextOutline),
+            ("shadow", Kind::TextShadow),
             ("highlights", Kind::Highlights),
             ("reveal", Kind::Leaf),
             ("typing_cps", Kind::Leaf),
@@ -972,6 +1000,8 @@ const LAYER_FIELDS_ALL: &[(&str, Kind)] = &[
     ("align", Kind::Leaf),
     ("line_height", Kind::Leaf),
     ("background", Kind::TextBackground),
+    ("outline", Kind::TextOutline),
+    ("shadow", Kind::TextShadow),
     ("highlights", Kind::Highlights),
     ("reveal", Kind::Leaf),
     ("typing_cps", Kind::Leaf),
@@ -2166,6 +2196,14 @@ pub fn summarize(before: &VideoTimeline, after: &VideoTimeline) -> Vec<String> {
                     show_field(key, new_value)
                 ));
             }
+        }
+        // A removed text style is a key that is no longer written.
+        if let (Some(old_style), None) = (a.get("text_style"), b.get("text_style")) {
+            changes.push(format!(
+                "{} {} -> none",
+                label("text_style"),
+                show_field("text_style", old_style)
+            ));
         }
         if !changes.is_empty() {
             out.push(format!("{}: {}", s.id, changes.join("; ")));
