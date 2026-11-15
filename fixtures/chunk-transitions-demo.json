@@ -1,0 +1,83 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1920, "height": 1080 },
+  "scenes": [
+    {
+      "id": "pan",
+      "duration_ms": 2600,
+      "text": "A slide comes in right before the chunk ends",
+      "highlights": ["slide"],
+      "image": "assets/sample.png",
+      "motion": "pan_left",
+      "layers": [
+        { "id": "glow", "kind": "shape", "shape": "ellipse", "x": 0.5, "y": 0.66, "width": 0.8, "height": 0.42, "anchor": "center", "z": -1, "fill": "#6366f155",
+          "keyframes": [{ "at_ms": 0, "scale": 0.8 }, { "at_ms": 2600, "scale": 1.2, "x": 6 }] }
+      ]
+    },
+    {
+      "id": "slide",
+      "duration_ms": 900,
+      "text": "slide_left",
+      "image": "assets/design.png",
+      "motion": "zoom_in",
+      "transition_in": { "kind": "slide_left", "duration_ms": 500 }
+    },
+    {
+      "id": "zoomer",
+      "duration_ms": 2400,
+      "text": "The held frame must be the last one",
+      "highlights": ["last one"],
+      "image": "assets/sample.jpeg",
+      "motion": "zoom_out",
+      "layers": [
+        { "id": "tag", "kind": "text", "x": 0.06, "y": 0.1, "width": 0.3, "text": "moving tag", "font_size": 0.04, "weight": 700, "align": "left", "color": "#fafafa",
+          "keyframes": [{ "at_ms": 0, "x": 0 }, { "at_ms": 2400, "x": 40, "rotation": 8 }] }
+      ]
+    },
+    {
+      "id": "zoom",
+      "duration_ms": 700,
+      "text": "zoom_in",
+      "image": "assets/quizbuks-taker-cover-center.png",
+      "motion": "static",
+      "transition_in": { "kind": "zoom_in", "duration_ms": 600 }
+    },
+    {
+      "id": "drift",
+      "duration_ms": 2500,
+      "text": "Keyframes drift to the cut",
+      "image": "assets/design.png",
+      "motion": "static",
+      "keyframes": [{ "at_ms": 0, "scale": 1.0 }, { "at_ms": 2500, "scale": 1.3, "x": -8, "y": 4 }]
+    },
+    {
+      "id": "wipe",
+      "duration_ms": 600,
+      "text": "wipe_left",
+      "image": null,
+      "motion": "static",
+      "transition_in": { "kind": "wipe_left", "duration_ms": 500 }
+    },
+    {
+      "id": "words",
+      "duration_ms": 2200,
+      "text": "Text animates in, then slides away",
+      "highlights": ["slides away"],
+      "image": "assets/sample.png",
+      "motion": "zoom_in"
+    },
+    {
+      "id": "end",
+      "duration_ms": 800,
+      "text": "slide_up",
+      "image": "assets/sample.jpeg",
+      "motion": "pan_right",
+      "transition_in": { "kind": "slide_up", "duration_ms": 600 }
+    }
+  ],
+  "subtitles": [
+    { "start_ms": 2000, "end_ms": 4500, "text": "This cue crosses a chunk seam" },
+    { "start_ms": 5500, "end_ms": 8000, "text": "So does this one" },
+    { "start_ms": 10000, "end_ms": 12500, "text": "And the last one runs into the end" }
+  ]
+}

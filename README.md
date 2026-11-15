@@ -72,6 +72,12 @@ transition does not change any timing.
   scene are all rejected.
 - The chunk planner never splits a scene that has a transition from the one before it,
   so the held frame is always rendered in the same chunk.
+- The held frame is really the previous scene's last frame even when the video (or a
+  render chunk) ends soon after the transition. Earlier, the renderer held an earlier frame
+  in that case: a jump at the start of the transition in chunked renders, and in full
+  renders whose last scenes are shorter than the held one (`remotion-renderer/src/motion/hold.ts`).
+  `fixtures/chunk-transitions-demo.json` puts a `slide_left`, `zoom_in`, `wipe_left` and
+  `slide_up` right before each chunk end at `--chunk-ms 3000`.
 
 ### Keyframes (`keyframes`)
 
