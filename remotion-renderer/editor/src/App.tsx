@@ -43,6 +43,15 @@ import { resolveAsset } from "../../src/assets";
 import { beatMarks, detectBeats, type DetectedBeats } from "./beats";
 import { loadMusicLibrary, musicForBeats, pickKey, pickMusic, resolvedMusic, type MusicLibrary, type PickedTrack } from "./music";
 import type { BeatStatus } from "./components/SoundPanel";
+import "./studio/studio.css";
+import { ASSET_DRAG_TYPE } from "./studio/AssetPanel";
+import { errorText, tauriApi } from "./studio/api";
+import { Home } from "./studio/Home";
+import { LeaveDialog } from "./studio/LeaveDialog";
+import { checkProjectBeforeRender, startProjectRender, type ProjectRenderFinished } from "./studio/projectRender";
+import { PlainFileSidebar, ProjectSidebar } from "./studio/ProjectSidebar";
+import { clearOpenProject, draftProject, rememberDraftProject, setOpenProject, setProjectFiles } from "./studio/session";
+import type { AssetInfo, OpenedProject, ProjectSummary } from "./studio/types";
 
 // Unsaved work is mirrored here so a crash or reload does not lose it. Cleared on save.
 const DRAFT_KEY = "vimmer-studio-draft";
@@ -86,6 +95,22 @@ export const App = () => {
   const [frame, setFrame] = useState(0);
   const [tab, setTab] = useState<InspectorTab>("scene");
   const [path, setPath] = useState<string | null>(null);
+  // Studio projects (desktop app). The app starts on the projects screen; the browser editor and
+  // a recovered draft go straight to the editor, as before. `project` is the open project, or
+  // null for a plain timeline file (`path`) outside any project.
+  const [screen, setScreen] = useState<"home" | "editor">(inTauri() && !draft ? "home" : "editor");
+  const [project, setProject] = useState<ProjectSummary | null>(null);
+  const [assetsKey, setAssetsKey] = useState(0);
+  const [rendersKey, setRendersKey] = useState(0);
+  // Bumped when the open project's file list changes, so previews resolve the new files.
+  const [, setFilesVersion] = useState(0);
+  // Asked before a document with unsaved changes is replaced by another one.
+  const [leave, setLeave] = useState<{ action: string; then: () => void } | null>(null);
+  const [leaveSaving, setLeaveSaving] = useState(false);
+  const projectRef = useRef(project);
+  projectRef.current = project;
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
   // The last saved (or opened) document. Unsaved changes = the current document differs from it.
   // A recovered draft starts as "different", so it reads as unsaved until the user saves it.
   const [saved, setSaved] = useState<string>(draft ? "" : serialize(startTimeline));
@@ -155,9 +180,31 @@ export const App = () => {
     }
   }, [text, dirty]);
 
+  const docName = project ? project.name : baseName(path);
   useEffect(() => {
-    setWindowTitle(`${baseName(path)}${dirty ? " •" : ""} — Vimmer Studio`);
-  }, [path, dirty]);
+    setWindowTitle(screen === "home" ? "Vimmer Studio" : `${docName}${dirty ? " •" : ""} — Vimmer Studio`);
+  }, [docName, dirty, screen]);
+
+  // An unsaved project document is a draft like any other; remember whose it is.
+  useEffect(() => {
+    rememberDraftProject(dirty && project ? project.dir : null);
+  }, [dirty, project]);
+  // A draft recovered at launch that belonged to a project goes back into that project, unsaved.
+  useEffect(() => {
+    const dir = draft && inTauri() ? draftProject() : null;
+    if (!dir) return;
+    void (async () => {
+      try {
+        const opened = await tauriApi.openProject(dir);
+        const assets = await tauriApi.listAssets(dir, opened.timelineJson).catch(() => []);
+        setOpenProject(dir, assets.map((a) => a.path), () => setAssetsKey((k) => k + 1));
+        setProject(opened.project);
+        setSaved(serialize(parseTimeline(opened.timelineJson)));
+      } catch {
+        /* the project is gone: the draft stays an untitled file */
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     let off: (() => void) | undefined;
@@ -169,14 +216,15 @@ export const App = () => {
   // "Save as" target, a project opened for the first time) keeps the current choices.
   const renderOptionsRef = useRef(renderOptions);
   renderOptionsRef.current = renderOptions;
+  const optionsKey = project ? project.dir : path;
   useEffect(() => {
     const store = storage();
-    if (hasOptions(store, path)) setRenderOptions(loadOptions(store, path));
-    else saveOptions(store, path, renderOptionsRef.current);
-  }, [path]);
+    if (hasOptions(store, optionsKey)) setRenderOptions(loadOptions(store, optionsKey));
+    else saveOptions(store, optionsKey, renderOptionsRef.current);
+  }, [optionsKey]);
   const changeRenderOptions = (o: RenderOptions) => {
     setRenderOptions(o);
-    saveOptions(storage(), path, o);
+    saveOptions(storage(), optionsKey, o);
   };
   useEffect(() => void loadRenderDefaults().then(setRenderDefaults), []);
 
@@ -189,14 +237,15 @@ export const App = () => {
     const key = wantedCheck;
     const handle = window.setTimeout(() => {
       setCheck({ status: "running", key });
-      checkBeforeRender(text, renderEngine).then(
+      // A project's own files are found first, as in its render.
+      (project ? checkProjectBeforeRender(project.dir, text, renderEngine) : checkBeforeRender(text, renderEngine)).then(
         (report) => setCheck((c) => (c.status === "running" && c.key === key ? { status: "done", key, report } : c)),
         (e) => setCheck((c) => (c.status === "running" && c.key === key ? { status: "failed", key, error: String(e) } : c)),
       );
     }, 250);
     return () => window.clearTimeout(handle);
     // `text` and `renderEngine` are part of `wantedCheck`.
-  }, [wantedCheck, checkRun]);
+  }, [wantedCheck, checkRun, project?.dir]);
   const currentCheck: CheckView =
     check.status !== "idle" && check.key === wantedCheck ? check : { status: "running", key: wantedCheck ?? "" };
 
@@ -215,6 +264,12 @@ export const App = () => {
         if (f.ok && f.output) setRender({ status: "done", output: f.output });
         else if (f.cancelled) setRender({ status: "cancelled" });
         else setRender({ status: "failed", error: f.error ?? "Unknown error" });
+        // A project render is in the project's history now: show it in the sidebar.
+        const done = (f as ProjectRenderFinished).project;
+        if (done && done.dir === projectRef.current?.dir) {
+          setProject(done);
+          setRendersKey((k) => k + 1);
+        }
       },
     ).then((u) => (unlisten = u));
     return () => unlisten?.();
@@ -233,39 +288,133 @@ export const App = () => {
 
   const discardOk = async () => !dirtyRef.current || (await confirmDiscard("Discard unsaved changes?"));
 
+  /** The editor now holds a plain file (or nothing saved yet), not a project. */
+  const leaveProject = () => {
+    clearOpenProject();
+    setProject(null);
+  };
+
   const doNew = async () => {
     if (!(await discardOk())) return;
     const t = newTimeline();
     dispatch({ type: "load", timeline: t });
+    leaveProject();
     setPath(null);
     setSaved(serialize(t));
     setError(null);
   };
 
-  const doOpen = async () => {
-    if (!(await discardOk())) return;
+  /** Opens a plain timeline file. Resolves to whether one was opened. */
+  const doOpen = async (): Promise<boolean> => {
+    if (!(await discardOk())) return false;
     try {
       const picked = await pickToOpen();
-      if (!picked) return;
+      if (!picked) return false;
       const t = parseTimeline(picked.text);
       dispatch({ type: "load", timeline: t });
+      leaveProject();
       setPath(picked.path);
       setSaved(serialize(t));
       setError(null);
+      return true;
     } catch (e) {
       setError(`Could not open the file: ${(e as Error).message}`);
+      return false;
     }
   };
 
-  const doSave = async (saveAs: boolean) => {
+  /** Saves the document. Resolves to whether it is saved now. */
+  const doSave = async (saveAs: boolean): Promise<boolean> => {
     try {
-      const result = await saveTimeline(text, { path }, { saveAs });
-      if (!result) return;
+      if (project && !saveAs) {
+        setProject(await tauriApi.saveProject(project.dir, text));
+        setSaved(text);
+        setError(null);
+        return true;
+      }
+      // In a project, "Save as" writes a copy of the timeline elsewhere; the project stays open.
+      const result = await saveTimeline(text, { path: project ? null : path }, { saveAs });
+      if (!result) return false;
+      if (project) return true;
       if (result.path) setPath(result.path);
       setSaved(text);
       setError(null);
+      return true;
     } catch (e) {
-      setError(`Could not save: ${(e as Error).message}`);
+      setError(`Could not save: ${errorText(e)}`);
+      return false;
+    }
+  };
+
+  /** Shows a project in the editor. Throws when its timeline cannot be read. */
+  const showProject = async (opened: OpenedProject) => {
+    const t = parseTimeline(opened.timelineJson);
+    const dir = opened.project.dir;
+    // Known before the timeline loads, so the preview finds the project's files at once.
+    const assets = await tauriApi.listAssets(dir, opened.timelineJson).catch(() => [] as AssetInfo[]);
+    setOpenProject(dir, assets.map((a) => a.path), () => setAssetsKey((k) => k + 1));
+    dispatch({ type: "load", timeline: t });
+    setProject(opened.project);
+    setPath(null);
+    setSaved(serialize(t));
+    setError(null);
+    setRender((r) => (r.status === "running" ? r : { status: "idle" }));
+    setScreen("editor");
+  };
+
+  /** From Home: opens the project, asking first when the editor holds unsaved changes. */
+  const openProject = async (opened: OpenedProject) => {
+    if (opened.project.dir === project?.dir) {
+      setScreen("editor");
+      return;
+    }
+    if (!dirtyRef.current) return showProject(opened);
+    setLeave({ action: `Open “${opened.project.name}”`, then: () => void showProject(opened).catch((e) => setError(errorText(e))) });
+  };
+
+  const onProjectAssets = (dir: string, assets: AssetInfo[]) => {
+    setProjectFiles(dir, assets.map((a) => a.path));
+    setFilesVersion((v) => v + 1);
+  };
+
+  /** The scene "use this asset" applies to: the selected one, else the one under the playhead. */
+  const currentSceneIndex = (): number => {
+    const sel = state.selection;
+    if (sel.kind === "scene") return sel.index;
+    if (sel.kind === "keyframe" || sel.kind === "layer") return sel.sceneIndex;
+    const at = frameToMs(frame, fps);
+    let end = 0;
+    for (let i = 0; i < timeline.scenes.length; i += 1) {
+      end += timeline.scenes[i].duration_ms;
+      if (at < end) return i;
+    }
+    return Math.max(0, timeline.scenes.length - 1);
+  };
+
+  /** Puts a project file into the current scene: as its image, clip or audio, or as an icon layer. */
+  const applyAsset = (asset: Pick<AssetInfo, "path" | "kind">) => {
+    const index = currentSceneIndex();
+    const scene = timeline.scenes[index];
+    if (!scene) return;
+    if (asset.kind === "image") dispatch({ type: "patchScene", index, patch: { image: asset.path } });
+    else if (asset.kind === "video") dispatch({ type: "patchScene", index, patch: { video: { ...scene.video, src: asset.path } } });
+    else if (asset.kind === "audio") dispatch({ type: "patchScene", index, patch: { audio: { offset_ms: scene.audio?.offset_ms ?? 0, source: asset.path } } });
+    else if (asset.kind === "icon") {
+      dispatch({ type: "addLayer", sceneIndex: index, kind: "icon" });
+      dispatch({ type: "patchLayer", sceneIndex: index, index: scene.layers?.length ?? 0, patch: { src: asset.path } });
+    } else return;
+    if (asset.kind !== "icon") select({ kind: "scene", index });
+  };
+
+  /** A plain file becomes a project: the saved timeline and the files it names are copied. */
+  const makeProject = async () => {
+    if (!path) return;
+    try {
+      const got = await tauriApi.importTimeline(path);
+      await showProject(await tauriApi.openProject(got.project.dir));
+      if (got.missing.length) setError(`Not found, so not copied into the project: ${got.missing.join(", ")}`);
+    } catch (e) {
+      setError(`Could not make a project: ${errorText(e)}`);
     }
   };
 
@@ -287,6 +436,8 @@ export const App = () => {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The editor's shortcuts are off while the projects screen covers it.
+      if (screenRef.current !== "editor") return;
       const target = e.target as HTMLElement;
       const typing = target.matches("input, textarea, select, [contenteditable]");
       const mod = e.metaKey || e.ctrlKey;
@@ -384,11 +535,13 @@ export const App = () => {
 
   // From the render panel, after the options and the check.
   const doStartRender = async () => {
-    const output = await pickRenderOutput(`${baseName(path).replace(/\.json$/i, "") || "video"}.mp4`);
-    if (!output) return;
+    // A project renders into its own renders/ folder; a plain file asks where to save.
+    const output = project ? null : await pickRenderOutput(`${baseName(path).replace(/\.json$/i, "") || "video"}.mp4`);
+    if (!project && !output) return;
     setRender({ status: "running", stage: "Starting" });
     try {
-      await startRender(text, output, renderOptions, renderDefaults);
+      if (project) await startProjectRender(project.dir, text, renderOptions, renderDefaults);
+      else await startRender(text, output!, renderOptions, renderDefaults);
     } catch (e) {
       setRender({ status: "failed", error: String(e) });
     }
@@ -405,10 +558,28 @@ export const App = () => {
     setTab("subtitles");
   };
 
+  const onAssetDrag = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(ASSET_DRAG_TYPE)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onAssetDrop = (e: React.DragEvent) => {
+    const raw = e.dataTransfer.getData(ASSET_DRAG_TYPE);
+    if (!raw) return;
+    e.preventDefault();
+    try {
+      applyAsset(JSON.parse(raw) as Pick<AssetInfo, "path" | "kind">);
+    } catch {
+      /* not one of ours */
+    }
+  };
+
   return (
-    <div className="studio">
+    <>
+    <div className="studio" inert={screen === "home"}>
       <Toolbar
-        fileName={baseName(path)}
+        onHome={inTauri() ? () => setScreen("home") : undefined}
+        fileName={docName}
         dirty={dirty}
         problemCount={problems.length}
         format={timeline.resolution}
@@ -454,8 +625,25 @@ export const App = () => {
         </div>
       )}
       <StudioLayout
+        left={
+          !inTauri() ? undefined : project ? (
+            <ProjectSidebar
+              project={project}
+              timelineJson={text}
+              sceneLabel={timeline.scenes[currentSceneIndex()]?.id ?? null}
+              onUseAsset={applyAsset}
+              assetsKey={assetsKey}
+              rendersKey={rendersKey}
+              onProjectChanged={setProject}
+              onAssets={onProjectAssets}
+              onHome={() => setScreen("home")}
+            />
+          ) : (
+            <PlainFileSidebar fileName={docName} onHome={() => setScreen("home")} onMakeProject={path && !dirty ? () => void makeProject() : undefined} />
+          )
+        }
         center={
-        <section className="stage">
+        <section className="stage" onDragOver={onAssetDrag} onDrop={onAssetDrop}>
           <Preview
             timeline={previewTimeline}
             assetRoot={assetRoot}
@@ -515,5 +703,39 @@ export const App = () => {
         }
       />
     </div>
+    {screen === "home" && (
+      <div className="st-home-layer">
+        <Home
+          onOpen={openProject}
+          currentDir={project?.dir ?? null}
+          onBack={() => setScreen("editor")}
+          onOpenFile={() => void doOpen().then((opened) => opened && setScreen("editor"))}
+        />
+      </div>
+    )}
+    {leave && (
+      <LeaveDialog
+        name={docName}
+        action={leave.action}
+        saving={leaveSaving}
+        onCancel={() => setLeave(null)}
+        onDiscard={() => {
+          const { then } = leave;
+          setLeave(null);
+          then();
+        }}
+        onSave={() => {
+          const { then } = leave;
+          setLeaveSaving(true);
+          void doSave(false).then((saved) => {
+            setLeaveSaving(false);
+            if (!saved) return;
+            setLeave(null);
+            then();
+          });
+        }}
+      />
+    )}
+    </>
   );
 };

@@ -207,3 +207,10 @@
   .st-stages li.now .st-stage-dot, .render-bar.indeterminate span { animation: none; }
   .render-bar.indeterminate span { width: 100%; opacity: 0.5; }
 }
+
+/* Home over the editor: the editor stays mounted (and inert) underneath. */
+.st-home-layer { position: fixed; inset: 0; z-index: 50; background: var(--canvas); }
+.st-plain { padding: 12px 10px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.st-plain p { margin: 0; }
+.st-plain .btn { align-self: flex-start; margin-top: 4px; }
+.st-drop-target { outline: 2px dashed var(--accent); outline-offset: -6px; }

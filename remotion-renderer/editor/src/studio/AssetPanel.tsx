@@ -26,6 +26,8 @@ type Props = {
   onUse?: (asset: AssetInfo) => void;
   /** Bumped by the owner when files changed outside the panel (an import from the inspector). */
   refreshKey?: number;
+  /** The project's media files, each time the list is read. */
+  onAssets?: (dir: string, assets: AssetInfo[]) => void;
 };
 
 const Tile = ({ asset, url }: { asset: AssetInfo; url: string }) => {
@@ -65,7 +67,7 @@ const Preview = ({ asset, url }: { asset: AssetInfo; url: string }) => {
   }
 };
 
-export const AssetPanel = ({ dir, timelineJson, sceneLabel, onUse, refreshKey = 0 }: Props) => {
+export const AssetPanel = ({ dir, timelineJson, sceneLabel, onUse, refreshKey = 0, onAssets }: Props) => {
   const api = useStudioApi();
   const [assets, setAssets] = useState<AssetInfo[] | null>(null);
   const [filter, setFilter] = useState<AssetFilter>("all");
@@ -75,13 +77,17 @@ export const AssetPanel = ({ dir, timelineJson, sceneLabel, onUse, refreshKey = 
   const [busy, setBusy] = useState(false);
   const latest = useRef({ dir, timelineJson });
   latest.current = { dir, timelineJson };
+  const report = useRef(onAssets);
+  report.current = onAssets;
 
   const load = useCallback(async () => {
     const asked = latest.current;
     try {
       const list = await api.listAssets(asked.dir, asked.timelineJson);
       // An answer for an older document or another project is dropped.
-      if (latest.current === asked || (latest.current.dir === asked.dir && latest.current.timelineJson === asked.timelineJson)) setAssets(list);
+      if (latest.current.dir !== asked.dir) return;
+      report.current?.(asked.dir, list);
+      if (latest.current.timelineJson === asked.timelineJson) setAssets(list);
     } catch (e) {
       setError(errorText(e));
       setAssets((a) => a ?? []);

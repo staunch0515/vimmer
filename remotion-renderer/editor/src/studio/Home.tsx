@@ -7,7 +7,9 @@ import type { Lang, OpenedProject, Orientation, ProjectSummary, StudioSettings }
 
 type Props = {
   /** A project was opened (clicked, created, generated or imported): show it in the editor. */
-  onOpen: (opened: OpenedProject) => void;
+  onOpen: (opened: OpenedProject) => void | Promise<void>;
+  /** The project open in the editor: it cannot be renamed or deleted from here. */
+  currentDir?: string | null;
   /** Opens a plain timeline file outside any project, as the editor always could. */
   onOpenFile?: () => void;
   /** Goes back to the editor without opening anything (when one is already open). */
@@ -47,6 +49,8 @@ const Thumb = ({ project }: { project: ProjectSummary }) => {
 };
 
 type MenuProps = {
+  /** The project is open in the editor: no rename, no delete. */
+  locked: boolean;
   onOpen: () => void;
   onRename: () => void;
   onDuplicate: () => void;
@@ -85,11 +89,11 @@ const CardMenu = (p: MenuProps) => {
   return (
     <div ref={ref} className="st-menu" role="menu">
       {item("Open", p.onOpen)}
-      {item("Rename…", p.onRename)}
+      {!p.locked && item("Rename…", p.onRename)}
       {item("Duplicate", p.onDuplicate)}
       {item("Show in Finder", p.onReveal)}
-      <div className="st-menu-sep" />
-      {item("Move to Trash…", p.onDelete, true)}
+      {!p.locked && <div className="st-menu-sep" />}
+      {!p.locked && item("Move to Trash…", p.onDelete, true)}
     </div>
   );
 };
@@ -153,7 +157,7 @@ const NewProjectDialog = ({ onClose, onCreate }: { onClose: () => void; onCreate
   );
 };
 
-export const Home = ({ onOpen, onOpenFile, onBack }: Props) => {
+export const Home = ({ onOpen, onOpenFile, onBack, currentDir }: Props) => {
   const api = useStudioApi();
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [settings, setSettings] = useState<StudioSettings | null>(null);
@@ -192,12 +196,12 @@ export const Home = ({ onOpen, onOpenFile, onBack }: Props) => {
     await refresh();
   };
 
-  const open = (dir: string) => act(dir, async () => onOpen(await api.openProject(dir)));
+  const open = (dir: string) => act(dir, async () => void (await onOpen(await api.openProject(dir))));
   const create = (name: string, lang: Lang | null, orientation: Orientation) =>
     act(null, async () => {
       const made = await api.createProject(name, lang, orientation);
       setDialog(null);
-      onOpen(await api.openProject(made.dir));
+      await onOpen(await api.openProject(made.dir));
     });
   const importTimeline = () =>
     act(null, async () => {
@@ -368,6 +372,7 @@ export const Home = ({ onOpen, onOpenFile, onBack }: Props) => {
                     )}
                     <div className="st-card-meta dim">
                       <span>{formatWhen(p.updatedMs, now)}</span>
+                      {p.dir === currentDir && <span className="st-tag ok">Open in editor</span>}
                       {ORIGIN_LABEL[p.origin] && <span className="st-tag">{ORIGIN_LABEL[p.origin]}</span>}
                       {p.renders > 0 && (
                         <span className="st-tag ok">
@@ -389,6 +394,7 @@ export const Home = ({ onOpen, onOpenFile, onBack }: Props) => {
                   </button>
                   {menu === p.dir && (
                     <CardMenu
+                      locked={p.dir === currentDir}
                       onClose={() => setMenu(null)}
                       onOpen={() => void open(p.dir)}
                       onRename={() => setRenaming({ dir: p.dir, name: p.name })}

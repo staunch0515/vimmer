@@ -16,12 +16,13 @@ type Props = {
   onProjectChanged?: (project: ProjectSummary) => void;
   /** Leaves the editor for the Home screen. */
   onHome?: () => void;
+  onAssets?: (dir: string, assets: AssetInfo[]) => void;
 };
 
 type Tab = "assets" | "renders";
 
 /** The editor's left sidebar for a project: its files and its renders. */
-export const ProjectSidebar = ({ project, timelineJson, sceneLabel, onUseAsset, assetsKey, rendersKey = 0, onProjectChanged, onHome }: Props) => {
+export const ProjectSidebar = ({ project, timelineJson, sceneLabel, onUseAsset, assetsKey, rendersKey = 0, onProjectChanged, onHome, onAssets }: Props) => {
   const [tab, setTab] = useState<Tab>("assets");
   // A finished render brings its history forward once.
   const [seenRenders, setSeenRenders] = useState(rendersKey);
@@ -50,10 +51,45 @@ export const ProjectSidebar = ({ project, timelineJson, sceneLabel, onUseAsset, 
         </button>
       </div>
       {tab === "assets" ? (
-        <AssetPanel dir={project.dir} timelineJson={timelineJson} sceneLabel={sceneLabel} onUse={onUseAsset} refreshKey={assetsKey} />
+        <AssetPanel dir={project.dir} timelineJson={timelineJson} sceneLabel={sceneLabel} onUse={onUseAsset} refreshKey={assetsKey} onAssets={onAssets} />
       ) : (
         <RendersPanel dir={project.dir} refreshKey={rendersKey} onProjectChanged={onProjectChanged} />
       )}
     </div>
   );
 };
+
+type PlainProps = {
+  /** The file's name, or "Untitled". */
+  fileName: string;
+  onHome: () => void;
+  /** Makes a project from the saved file. Absent while there is nothing saved to import. */
+  onMakeProject?: () => void;
+};
+
+/** The sidebar for a timeline file that is not in a project: where its files are, and the way to projects. */
+export const PlainFileSidebar = ({ fileName, onHome, onMakeProject }: PlainProps) => (
+  <div className="st-sidebar">
+    <div className="st-sidebar-head">
+      <button className="btn ghost small" onClick={onHome} title="All projects">
+        ← Projects
+      </button>
+      <span className="st-sidebar-name" title={fileName}>
+        {fileName}
+      </span>
+    </div>
+    <div className="st-plain">
+      <div className="section-label">Plain timeline file</div>
+      <p className="dim">This timeline is not in a project. Its images, audio and clips are read from the app's shared public folder, and renders go where you save them.</p>
+      <p className="dim">A project keeps its own assets and a history of its renders.</p>
+      <button
+        className="btn small"
+        disabled={!onMakeProject}
+        onClick={onMakeProject}
+        title={onMakeProject ? "Copies the timeline and the files it uses into a new project" : "Save the file first"}
+      >
+        Make it a project…
+      </button>
+    </div>
+  </div>
+);
