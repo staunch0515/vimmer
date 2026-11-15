@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { VideoTimeline } from "../../src/types/timeline";
 import { inTauri } from "./project";
+import type { Conversation } from "./chat";
 
 // The editing assistant: Claude proposes a JSON Patch, the Rust core checks it (the desktop app
 // runs that in-process; the dev server runs `vimmer edit --dry-run --json`, same JSON), and the
@@ -47,6 +48,8 @@ export type ProposeArgs = {
   instruction: string;
   sceneId: string | null;
   model: AssistantModel;
+  /** The chat so far. Left out when there is none, so a first message is the same request as before. */
+  conversation?: Conversation;
 };
 
 const DEV_ENDPOINT = "/__vimmer/edit";

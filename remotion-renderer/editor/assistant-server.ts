@@ -10,8 +10,9 @@
 // the CLI is started through `zsh -c 'source ~/.zshrc; exec "$@"'`, so only the child sees it.
 
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 
@@ -22,7 +23,10 @@ const MAX_INSTRUCTION = 2000;
 const TIMEOUT_MS = 6 * 60 * 1000;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-type Args = { timelineJson: string; instruction: string; sceneId: string | null; model: string };
+/** The chat so far (see editor/src/chat.ts); the CLI checks its shape and limits again. */
+type Conversation = { turns: unknown[]; dropped: number };
+type Args = { timelineJson: string; instruction: string; sceneId: string | null; model: string; conversation?: Conversation };
+const MAX_TURNS = 12;
 
 const send = (res: ServerResponse, status: number, body: unknown) => {
   res.statusCode = status;
@@ -78,7 +82,16 @@ export const parseArgs = (raw: string): Args | string => {
   if (v.instruction.length > MAX_INSTRUCTION) return `the instruction is longer than ${MAX_INSTRUCTION} characters`;
   if (v.sceneId != null && (typeof v.sceneId !== "string" || v.sceneId.length > 64)) return "bad sceneId";
   if (typeof v.model !== "string" || !MODELS.has(v.model)) return "unknown model";
-  return { timelineJson: v.timelineJson, instruction: v.instruction, sceneId: v.sceneId ?? null, model: v.model };
+  const args: Args = { timelineJson: v.timelineJson, instruction: v.instruction, sceneId: v.sceneId ?? null, model: v.model };
+  if (v.conversation != null) {
+    const c = v.conversation as Partial<Conversation>;
+    if (typeof c !== "object" || !Array.isArray(c.turns)) return "conversation.turns must be a list";
+    if (c.turns.length > MAX_TURNS) return `the conversation has more than ${MAX_TURNS} turns`;
+    if (c.dropped != null && (typeof c.dropped !== "number" || !Number.isInteger(c.dropped) || c.dropped < 0)) return "bad conversation.dropped";
+    // Only a chat with earlier turns changes the request; an empty one is the same as none.
+    if (c.turns.length) args.conversation = { turns: c.turns, dropped: c.dropped ?? 0 };
+  }
+  return args;
 };
 
 /** `$VIMMER_BIN`, else the release or debug build in rust-core/target. */
@@ -91,10 +104,15 @@ export const findVimmer = (repo: string): string | null => {
   return candidates.find((p) => existsSync(p)) ?? null;
 };
 
-/** The argv for the CLI: options first, then `--` so an instruction starting with `-` stays text. */
-export const cliArgs = (a: Args, publicDir: string): string[] => {
+/**
+ * The argv for the CLI: options first, then `--` so an instruction starting with `-` stays text.
+ * `conversationFile` (the chat, written by the caller) is passed only when there is one, so a
+ * first message runs exactly the command it ran before chats existed.
+ */
+export const cliArgs = (a: Args, publicDir: string, conversationFile?: string): string[] => {
   const out = ["edit", "--dry-run", "--json", "--public-dir", publicDir, "--model", a.model];
   if (a.sceneId) out.push("--scene", a.sceneId);
+  if (conversationFile) out.push("--conversation", conversationFile);
   out.push("--", "-", a.instruction);
   return out;
 };
@@ -106,19 +124,25 @@ const BUILD_CLI = "Build the CLI: cd rust-core && cargo build -p vimmer-cli (or 
 /** True when `help` (the output of `vimmer edit --help`) is from a CLI that has the edit options this endpoint passes. */
 export const helpHasEdit = (help: string): boolean => ["--dry-run", "--json", "--public-dir", "--scene"].every((o) => help.includes(o));
 
-const probed = new Map<string, boolean>();
+/** True when that help also has `--conversation` (the assistant's chat). */
+export const helpHasChat = (help: string): boolean => helpHasEdit(help) && help.includes("--conversation");
 
-/** Null when `bin` has `vimmer edit --dry-run --json`, else what to do. Probed once per build (path and mtime). */
-export const checkEditCli = async (bin: string): Promise<string | null> => {
+const probed = new Map<string, string>();
+
+/**
+ * Null when `bin` has `vimmer edit --dry-run --json` (and `--conversation` when `chat`), else
+ * what to do. Probed once per build (path and mtime).
+ */
+export const checkEditCli = async (bin: string, chat = false): Promise<string | null> => {
   let stamp: string;
   try {
     stamp = `${bin}@${statSync(bin).mtimeMs}`;
   } catch {
     return `The vimmer CLI was not found. ${BUILD_CLI}`;
   }
-  let ok = probed.get(stamp);
-  if (ok === undefined) {
-    const out = await new Promise<string>((done) => {
+  let help = probed.get(stamp);
+  if (help === undefined) {
+    help = await new Promise<string>((done) => {
       const child = spawn(bin, ["edit", "--help"], { stdio: ["ignore", "pipe", "pipe"] });
       let text = "";
       const timer = setTimeout(() => child.kill("SIGTERM"), 10_000);
@@ -132,10 +156,11 @@ export const checkEditCli = async (bin: string): Promise<string | null> => {
         done(code === 0 ? text : "");
       });
     });
-    ok = helpHasEdit(out);
-    probed.set(stamp, ok);
+    probed.set(stamp, help);
   }
-  return ok ? null : `The vimmer CLI at ${bin} is too old: it has no \`vimmer edit --dry-run --json\`. ${BUILD_CLI}`;
+  if (!helpHasEdit(help)) return `The vimmer CLI at ${bin} is too old: it has no \`vimmer edit --dry-run --json\`. ${BUILD_CLI}`;
+  if (chat && !helpHasChat(help)) return `The vimmer CLI at ${bin} is too old for follow-up messages (no \`vimmer edit --conversation\`). ${BUILD_CLI}`;
+  return null;
 };
 
 /** The CLI names install_llm.sh only when the helper's Python or its SDK is missing. */
@@ -356,12 +381,19 @@ export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
         if (typeof args === "string") return fail(res, 400, "input", args);
         const bin = findVimmer(repo);
         if (!bin) return fail(res, 200, "no_binary", `The vimmer CLI was not found in rust-core/target. ${BUILD_CLI}`);
-        const stale = await checkEditCli(bin);
+        const stale = await checkEditCli(bin, !!args.conversation);
         if (stale) return fail(res, 200, "no_binary", stale);
         if (busy) return fail(res, 200, "busy", "Another proposal is still running.");
         busy = true;
+        // The chat goes to the CLI in a private temp file (stdin carries the timeline).
+        const chatDir = args.conversation ? mkdtempSync(join(tmpdir(), "vimmer-chat-")) : null;
         try {
-          const out = await run(bin, cliArgs(args, publicDir), args.timelineJson);
+          let chatFile: string | undefined;
+          if (chatDir && args.conversation) {
+            chatFile = join(chatDir, "conversation.json");
+            writeFileSync(chatFile, JSON.stringify(args.conversation), { mode: 0o600 });
+          }
+          const out = await run(bin, cliArgs(args, publicDir, chatFile), args.timelineJson);
           const line = out.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
           try {
             return send(res, 200, refineKind(JSON.parse(line)));
@@ -371,6 +403,7 @@ export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
           }
         } finally {
           busy = false;
+          if (chatDir) rmSync(chatDir, { recursive: true, force: true });
         }
       })();
     });

@@ -8,8 +8,8 @@ use std::time::Duration;
 use clap::Parser;
 use serde_json::Value;
 use vimmer_storyboard::edit_claude::{
-    failure_json, helper_missing_json, proposal_json, propose_edit, EditOptions, EditStatus,
-    Proposal, DEFAULT_EFFORT, DEFAULT_MAX_RETRIES, DEFAULT_MODEL,
+    failure_json, helper_missing_json, proposal_json, propose_edit, Conversation, EditOptions,
+    EditStatus, Proposal, DEFAULT_EFFORT, DEFAULT_MAX_RETRIES, DEFAULT_MODEL,
 };
 use vimmer_storyboard::generate::{GenerateFailure, LlmHelper, EFFORTS};
 
@@ -70,6 +70,11 @@ pub struct EditCli {
     /// Save the raw API replies here.
     #[arg(long)]
     save_dir: Option<PathBuf>,
+    /// Earlier turns of a chat (the editor's assistant), as a JSON file
+    /// `{"turns": [{"user", "status", "reply", "changes", "decision"}], "dropped": n}`.
+    /// Without it the request is exactly as before.
+    #[arg(long)]
+    conversation: Option<PathBuf>,
 }
 
 fn status_name(s: EditStatus) -> &'static str {
@@ -126,6 +131,16 @@ pub async fn run_edit(cli: EditCli) -> Result<(), Box<dyn std::error::Error>> {
     }
     let timeline: Value =
         serde_json::from_str(&raw).map_err(|e| format!("the timeline is not valid JSON: {e}"))?;
+    let conversation: Option<Conversation> = match &cli.conversation {
+        None => None,
+        Some(path) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            Some(serde_json::from_str(&text).map_err(|e| {
+                format!("{} is not a conversation: {e}", path.display())
+            })?)
+        }
+    };
 
     let helper = LlmHelper::locate(cli.llm_python.as_deref());
     let helper = match helper {
@@ -150,6 +165,7 @@ pub async fn run_edit(cli: EditCli) -> Result<(), Box<dyn std::error::Error>> {
     opts.timeout = Duration::from_secs(cli.llm_timeout.max(1));
     opts.public_dir = public_dir;
     opts.record_dir = cli.save_dir.clone();
+    opts.conversation = conversation;
     let work_dir = std::env::temp_dir().join(format!("vimmer-edit-{}", std::process::id()));
 
     if !cli.json {

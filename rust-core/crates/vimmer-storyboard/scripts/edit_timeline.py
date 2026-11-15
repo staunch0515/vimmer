@@ -12,7 +12,14 @@ The request comes from a JSON file written by the Rust side (`--request FILE`):
 
     {"timeline": {...}, "instruction": "...", "scene_id": "scene-02" | null,
      "assets": ["assets/sample.png", ...], "model": .., "effort": .., "max_tokens": ..,
-     "timeout_secs": .., "history": [{"assistant": "<earlier reply>", "feedback": "<error>"}]}
+     "timeout_secs": .., "history": [{"assistant": "<earlier reply>", "feedback": "<error>"}],
+     "conversation": {"turns": [{"user": "..", "status": "edited", "reply": "..",
+                                 "changes": [".."], "decision": "accepted"}], "dropped": 0}}
+
+`history` is the retry loop of this one request (a rejected reply and the validator's error).
+`conversation` is optional and different: the earlier exchanges of the editor's chat, sent as
+compact text inside the user message (old timelines are never resent). Without it, the
+messages are exactly what they were before chats existed.
 
 The patch is NOT trusted here: the Rust side applies it to a copy and validates it, and sends
 any rejection back through `history`. The system prompt (prompts/edit.md) is the same for every
@@ -126,6 +133,41 @@ def scene_table(timeline):
     return lines, start
 
 
+DECISIONS = {
+    "accepted": "the user ACCEPTED it, so it is in the current timeline",
+    "rejected": "the user REJECTED it, so it was not applied",
+    "ignored": "the user moved on without accepting it, so it was not applied",
+}
+
+
+def conversation_block(conversation):
+    """The earlier chat turns as compact text, oldest first; [] when there are none."""
+    turns = (conversation or {}).get("turns") or []
+    if not turns:
+        return []
+    out = [
+        "<conversation>",
+        "Earlier turns of this chat, oldest first. The timeline above is the current one: "
+        "accepted edits are already in it, others are not, and the user may have changed it "
+        "by hand since.",
+    ]
+    dropped = int((conversation or {}).get("dropped") or 0)
+    if dropped:
+        out.append(f"({dropped} older turn{'s' if dropped != 1 else ''} not shown.)")
+    for t in turns:
+        out.append("User: " + " ".join(str(t.get("user", "")).split()))
+        status = t.get("status", "edited")
+        head = f"Assistant ({status}"
+        if status == "edited" and t.get("decision") in DECISIONS:
+            head += "; " + DECISIONS[t["decision"]]
+        out.append(head + "): " + " ".join(str(t.get("reply", "")).split()))
+        changes = [" ".join(str(c).split()) for c in t.get("changes") or []]
+        if changes:
+            out.append("  Changes: " + " | ".join(changes))
+    out += ["</conversation>", ""]
+    return out
+
+
 def build_user_message(req):
     timeline = req["timeline"]
     lines, total = scene_table(timeline)
@@ -170,6 +212,7 @@ def build_user_message(req):
         json.dumps(timeline, ensure_ascii=False, indent=1),
         "</timeline>",
         "",
+        *conversation_block(req.get("conversation")),
         "<instruction>",
         str(req["instruction"]).strip(),
         "</instruction>",

@@ -14,6 +14,10 @@ dir=$(dirname "$0")
 echo run >> "$dir/runs"
 printf '%s' "$ANTHROPIC_API_KEY" > "$dir/saw"
 echo "helper saw $ANTHROPIC_API_KEY" >&2
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--request" ]; then cp "$2" "$dir/request.json"; fi
+  shift
+done
 sed "s/@ENV@/$ANTHROPIC_API_KEY/g" "$dir/reply.json"
 "#;
 const FAKE_KEY: &str = "sk-fake-test-value-000";
@@ -82,6 +86,7 @@ fn args(instruction: &str) -> ProposeArgs {
         instruction: instruction.into(),
         scene_id: Some("scene-01".into()),
         model: "claude-sonnet-5-5".into(),
+        conversation: None,
     }
 }
 
@@ -276,6 +281,7 @@ fn real_edit_through_the_desktop_path() {
         instruction: "make scene 1 slower".into(),
         scene_id: None,
         model: "claude-sonnet-5-5".into(),
+        conversation: None,
     };
     let work = std::env::temp_dir().join(format!("vimmer-desktop-real-edit-{}", std::process::id()));
     let env = AssistantEnv {
@@ -293,4 +299,65 @@ fn real_edit_through_the_desktop_path() {
     assert_eq!(got["ok"], true, "{}", got["error"]);
     assert_eq!(got["status"], "edited");
     assert!(got["outcome"]["timeline"]["scenes"][0]["duration_ms"].as_u64().unwrap() > 15000);
+}
+
+fn last_request(fx: &Fixture) -> Value {
+    serde_json::from_str(&fs::read_to_string(fx.dir.join("request.json")).unwrap()).unwrap()
+}
+
+/// The editor's `invoke("propose_edit", { args })` payload, as JSON.
+fn from_editor(extra: Value) -> ProposeArgs {
+    let mut v = json!({"timelineJson": TIMELINE, "instruction": "再慢一点", "sceneId": "scene-01",
+                       "model": "claude-sonnet-5-5"});
+    for (k, x) in extra.as_object().unwrap() {
+        v[k] = x.clone();
+    }
+    serde_json::from_value(v).unwrap()
+}
+
+#[test]
+fn a_single_request_from_the_editor_has_no_conversation_and_sends_none() {
+    let a = from_editor(json!({}));
+    assert!(a.conversation.is_none());
+    let fx = Fixture::new("noconv", Some(slower()));
+    assert_eq!(fx.propose(&a)["ok"], true);
+    assert!(last_request(&fx).get("conversation").is_none());
+}
+
+#[test]
+fn a_follow_up_sends_the_chat_to_the_helper() {
+    let chat = json!({"dropped": 2, "turns": [
+        {"user": "make scene 1 slower", "status": "edited", "reply": "Scene 1 is slower.",
+         "changes": ["scene-01: duration 15000 ms -> 20000 ms"], "decision": "accepted"}]});
+    let a = from_editor(json!({"conversation": chat}));
+    let fx = Fixture::new("conv", Some(slower()));
+    let got = fx.propose(&a);
+    assert_eq!(got["ok"], true, "{got}");
+    let req = last_request(&fx);
+    assert_eq!(req["conversation"], chat);
+    assert_eq!(req["history"], json!([]));
+    assert_eq!(req["instruction"], "再慢一点");
+}
+
+#[test]
+fn a_chat_that_is_too_long_is_an_input_error_before_the_key_is_read() {
+    let turn = json!({"user": "a", "status": "clarify", "reply": "b"});
+    let a = from_editor(json!({"conversation": {"turns": vec![turn; 13]}}));
+    let err = check_args(&a).unwrap_err();
+    assert!(err.contains("New chat") || err.contains("new chat"), "{err}");
+    let fx = Fixture::new("convlong", Some(slower()));
+    let key_read = Cell::new(false);
+    let key = || {
+        key_read.set(true);
+        Some(HelperKey::FromShell(FAKE_KEY.into()))
+    };
+    let helper = || Ok(fx.helper());
+    let v = propose(&fx.env(&key, &helper), &a);
+    assert_eq!(kind(&v), "input");
+    assert!(!key_read.get());
+    assert_eq!(fx.runs(), 0);
+    // A malformed chat is refused when the editor's arguments are read.
+    let bad = json!({"timelineJson": TIMELINE, "instruction": "x", "sceneId": null,
+                     "model": "claude-sonnet-5-5", "conversation": {"turns": [{"user": "a"}]}});
+    assert!(serde_json::from_value::<ProposeArgs>(bad).is_err());
 }

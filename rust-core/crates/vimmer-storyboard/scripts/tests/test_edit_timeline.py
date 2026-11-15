@@ -208,6 +208,65 @@ class EditHelperTest(unittest.TestCase):
         self.assertIn("`x` is not a field", msgs[2]["content"])
         self.assertIn("original timeline", msgs[2]["content"])
 
+    def test_without_a_conversation_the_messages_are_as_before_chats(self):
+        # Recorded from main's script before chats existed; must stay byte for byte.
+        with open(os.path.join(HERE, "fixtures", "messages_before_chat.json"), encoding="utf-8") as f:
+            expected = json.load(f)["messages"]
+        hist = [{"assistant": '{"status":"edited"}', "feedback": "op 0 (add /x): `x` is not a field"}]
+        for extra in ({}, {"conversation": None}, {"conversation": {"turns": [], "dropped": 3}}):
+            req = request(scene_id="scene-02", history=hist, **extra)
+            self.assertEqual(et.build_messages(req), expected, extra)
+        client = FakeClient(message(json.dumps(REPLY)))
+        run_main(request(scene_id="scene-02", history=hist), client)
+        self.assertEqual(client.calls[0]["messages"], expected)
+
+    def test_a_conversation_goes_before_the_instruction_as_compact_text(self):
+        conv = {
+            "dropped": 2,
+            "turns": [
+                {"user": "加个转场", "status": "clarify", "reply": "要哪种转场？淡入还是擦除？", "changes": []},
+                {"user": "淡入", "status": "edited", "reply": "第二段加了淡入。",
+                 "changes": ["scene-02: transition_in none -> fade 500 ms"], "decision": "accepted"},
+                {"user": "第三段慢一点", "status": "edited", "reply": "第三段延长到 5 秒。",
+                 "changes": ["scene-03: duration 4000 -> 5000 ms"], "decision": "rejected"},
+                {"user": "第四段也是", "status": "edited", "reply": "第四段延长。",
+                 "changes": ["scene-04: duration 4000 -> 5000 ms"], "decision": "ignored"},
+            ],
+        }
+        hist = [{"assistant": "{}", "feedback": "bad"}]
+        client = FakeClient(message(json.dumps(REPLY)))
+        run_main(request(instruction="再快一点", conversation=conv, history=hist), client)
+        msgs = client.calls[0]["messages"]
+        # One user message plus the retry loop, as before: the chat is not extra turns.
+        self.assertEqual([m["role"] for m in msgs], ["user", "assistant", "user"])
+        user = msgs[0]["content"]
+        block = user[user.index("<conversation>"): user.index("</conversation>")]
+        self.assertLess(user.index("</timeline>"), user.index("<conversation>"))
+        self.assertLess(user.index("</conversation>"), user.index("<instruction>\n再快一点\n</instruction>"))
+        self.assertIn("(2 older turns not shown.)", block)
+        self.assertIn("User: 加个转场\nAssistant (clarify): 要哪种转场？淡入还是擦除？", block)
+        self.assertIn("Assistant (edited; the user ACCEPTED it, so it is in the current timeline): 第二段加了淡入。", block)
+        self.assertIn("  Changes: scene-02: transition_in none -> fade 500 ms", block)
+        self.assertIn("the user REJECTED it, so it was not applied", block)
+        self.assertIn("moved on without accepting it", block)
+        # Old timelines are never resent: one <timeline> only.
+        self.assertEqual(user.count("<timeline>"), 1)
+        # The system prompt (cached) does not change with the chat.
+        plain = FakeClient(message(json.dumps(REPLY)))
+        run_main(request(), plain)
+        self.assertEqual(client.calls[0]["system"], plain.calls[0]["system"])
+
+    def test_one_dropped_turn_reads_naturally_and_none_says_nothing(self):
+        turn = {"user": "a", "status": "refused", "reply": "no"}
+        self.assertIn("(1 older turn not shown.)", "\n".join(et.conversation_block({"turns": [turn], "dropped": 1})))
+        self.assertNotIn("not shown", "\n".join(et.conversation_block({"turns": [turn]})))
+        self.assertEqual(et.conversation_block({"turns": []}), [])
+
+    def test_prompt_explains_the_conversation(self):
+        with open(PROMPT, encoding="utf-8") as f:
+            system = et.build_system_prompt(f.read())
+        self.assertIn("<conversation>", system)
+
     def test_haiku_has_no_fallback(self):
         client = FakeClient(message(json.dumps(REPLY), model="claude-haiku-5-5"))
         run_main(request(model="claude-haiku-5-5"), client)

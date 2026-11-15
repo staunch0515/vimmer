@@ -1,0 +1,17 @@
+{
+ "note": "build_messages() of main's edit_timeline.py (before chats) for request(scene_id='scene-02', history=HISTORY) in test_edit_timeline.py",
+ "messages": [
+  {
+   "role": "user",
+   "content": "Format: 1920x1080, 4 scenes, total 14479 ms, 0 subtitle cues, music: none, brand: none.\nScenes (numbered from 1 as people say them; JSON indices start at 0):\n1. id=scene-01 path=/scenes/0  start=0.00s  duration=3069ms  narrated  text=\"西安钟楼，古城的中心。\"\n2. id=scene-02 path=/scenes/1  start=3.07s  duration=4129ms  transition_in=fade 500ms  narrated  text=\"它始建于明代，至今已有六百多年。\"\n3. id=scene-03 path=/scenes/2  start=7.20s  duration=4000ms  transition_in=slide_left 600ms  narrated  keyframes=2  text=\"登上城楼，四条大街一览无余。\"\n4. id=scene-04 path=/scenes/3  start=11.20s  duration=3281ms  transition_in=wipe_left 500ms  narrated  text=\"来西安，别忘了看一看它。\"\n\nSelected scene: scene-02 (\"this scene\" means this one).\nAsset files available (use exactly these paths):\n- assets/sample.png\n- assets/design.png\n\n<timeline>\n{\n \"fps\": 30,\n \"resolution\": {\n  \"width\": 1920,\n  \"height\": 1080\n },\n \"scenes\": [\n  {\n   \"id\": \"scene-01\",\n   \"duration_ms\": 3069,\n   \"text\": \"西安钟楼，古城的中心。\",\n   \"highlights\": [\n    \"钟楼\"\n   ],\n   \"image\": \"assets/sample.jpeg\",\n   \"motion\": \"zoom_in\",\n   \"audio\": null,\n   \"narration\": {\n    \"voice\": null\n   },\n   \"transition_in\": null,\n   \"keyframes\": []\n  },\n  {\n   \"id\": \"scene-02\",\n   \"duration_ms\": 4129,\n   \"text\": \"它始建于明代，至今已有六百多年。\",\n   \"highlights\": [\n    \"六百多年\"\n   ],\n   \"image\": \"assets/design.png\",\n   \"motion\": \"pan_left\",\n   \"audio\": null,\n   \"narration\": {\n    \"voice\": null\n   },\n   \"transition_in\": {\n    \"kind\": \"fade\",\n    \"duration_ms\": 500\n   },\n   \"keyframes\": []\n  },\n  {\n   \"id\": \"scene-03\",\n   \"duration_ms\": 4000,\n   \"text\": \"登上城楼，四条大街一览无余。\",\n   \"highlights\": [\n    \"四条大街\"\n   ],\n   \"image\": \"assets/sample.png\",\n   \"motion\": \"static\",\n   \"audio\": null,\n   \"narration\": {\n    \"voice\": null\n   },\n   \"transition_in\": {\n    \"kind\": \"slide_left\",\n    \"duration_ms\": 600\n   },\n   \"keyframes\": [\n    {\n     \"at_ms\": 0,\n     \"scale\": 1.0,\n     \"x\": 0.0,\n     \"y\": 0.0,\n     \"opacity\": 1.0,\n     \"rotation\": 0.0,\n     \"ease\": \"ease_in_out\"\n    },\n    {\n     \"at_ms\": 4000,\n     \"scale\": 1.15,\n     \"x\": -3.0,\n     \"y\": -2.0,\n     \"opacity\": 1.0,\n     \"rotation\": 0.0,\n     \"ease\": \"ease_in_out\"\n    }\n   ]\n  },\n  {\n   \"id\": \"scene-04\",\n   \"duration_ms\": 3281,\n   \"text\": \"来西安，别忘了看一看它。\",\n   \"highlights\": [\n    \"别忘了\"\n   ],\n   \"image\": \"assets/quizbuks-taker-cover-center.png\",\n   \"motion\": \"zoom_out\",\n   \"audio\": null,\n   \"narration\": {\n    \"voice\": null\n   },\n   \"transition_in\": {\n    \"kind\": \"wipe_left\",\n    \"duration_ms\": 500\n   },\n   \"keyframes\": []\n  }\n ],\n \"subtitles\": [],\n \"music\": null\n}\n</timeline>\n\n<instruction>\n第二段节奏快一点\n</instruction>"
+  },
+  {
+   "role": "assistant",
+   "content": "{\"status\":\"edited\"}"
+  },
+  {
+   "role": "user",
+   "content": "The validator rejected that reply:\nop 0 (add /x): `x` is not a field\n\nFix it and reply with the complete corrected JSON object. Patch ops apply to the original timeline above, not to your earlier attempt."
+  }
+ ]
+}
