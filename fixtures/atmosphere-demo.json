@@ -117,6 +117,12 @@
             "intensity": 0.6
           }
         ]
+      },
+      "text_style": {
+        "outline": {
+          "color": "#000000",
+          "width": 4
+        }
       }
     },
     {
@@ -143,7 +149,7 @@
     {
       "start_ms": 12300,
       "end_ms": 14700,
-      "text": "This scene inherits the timeline look: auto grade from the music mood, plus dust"
+      "text": "This scene inherits the default look"
     }
   ],
   "music": {
