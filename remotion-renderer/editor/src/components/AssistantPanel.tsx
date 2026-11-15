@@ -2,13 +2,13 @@ import { useEffect, useReducer, useRef, useState, type Dispatch } from "react";
 import type { VideoTimeline } from "../../../src/types/timeline";
 import type { Selection } from "../model";
 import type { Action } from "../state";
-import { confirmDiscard, serialize } from "../project";
+import { serialize } from "../project";
 import {
   ASSISTANT_MODELS, failureHint, formatCost, proposeEdit,
   type AssistantModel, type EditProposal,
 } from "../assistant";
 import {
-  buildConversation, busy as isBusy, chatReducer, failureOf, initialChat, modelChangeClears, nextExchangeId, openProposal,
+  buildConversation, busy as isBusy, chatReducer, failureOf, initialChat, nextExchangeId, openProposal,
   type Exchange,
 } from "../chat";
 
@@ -31,8 +31,6 @@ const DECISION_LABEL = {
 /** "Claude Opus 5.5" -> "Opus 5.5", for the answer cards. */
 const shortModel = (id: AssistantModel): string =>
   (ASSISTANT_MODELS.find((m) => m.id === id)?.label ?? id).replace(/^Claude /, "");
-
-const CONFIRM_SWITCH = "换模型会开始新对话，当前对话会清空。继续吗？\n\nSwitching model starts a new chat. The current conversation will be cleared. Continue?";
 
 const selectedSceneId = (t: VideoTimeline, s: Selection): string | null => {
   const index = s.kind === "scene" ? s.index : s.kind === "keyframe" || s.kind === "layer" ? s.sceneIndex : -1;
@@ -80,15 +78,6 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
     chatDispatch({ type: "answer", id, generation, result });
   };
 
-  // One model per chat: switching in a chat with messages starts a new one, after asking.
-  // The reducer checks again (still idle, still the same switch) when the answer comes back.
-  const changeModel = async (next: AssistantModel) => {
-    if (busy || next === model) return;
-    const clears = modelChangeClears(chat, next);
-    if (clears && !(await confirmDiscard(CONFIRM_SWITCH))) return; // the controlled select stays on the old model
-    chatDispatch({ type: "setModel", model: next, confirmed: clears });
-  };
-
   const accept = (e: Exchange, p: EditProposal) => {
     if (e.base !== current) return;
     dispatch({ type: "applyAssistant", timeline: p.outcome.timeline });
@@ -112,9 +101,9 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
         </button>
       </div>
       <div className="assistant-row chat-header">
-        <label className="chat-model" title="Each chat uses one model. Switching model starts a new chat.">
+        <label className="chat-model" title="Used for your next message. Each answer shows the model that wrote it.">
           <span className="dim small">模型 Model</span>
-          <select value={model} onChange={(e) => void changeModel(e.target.value as AssistantModel)} disabled={busy} aria-label="Model 模型">
+          <select value={model} onChange={(e) => chatDispatch({ type: "setModel", model: e.target.value as AssistantModel })} disabled={busy} aria-label="Model 模型">
             {ASSISTANT_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </label>

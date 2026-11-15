@@ -36,7 +36,7 @@ export type ChatState = {
   generation: number;
   nextId: number;
   exchanges: Exchange[];
-  /** One model per chat: every message of this chat goes to it. */
+  /** The model the next message goes to (each request is separate, so it can change mid-chat). */
   model: AssistantModel;
 };
 
@@ -47,12 +47,8 @@ export type ChatAction =
   | { type: "reject"; id: number }
   | { type: "clear" }
   | { type: "openDocument"; doc: number }
-  /**
-   * Switch the chat's model. An empty chat just switches. A chat with messages switches only
-   * when `confirmed` (the user agreed to start over), and is then cleared like New chat.
-   * Ignored while a request runs.
-   */
-  | { type: "setModel"; model: AssistantModel; confirmed?: boolean };
+  /** The model for the next message; the chat is kept. Ignored while a request runs. */
+  | { type: "setModel"; model: AssistantModel };
 
 export const initialChat = (doc = 0, model: AssistantModel = DEFAULT_MODEL): ChatState => ({
   doc, generation: 0, nextId: 1, exchanges: [], model,
@@ -62,10 +58,6 @@ export const busy = (s: ChatState): boolean => s.exchanges.some((e) => e.result 
 
 /** The exchange a new message gets (for the caller to know its id before dispatching). */
 export const nextExchangeId = (s: ChatState): number => s.nextId;
-
-/** Whether switching to `model` would clear this chat (so the user has to confirm it). */
-export const modelChangeClears = (s: ChatState, model: AssistantModel): boolean =>
-  model !== s.model && s.exchanges.length > 0;
 
 const isEdit = (e: Exchange): e is Exchange & { result: EditProposal } => !!e.result?.ok && e.result.status === "edited";
 
@@ -95,10 +87,7 @@ export const chatReducer = (s: ChatState, a: ChatAction): ChatState => {
     case "openDocument":
       return a.doc === s.doc ? s : { ...initialChat(a.doc, s.model), generation: s.generation + 1, nextId: s.nextId };
     case "setModel":
-      if (a.model === s.model || busy(s)) return s;
-      if (s.exchanges.length === 0) return { ...s, model: a.model };
-      if (!a.confirmed) return s;
-      return { ...s, model: a.model, generation: s.generation + 1, exchanges: [] };
+      return a.model === s.model || busy(s) ? s : { ...s, model: a.model };
   }
 };
 

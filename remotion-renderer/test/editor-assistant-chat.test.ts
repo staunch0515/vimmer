@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  DEFAULT_MODEL, MAX_CHARS, MAX_TURNS, buildConversation, busy, chatReducer, initialChat, modelChangeClears, nextExchangeId,
+  DEFAULT_MODEL, MAX_CHARS, MAX_TURNS, buildConversation, busy, chatReducer, initialChat, nextExchangeId,
   openProposal,
   type ChatAction, type ChatState,
 } from "../editor/src/chat.ts";
@@ -92,50 +92,38 @@ test("opening another document clears the chat; the same document keeps it", () 
   assert.ok(nextExchangeId(other) > 2);
 });
 
-test("one model per chat: an empty chat just switches, a busy one never does", () => {
+test("the model can switch at any time except while a request runs", () => {
   const s = initialChat();
   assert.equal(s.model, DEFAULT_MODEL);
   assert.equal(DEFAULT_MODEL, "claude-opus-5-5");
-  assert.equal(modelChangeClears(s, "claude-haiku-5-5"), false);
   const switched = chatReducer(s, { type: "setModel", model: "claude-haiku-5-5" });
   assert.equal(switched.model, "claude-haiku-5-5");
   assert.equal(switched.generation, s.generation);
   // The same model is a no-op.
-  assert.equal(chatReducer(switched, { type: "setModel", model: "claude-haiku-5-5", confirmed: true }), switched);
-  // Every message records the chat's model.
+  assert.equal(chatReducer(switched, { type: "setModel", model: "claude-haiku-5-5" }), switched);
+  // Every message records the model it went to.
   const sent = chatReducer(switched, { type: "send", instruction: "慢一点", sceneId: null, base: "T0" });
   assert.equal(sent.exchanges[0].model, "claude-haiku-5-5");
-  // In flight: the model cannot change, even confirmed.
-  assert.equal(chatReducer(sent, { type: "setModel", model: "claude-opus-5-5", confirmed: true }), sent);
+  // In flight: the model cannot change.
+  assert.equal(chatReducer(sent, { type: "setModel", model: "claude-opus-5-5" }), sent);
 });
 
-test("switching model in a chat with messages needs confirmation and starts a new chat", () => {
-  let s = say(initialChat(), "慢一点", proposal("edited", "ok", ["a"]));
-  assert.equal(s.exchanges[0].model, "claude-opus-5-5");
-  assert.equal(modelChangeClears(s, "claude-sonnet-5-5"), true);
-  assert.equal(modelChangeClears(s, "claude-opus-5-5"), false);
-  // Not confirmed: nothing changes, the old model stays.
-  assert.equal(chatReducer(s, { type: "setModel", model: "claude-sonnet-5-5" }), s);
-  assert.equal(chatReducer(s, { type: "setModel", model: "claude-sonnet-5-5", confirmed: false }), s);
-  // Confirmed: cleared like New chat, and the new model is used.
-  const switched = chatReducer(s, { type: "setModel", model: "claude-sonnet-5-5", confirmed: true });
-  assert.deepEqual(switched.exchanges, []);
-  assert.equal(switched.model, "claude-sonnet-5-5");
-  assert.ok(switched.generation > s.generation);
-  s = say(switched, "再慢一点", proposal("clarify", "?"));
-  assert.equal(s.exchanges[0].model, "claude-sonnet-5-5");
-  assert.ok(nextExchangeId(s) > 2);
-});
-
-test("an answer to a request from before a model switch is dropped", () => {
-  // Busy chats cannot switch; but an answer racing a clear-then-switch is still dropped.
-  let s = chatReducer(say(initialChat(), "a", proposal("clarify", "?")), { type: "send", instruction: "b", sceneId: null, base: "T0" });
-  const gen = s.generation;
-  s = chatReducer(s, { type: "clear" });
-  s = chatReducer(s, { type: "setModel", model: "claude-haiku-5-5" });
-  assert.equal(s.model, "claude-haiku-5-5");
-  const late = chatReducer(s, { type: "answer", id: 2, generation: gen, result: proposal("edited", "late", ["x"]) });
-  assert.deepEqual(late.exchanges, []);
+test("switching model mid-chat keeps the chat, its open proposal and the conversation", () => {
+  let s = say(initialChat(), "加个转场", proposal("clarify", "哪种？"));
+  s = say(s, "淡入", proposal("edited", "ok", ["scene-02: transition none -> fade 500 ms"]));
+  const before = s;
+  s = chatReducer(s, { type: "setModel", model: "claude-sonnet-5-5" });
+  assert.equal(s.model, "claude-sonnet-5-5");
+  assert.equal(s.generation, before.generation);
+  assert.deepEqual(s.exchanges, before.exchanges);
+  assert.ok(openProposal(s.exchanges[1]));
+  assert.deepEqual(buildConversation(s.exchanges), buildConversation(before.exchanges));
+  // The proposal from the old model can still be accepted.
+  assert.equal(chatReducer(s, { type: "accept", id: 2 }).exchanges[1].decision, "accepted");
+  // The next message goes to the new model; earlier answers keep theirs.
+  s = say(s, "第三段也这样", proposal("edited", "ok", ["b"]));
+  assert.deepEqual(s.exchanges.map((e) => e.model), ["claude-opus-5-5", "claude-opus-5-5", "claude-sonnet-5-5"]);
+  assert.equal(buildConversation(s.exchanges).turns.length, 3);
 });
 
 test("the model is kept across New chat and opening another document", () => {
