@@ -1,0 +1,105 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "brand": {
+    "logo": {
+      "src": "assets/brand/vimmer-logo.png",
+      "corner": "top_right",
+      "size": 0.08,
+      "margin": 0.05
+    }
+  },
+  "scenes": [
+    {
+      "id": "title-top",
+      "duration_ms": 2500,
+      "text": "Coffee at Home",
+      "highlights": [
+        "Coffee"
+      ],
+      "text_layout": {
+        "size": 140,
+        "position": "top"
+      },
+      "image": "assets/sample.png",
+      "motion": "zoom_in",
+      "audio": null
+    },
+    {
+      "id": "small-middle",
+      "duration_ms": 2500,
+      "text": "A smaller line, centered in the frame",
+      "highlights": [],
+      "text_layout": {
+        "size": 64,
+        "position": "middle"
+      },
+      "image": "assets/sample.jpeg",
+      "motion": "pan_left",
+      "audio": null,
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 400
+      },
+      "text_style": {
+        "outline": {
+          "color": "#000000",
+          "width": 4
+        }
+      }
+    },
+    {
+      "id": "default-bottom",
+      "duration_ms": 2500,
+      "text": "The default: 92 px at the bottom",
+      "highlights": [
+        "default"
+      ],
+      "image": "assets/sample.png",
+      "motion": "zoom_out",
+      "audio": null
+    },
+    {
+      "id": "auto-narrated",
+      "duration_ms": 9700,
+      "text": "Grind your beans just before you brew. Heat the water until it is almost boiling. Pour it slowly in small circles over the grounds. Wait four minutes, then press and enjoy the cup.",
+      "highlights": [
+        "slowly",
+        "enjoy"
+      ],
+      "text_layout": {
+        "size": 110,
+        "paging": "auto"
+      },
+      "image": "assets/sample.jpeg",
+      "motion": "zoom_in",
+      "audio": null,
+      "narration": {
+        "voice": "Samantha"
+      },
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 400
+      }
+    },
+    {
+      "id": "manual-silent",
+      "duration_ms": 7500,
+      "text": "手动分页：空一行就是新的一页。\n\n背景和镜头不会重新开始，\n文字一页一页地出现。\n\n最后一页：享受你的咖啡！",
+      "highlights": [
+        "咖啡"
+      ],
+      "text_layout": {
+        "position": "middle",
+        "paging": "manual"
+      },
+      "image": "assets/sample.png",
+      "motion": "pan_right",
+      "audio": null
+    }
+  ],
+  "subtitles": []
+}

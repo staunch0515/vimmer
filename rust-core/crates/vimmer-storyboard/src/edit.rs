@@ -598,6 +598,8 @@ enum Kind {
     TextStyle,
     TextOutline,
     TextShadow,
+    /// The size, position and paging of the scene text (`scene.text_layout`, `brand.text_layout`).
+    TextLayout,
     /// A text box's `border`.
     TextBorder,
     /// A bar chart's `bars` list and one bar.
@@ -669,6 +671,7 @@ impl Kind {
                 ("fonts", BrandFonts),
                 ("logo", Logo),
                 ("text_style", TextStyle),
+                ("text_layout", TextLayout),
             ],
             BrandColors => &[
                 ("primary", Leaf),
@@ -696,6 +699,7 @@ impl Kind {
                 ("text", Leaf),
                 ("highlights", Highlights),
                 ("text_style", TextStyle),
+                ("text_layout", TextLayout),
                 ("image", Leaf),
                 ("motion", Leaf),
                 ("video", Video),
@@ -732,6 +736,7 @@ impl Kind {
                 ("shadow", TextShadow),
             ],
             TextOutline => &[("color", Leaf), ("width", Leaf)],
+            TextLayout => &[("size", Leaf), ("position", Leaf), ("paging", Leaf)],
             TextShadow => &[("color", Leaf), ("x", Leaf), ("y", Leaf), ("blur", Leaf)],
             Bar => &[("label", Leaf), ("value", Leaf), ("color", Leaf)],
             Audio => &[("source", Leaf), ("offset_ms", Leaf)],
@@ -815,6 +820,7 @@ impl Kind {
             Kind::LayerAnimation => "a layer enter/exit animation",
             Kind::TextBackground => "a text background box",
             Kind::TextStyle => "a text style",
+            Kind::TextLayout => "a text layout (size, position, paging)",
             Kind::TextOutline => "a text outline",
             Kind::TextShadow => "a text shadow",
             Kind::TextBorder => "a text box border",
@@ -2166,6 +2172,7 @@ fn show_field(key: &str, v: &Value) -> String {
             Err(_) => show(v),
         },
         "look" => show_look(v),
+        "text_layout" => show_text_layout(v),
         "highlights" => match v {
             Value::Array(a) if a.is_empty() => "none".into(),
             Value::Array(a) => a
@@ -2180,6 +2187,28 @@ fn show_field(key: &str, v: &Value) -> String {
 }
 
 /// A look as the change summary shows it: `warm 80% + snow 50%, dust 30%`.
+/// `120 px, top, auto paging` style summary of a text layout (unset parts left out).
+fn show_text_layout(v: &Value) -> String {
+    let Value::Object(m) = v else {
+        return "default".into();
+    };
+    let mut parts = Vec::new();
+    if let Some(size) = m.get("size").and_then(Value::as_f64) {
+        parts.push(format!("{size} px"));
+    }
+    if let Some(p) = m.get("position").and_then(Value::as_str) {
+        parts.push(p.to_string());
+    }
+    if let Some(p) = m.get("paging").and_then(Value::as_str) {
+        parts.push(format!("{p} paging"));
+    }
+    if parts.is_empty() {
+        "default".into()
+    } else {
+        parts.join(", ")
+    }
+}
+
 fn show_look(v: &Value) -> String {
     let Ok(look) = serde_json::from_value::<vimmer_dsl::Look>(v.clone()) else {
         return show(v);
@@ -2282,7 +2311,7 @@ pub fn summarize(before: &VideoTimeline, after: &VideoTimeline) -> Vec<String> {
             }
         }
         // A removed text style or look is a key that is no longer written.
-        for key in ["text_style", "look"] {
+        for key in ["text_style", "text_layout", "look"] {
             if let (Some(old), None) = (a.get(key), b.get(key)) {
                 changes.push(format!("{} {} -> none", label(key), show_field(key, old)));
             }

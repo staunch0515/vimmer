@@ -1630,6 +1630,60 @@ fn black_outline_on_the_scene_text() {
     assert!(out.timeline["scenes"][0].get("text_style").is_none());
 }
 
+// --- text layout (字号 / 位置 / 文字分页) ------------------------------------------------------------
+
+#[test]
+fn bigger_text_title_on_top_and_paging_one_scene() {
+    // "字大一点" on the selected scene: a size above the default 92.
+    let out = ok(&small(), json!([{"op": "add", "path": "/scenes/0/text_layout", "value": {"size": 120}}]));
+    assert_eq!(out.timeline["scenes"][0]["text_layout"]["size"].as_f64(), Some(120.0));
+    assert!(
+        out.summary.iter().any(|l| l == "a: text_layout default -> 120 px"),
+        "{:?}",
+        out.summary
+    );
+    // "标题放到上面" and "这一幕的长文字分页显示": part by part.
+    let out = ok(
+        &out.timeline,
+        json!([
+            {"op": "add", "path": "/scenes/0/text_layout/position", "value": "top"},
+            {"op": "add", "path": "/scenes/0/text_layout/paging", "value": "auto"}
+        ]),
+    );
+    assert_eq!(
+        out.timeline["scenes"][0]["text_layout"],
+        json!({"size": 120, "position": "top", "paging": "auto"})
+    );
+    assert!(
+        out.summary.iter().any(|l| l.contains("120 px, top, auto paging")),
+        "{:?}",
+        out.summary
+    );
+    // Back to the default: the key is removed, and that is reported.
+    let out = ok(&out.timeline, json!([{"op": "remove", "path": "/scenes/0/text_layout"}]));
+    assert!(out.timeline["scenes"][0].get("text_layout").is_none());
+    assert!(out.summary.iter().any(|l| l.ends_with("-> none")), "{:?}", out.summary);
+    // A brand-wide default.
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/brand", "value": {"text_layout": {"position": "middle"}}}]),
+    );
+    assert_eq!(out.timeline["brand"]["text_layout"]["position"], "middle");
+}
+
+#[test]
+fn text_layout_values_are_checked() {
+    let r = err(&small(), json!([{"op": "add", "path": "/scenes/0/text_layout", "value": {"size": 300}}]));
+    assert!(text(&r).contains("text_layout.size 300 must be between 40 and 160"), "{}", text(&r));
+    let r = err(&small(), json!([{"op": "add", "path": "/scenes/0/text_layout", "value": {"position": "left"}}]));
+    assert!(text(&r).contains("unknown variant `left`"), "{}", text(&r));
+    let r = err(&small(), json!([{"op": "add", "path": "/scenes/0/text_layout", "value": {"align": "top"}}]));
+    assert!(text(&r).contains("unknown field `align` in a text layout"), "{}", text(&r));
+    // Render-only pages are not something the assistant writes.
+    let r = err(&small(), json!([{"op": "add", "path": "/scenes/0/text_pages", "value": []}]));
+    assert!(text(&r).contains("text_pages"), "{}", text(&r));
+}
+
 #[test]
 fn text_layer_outline_and_shadow() {
     let out = ok(

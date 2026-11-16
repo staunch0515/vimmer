@@ -175,6 +175,22 @@ class EditHelperTest(unittest.TestCase):
         self.assertEqual(lines[0], before[0])
         self.assertEqual(lines[1].split("  spoken=")[0], before[1])
 
+    def test_scene_table_shows_a_text_layout_only_when_set(self):
+        t = timeline()
+        before, _ = et.scene_table(t)
+        self.assertFalse(any("layout=" in line for line in before))
+        t["scenes"][1]["text_layout"] = {"size": 120, "position": "top", "paging": "auto"}
+        lines, _ = et.scene_table(t)
+        self.assertIn('layout={"size":120,"position":"top","paging":"auto"}', lines[1])
+        self.assertEqual(lines[0], before[0])
+
+    def test_prompt_documents_text_layout(self):
+        with open(PROMPT, encoding="utf-8") as f:
+            prompt = f.read()
+        for needle in ["`text_layout`", "字大一点", "标题放到上面", "这一幕的长文字分页显示", '"auto"', '"manual"',
+                       "40..160", "Never write `text_pages`"]:
+            self.assertIn(needle, prompt)
+
     def test_a_reply_that_sets_the_spoken_line_passes_through(self):
         reply = {
             "status": "edited",

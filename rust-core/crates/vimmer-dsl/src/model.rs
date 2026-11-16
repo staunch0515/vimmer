@@ -969,6 +969,34 @@ mod tests {
     }
 
     #[test]
+    fn old_fixtures_write_no_text_layout_or_pages_and_round_trip_byte_identical() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fixtures");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.ends_with(".json") || name.starts_with("brand.") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).unwrap();
+            let t: VideoTimeline = serde_json::from_str(&raw).unwrap();
+            let out = serde_json::to_string(&t).unwrap();
+            assert!(!out.contains("\"text_pages\""), "{name}");
+            if !raw.contains("\"text_layout\"") {
+                assert!(!out.contains("\"text_layout\""), "{name}");
+                // Serializing again gives the same bytes: nothing new is written.
+                let again: VideoTimeline = serde_json::from_str(&out).unwrap();
+                assert_eq!(serde_json::to_string(&again).unwrap(), out, "{name}");
+            }
+        }
+        // Absent layout: the old look, whatever the brand sets elsewhere.
+        let s: Scene = serde_json::from_str(r#"{"id":"a","duration_ms":1000,"text":"One. Two."}"#).unwrap();
+        let l = s.effective_text_layout(None);
+        assert_eq!((l.size, l.paging), (92.0, crate::text_layout::Paging::Off));
+        let res = Resolution { width: 1920, height: 1080 };
+        assert_eq!(s.text_page_texts(None, res), vec!["One. Two.".to_string()]);
+    }
+
+    #[test]
     fn unknown_transition_kind_is_a_parse_error() {
         let err = serde_json::from_str::<Transition>(r#"{"kind":"spin","duration_ms":400}"#);
         assert!(err.is_err());

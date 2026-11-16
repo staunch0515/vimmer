@@ -128,6 +128,10 @@ def scene_table(timeline):
         if spoken:
             # The spoken line, only when the scene has one (old timelines list as before).
             parts.append(f"spoken={json.dumps(_clip(spoken), ensure_ascii=False)}")
+        if s.get("text_layout"):
+            # Size / position / paging of the text, only when the scene sets any.
+            layout = json.dumps(s["text_layout"], ensure_ascii=False, separators=(",", ":"))
+            parts.append(f"layout={_clip(layout, 80)}")
         if s.get("look"):
             # The scene's own look (grade / overlays), only when it has one.
             look = json.dumps(s["look"], ensure_ascii=False, separators=(",", ":"))
