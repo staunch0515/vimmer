@@ -11,8 +11,8 @@ import {
   buildConversation, busy as isBusy, chatReducer, failureOf, initialChat, nextExchangeId, openProposal,
   type Exchange,
 } from "../chat";
-import { NEEDS_SCENE_HINT, fillPlaceholders, needsScene, sceneLabel, type SavedCommand, type SceneRef } from "../savedCommands";
-import { SavedCommands, useSavedCommands, type SaveDraft } from "./SavedCommands";
+import { NEEDS_SCENE_HINT, fillPlaceholders, needsScene, sceneLabel, type SavedPrompt, type SceneRef } from "../savedPrompts";
+import { SavedPrompts, useSavedPrompts, type SaveDraft } from "./SavedPrompts";
 
 type Props = {
   timeline: VideoTimeline;
@@ -50,7 +50,7 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
   const [chat, chatDispatch] = useReducer(chatReducer, docKey, initialChat);
   const logEnd = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const [commands, setCommands] = useSavedCommands();
+  const [prompts, setPrompts] = useSavedPrompts();
   const [saveDraft, setSaveDraft] = useState<SaveDraft | null>(null);
   /** Shown when a message needs a scene ({场景}) and none is selected. */
   const [sceneHint, setSceneHint] = useState(false);
@@ -69,8 +69,8 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
     logEnd.current?.scrollIntoView?.({ block: "nearest" });
   }, [chat.exchanges]);
 
-  /** Sends the input, or a saved command directly (`saved`; the input is then left as it is). */
-  const send = async (saved?: SavedCommand) => {
+  /** Sends the input, or a saved prompt directly (`saved`; the input is then left as it is). */
+  const send = async (saved?: SavedPrompt) => {
     const raw = (saved ? saved.text : instruction).trim();
     if (!raw || busy) return;
     // {场景} / {scene} become the selected scene's label; without a scene nothing is sent.
@@ -98,8 +98,8 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
     chatDispatch({ type: "answer", id, generation, result });
   };
 
-  /** Puts a saved command in the box (scene filled in when one is selected) for editing before Send. */
-  const applyCommand = (c: SavedCommand) => {
+  /** Puts a saved prompt in the box (scene filled in when one is selected) for editing before Send. */
+  const applyPrompt = (c: SavedPrompt) => {
     const filled = fillPlaceholders(c.text, scene);
     setInstruction(filled.ok ? filled.text : c.text);
     setSceneHint(!filled.ok);
@@ -164,10 +164,10 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
         <div ref={logEnd} />
       </div>
 
-      <SavedCommands
-        commands={commands}
-        setCommands={setCommands}
-        onUse={applyCommand}
+      <SavedPrompts
+        prompts={prompts}
+        setPrompts={setPrompts}
+        onUse={applyPrompt}
         onSend={(c) => void send(c)}
         busy={busy}
         draft={saveDraft}
@@ -204,9 +204,9 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
           className="link small saved-save"
           onClick={() => setSaveDraft({ text: instruction, useScene: useScene && !!sceneId })}
           disabled={!instruction.trim()}
-          title="Save the text in the box as a reusable command"
+          title="Save the text in the box as a reusable prompt"
         >
-          ☆ 保存为常用指令
+          ☆ 保存为提示词
         </button>
         <button className="btn primary" onClick={() => void send()} disabled={!instruction.trim() || busy}>
           {busy ? "Thinking… 思考中" : "Send 发送"}
@@ -235,7 +235,7 @@ const ExchangeView = ({ exchange: e, current, onAccept, onReject, onSave }: Exch
         <div>{e.instruction}</div>
         <div className="chat-user-foot">
           {e.sceneId ? <span className="dim small mono">{e.sceneId}</span> : <span />}
-          <button className="link small" onClick={() => onSave(e)} title="Save this message as a reusable command">☆ 收藏 Save</button>
+          <button className="link small" onClick={() => onSave(e)} title="Save this message as a reusable prompt">☆ 收藏 Save</button>
         </div>
       </div>
       {e.result === null && <div className="assistant-card chat-wait dim">Thinking… 思考中</div>}

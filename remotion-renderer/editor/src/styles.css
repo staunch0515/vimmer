@@ -538,7 +538,7 @@ textarea { resize: vertical; width: 100%; }
 .look-fields { display: flex; flex-direction: column; gap: 6px; }
 .look-overlay { border: 1px solid var(--border, #2a2a30); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
 .look-overlay input[type="color"] { width: 36px; height: 24px; padding: 0; border: none; background: none; }
-/* 常用指令 Saved assistant commands (above the message box) */
+/* 提示词 Prompts picker (above the message box) */
 .saved-commands { display: flex; flex-direction: column; gap: 6px; }
 .saved-head { gap: 4px; }
 .saved-head .btn.active { color: var(--text); background: var(--hover); }
@@ -563,3 +563,15 @@ textarea { resize: vertical; width: 100%; }
 .chat-user-foot .link:hover { opacity: 1; }
 .assistant-row.chat-send .saved-save { margin-right: auto; }
 .link:disabled { opacity: 0.4; cursor: default; }
+/* 提示词管理 Prompt manager (inside the Assistant tab) */
+.prompt-manager { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--elevated); }
+.prompt-manager-title { flex: 1; }
+.prompt-filters input[type="search"] { flex: 1; min-width: 0; }
+.assistant-row.prompt-filters select { flex: 0 1 auto; max-width: 45%; }
+.prompt-manager .saved-list { max-height: 40vh; }
+.manager-item { align-items: flex-start; padding: 2px 0; }
+.manager-text { flex: 1; min-width: 0; padding: 2px 6px; font-size: 12px; }
+.manager-text .saved-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.manager-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved-cat { flex: none; font-size: 10px; padding: 0 4px; border-radius: 4px; border: 1px solid var(--border-strong); color: var(--text-2); }
+.manager-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
