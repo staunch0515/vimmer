@@ -84,8 +84,13 @@ export type GenerateArgs = {
   targetSeconds: number | null;
   model: GenerateModel;
   illustrate: boolean;
+  /** Illustration detail; missing means `rich`. */
+  detail?: IllustrationDetail;
   name: string | null;
 };
+
+/** `rich`: layered, lit, textured pictures; `simple`: the original flat ones (cheaper). */
+export type IllustrationDetail = "rich" | "simple";
 
 export type Cost = { typical: number; worst: number };
 

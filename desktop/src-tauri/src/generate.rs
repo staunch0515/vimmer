@@ -22,7 +22,7 @@ use vimmer_media::{Limits, TtsEngine};
 use vimmer_storyboard::generate::{
     generate_with_key_check, FailureKind, GenerateOptions, LlmHelper, Usage,
 };
-use vimmer_storyboard::illustrate::{self, illustrate_with_key_check, IllustrateOptions, IllustrationReport, PRICES};
+use vimmer_storyboard::illustrate::{self, illustrate_with_key_check, Detail, IllustrateOptions, IllustrationReport, PRICES};
 use vimmer_storyboard::{Language, Orientation};
 
 use crate::api_key::{helper_key, scrub, NO_KEY_MESSAGE};
@@ -55,6 +55,9 @@ pub struct GenerateArgs {
     pub model: String,
     #[serde(default)]
     pub illustrate: bool,
+    /// Illustration detail, `rich` or `simple`; missing: `rich`.
+    #[serde(default)]
+    pub detail: Option<String>,
     /// Project name; missing or blank: the storyboard's title.
     #[serde(default)]
     pub name: Option<String>,
@@ -121,7 +124,16 @@ pub fn check_args(args: &GenerateArgs) -> Result<(), String> {
     if args.target_seconds.is_some_and(|s| !(5..=1_800).contains(&s)) {
         return Err("The target length must be between 5 and 1800 seconds.".into());
     }
+    detail(args)?;
     Ok(())
+}
+
+/// The illustration detail the dialog asked for; the app's default is `rich`.
+fn detail(args: &GenerateArgs) -> Result<Detail, String> {
+    match args.detail.as_deref() {
+        None => Ok(Detail::Rich),
+        Some(name) => Detail::parse(name).ok_or_else(|| format!("Unknown illustration detail `{name}`.")),
+    }
 }
 
 /// Tokens of a text, roughly: one per CJK (or other non-ASCII) character, one per four ASCII
@@ -158,7 +170,7 @@ pub fn estimate(args: &GenerateArgs) -> Result<Estimate, String> {
     let call = |n: f64| ((input + n * (output + 300.0)) * p_in + output * p_out) / 1e6;
     let storyboard = Cost { typical: call(0.0), worst: call(0.0) + call(1.0) + call(2.0) };
     let pictures = match args.illustrate {
-        true => illustrate::estimate_cost(&args.model, illustrate::DEFAULT_EFFORT, scenes)
+        true => illustrate::estimate_cost(&args.model, illustrate::DEFAULT_EFFORT, detail(args)?, scenes)
             .map(|(typical, worst)| Cost { typical, worst }),
         false => None,
     };
@@ -314,6 +326,7 @@ fn run(
                 });
                 let mut io = IllustrateOptions::new(env.studio.public_dir.clone(), chrome.clone());
                 io.model = args.model.clone();
+                io.detail = detail(args).unwrap_or(Detail::Rich);
                 io.timeout = env.timeout;
                 let drawn = illustrate_with_key_check(
                     &env.helper,
@@ -538,6 +551,7 @@ sed "s/@ENV@/$ANTHROPIC_API_KEY/g" "$dir/reply.json"
             target_seconds: None,
             model: "claude-sonnet-5-5".into(),
             illustrate: false,
+            detail: None,
             name: None,
             confirmed: true,
         }
@@ -695,9 +709,11 @@ sed "s/@ENV@/$ANTHROPIC_API_KEY/g" "$dir/reply.json"
         let sonnet = estimate(&a).unwrap();
         assert!((0.010..=0.022).contains(&sonnet.storyboard.typical), "{sonnet:?}");
 
-        // Illustrations cost far more and scale with the scenes (about $0.10 a scene with Opus).
+        // Illustrations cost far more and scale with the scenes (about $0.10 a scene with Opus
+        // for `simple` pictures).
         a.model = "claude-opus-5-5".into();
         a.illustrate = true;
+        a.detail = Some("simple".into());
         a.target_seconds = Some(60);
         let drawn = estimate(&a).unwrap();
         assert_eq!(drawn.scenes, 10);
@@ -705,6 +721,14 @@ sed "s/@ENV@/$ANTHROPIC_API_KEY/g" "$dir/reply.json"
         assert!((0.5..=1.2).contains(&pictures.typical), "{pictures:?}");
         assert!((drawn.total.typical - drawn.storyboard.typical - pictures.typical).abs() < 1e-12);
         assert!(drawn.total.worst > drawn.total.typical);
+        // Rich pictures (the app's default when no detail is sent) cost about 3x as much.
+        a.detail = None;
+        let rich = estimate(&a).unwrap().illustrate.unwrap();
+        assert!(rich.typical > 2.5 * pictures.typical && rich.typical < 4.0 * pictures.typical, "{rich:?}");
+        a.detail = Some("rich".into());
+        assert_eq!(estimate(&a).unwrap().illustrate, Some(rich));
+        a.detail = Some("fancy".into());
+        assert!(estimate(&a).is_err());
 
         assert!(estimate(&args("")).is_err());
         assert_eq!(expected_scenes("word ".repeat(165).as_str(), None), 6);

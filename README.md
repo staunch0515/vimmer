@@ -780,9 +780,10 @@ costs roughly one more call.
 
 ### Illustrations (`--illustrate`, `vimmer illustrate`)
 
-With `--illustrate`, Claude also draws one flat vector illustration (SVG) per scene, and the
+With `--illustrate`, Claude also draws one vector illustration (SVG) per scene, and the
 scene renders on that picture instead of a plain background. It is **off by default** because
-it costs far more than the storyboard (about $0.10 per scene with Opus, see the table below).
+it costs far more than the storyboard (about $0.19 per scene with Opus at the default `rich`
+detail, $0.07 at `simple`; see the table below).
 Before it starts, Vimmer prints an estimate; at the end, the actual tokens and cost.
 
 ```bash
@@ -796,6 +797,11 @@ cargo run --release -p vimmer-cli -- illustrate ../out/xian/storyboard.json \
   --remotion-dir ../remotion-renderer -o ../out/xian-illustrated.mp4 --tts kokoro --auto-subtitles all
 ```
 
+- `--illustrate-detail` (default `rich`): `rich` pictures are layered and lit like an editorial
+  illustration or travel poster (sky glow, hazy far layer, detailed subject, dark foreground
+  framing, light rays, particles, vignette, film grain, material patterns), 10-15 KB of SVG,
+  about 3x the cost of `simple`; `simple` is the original flat style (a few dozen shapes,
+  4-7 KB). Both are cached separately, so switching back and forth costs nothing twice.
 - `--illustrate-model` (default `claude-opus-5-5`; `claude-sonnet-5-5` is about half the
   price), `--illustrate-effort` (default `medium`; `low` is cheaper but visibly rougher),
   `--illustrate-jobs` (pictures drawn at once, default 3), `--chrome PATH`.
@@ -814,10 +820,16 @@ How it works:
    and every scene's `image_prompt` and returns a style guide: 5–7 hex colours, background,
    line and shape rules, composition, mood, recurring motifs. Every scene request carries that
    guide, so the pictures share palette, line work and layout.
+   At `rich` the guide also fixes the key light (direction, glow, rim and shadow colours), the
+   depth layers and their haze, and the texture (grain amount, patterns), with 7-9 colours.
 2. **One SVG per scene**, up to 3 at once. The prompt fixes the canvas (`viewBox` 1920x1080 or
    1080x1920 like the timeline), keeps the main subject in the upper ~55 % and the lower ~45 %
    calm and dark where the scene text and subtitles go, keeps a 6 % margin for the camera
-   motion, and forbids text in the picture.
+   motion, and forbids text in the picture. At `rich` it also asks for depth in 4-5 layers, one
+   key light (shadow side and highlight edge on every main form, glows, soft cast shadows),
+   atmosphere (haze, particles, vignette) and texture (an `feTurbulence` grain overlay,
+   patterns), shows an abridged example of that structure, and asks for 15-25 KB (at most 60 KB)
+   by getting richness from gradients, filters and `<symbol>`/`<use>` rather than from points.
 3. **Sanitize** (`vimmer-media/src/svg.rs`). The SVG is untrusted. A strict XML parser (no
    DOCTYPE/entities, 512 KB, 8000 elements, depth 48) rebuilds the document from an allow-list
    of drawing elements: `script`, `foreignObject`, `image`, `a`, `iframe`, animation elements and
@@ -834,7 +846,9 @@ How it works:
    (normalization, Ken Burns motion). Scenes on a picture get a soft dark gradient under the
    text; text-only scenes look exactly as before.
 5. **Cache**: `remotion-renderer/public/generated/illustrations/` (git-ignored) holds
-   `<hash>.svg` and `<hash>.png`, the hash covering model, effort, a cache version, the style
+   `<hash>.svg` and `<hash>.png`, the hash covering model, effort, a cache version
+   (`illustrate-v1` for `simple`, unchanged since before the detail levels, so old pictures are
+   still found; `illustrate-rich-v1` for `rich`), the style
    guide, the picture prompt and the canvas size; the style guide is cached as
    `style-<hash>.json`. Running again with the same storyboard makes no API call (it works
    even without a key). If rasterizing fails, the sanitized SVG is kept, so the next run only
@@ -852,7 +866,20 @@ nothing removed by the sanitizer):
 | ja-sakura, `claude-opus-5-5` | 10 | 1,988–3,846 (avg 2,679) | $0.061 | 3.7–7.2 KB | $0.027 | $0.63 |
 | zh-xian, `claude-sonnet-5-5` | 11 | 1,396–1,901 (avg 1,662) | $0.020 | 2.5–3.4 KB | $0.013 | $0.23 |
 
-Input is about 1,700 tokens per picture (prompt, style guide, scene). Opus draws richer
+Detail levels, measured on 2026-11-16 (`claude-opus-5-5`, effort `medium`, the first 3 scenes
+of the `zh-xian` (landscape) and `en-coffee` (portrait) examples, every SVG accepted on the
+first try, nothing removed by the sanitizer):
+
+| Detail | Output tokens / picture | Cost / picture | SVG size | Style call | 5-scene video |
+|---|---|---|---|---|---|
+| `simple` | 1,986–4,069 (avg 2,933) | $0.046–0.088 (avg $0.065) | 3.7–6.5 KB | $0.021 | ≈ $0.35 |
+| `rich` | 6,114–13,338 (avg 8,525) | $0.138–0.283 (avg $0.187) | 10–15 KB | $0.036 | ≈ $0.97 |
+
+A rich call has about 4,000 input tokens (longer prompt and style guide); thinking is only
+~3,000 of its output tokens, the rest is the SVG, so the size target is what sets the price.
+The printed estimate assumes ~9,500 output tokens per rich picture at `medium`.
+
+Input is about 1,700 tokens per `simple` picture (prompt, style guide, scene). Opus draws richer
 scenes (more buildings, lanterns, light, depth); Sonnet's are simpler and flatter but in the
 same consistent style, at about a quarter of the cost. A correction call roughly doubles the
 cost of that picture. The printed estimate assumes ~3,500 output tokens per picture at
@@ -1109,7 +1136,9 @@ length. The list plays a render in the app, shows it in Finder or deletes it (to
 
 **Generate from text** (Home). Paste a text or open a `.txt` file, pick the language (detected
 from the text by default), format, optional length in seconds, model (Opus 5.5, or Sonnet 5.5
-at about half the price) and whether Claude also draws an illustration per scene. The dialog
+at about half the price) and whether Claude also draws an illustration per scene, and if so
+how detailed (**Rich**, the default: layered, lit, textured pictures; **Simple**: the original
+flat ones at about a third of the price; see "Illustrations"). The dialog
 shows a cost estimate that follows what you type; it is computed locally from the token counts
 and the prices under [Cost](#cost), with the illustration estimate of `vimmer illustrate`.
 **Review cost…** shows the amount again and **nothing is sent before you press

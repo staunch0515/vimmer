@@ -47,9 +47,55 @@ pub const RASTER_TIMEOUT: Duration = Duration::from_secs(60);
 pub const MAX_ATTEMPTS: u32 = 2;
 /// Folder under the public dir.
 pub const ILLUSTRATION_DIR: &str = "generated/illustrations";
-/// Part of every cache key; bump it when the prompts change enough that old pictures should
-/// not be reused.
+/// Part of every `simple` cache key; bump it when the simple prompts change enough that old
+/// pictures should not be reused.
 pub const CACHE_VERSION: &str = "illustrate-v1";
+/// The same for `rich` pictures (a separate version, so `simple` results stay cached).
+pub const CACHE_VERSION_RICH: &str = "illustrate-rich-v1";
+
+/// How elaborate the pictures are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Detail {
+    /// The original flat pictures: a few dozen shapes, about 5 KB of SVG.
+    #[default]
+    Simple,
+    /// Layered, lit and textured pictures (depth, glow, haze, grain): about 3x the cost.
+    Rich,
+}
+
+impl Detail {
+    /// Names accepted on the command line and from the app.
+    pub const NAMES: [&'static str; 2] = ["simple", "rich"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Detail::Simple => "simple",
+            Detail::Rich => "rich",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "simple" => Some(Detail::Simple),
+            "rich" => Some(Detail::Rich),
+            _ => None,
+        }
+    }
+
+    fn cache_version(self) -> &'static str {
+        match self {
+            Detail::Simple => CACHE_VERSION,
+            Detail::Rich => CACHE_VERSION_RICH,
+        }
+    }
+}
+
+impl std::fmt::Display for Detail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// USD per million tokens (input, output), first-party API prices from the claude-api skill
 /// (2026-11-03). Must match `PRICES` in `scripts/generate_storyboard.py` (a test checks).
@@ -75,8 +121,8 @@ const FATAL_KINDS: &[&str] = &[
 ];
 
 /// Used when the style call fails for a reason other than the API being unavailable.
-pub fn fallback_style() -> Value {
-    json!({
+pub fn fallback_style(detail: Detail) -> Value {
+    let mut style = json!({
         "name": "Calm flat dusk",
         "palette": ["#0f172a", "#1e293b", "#334155", "#3b82f6", "#f59e0b", "#e2e8f0"],
         "background": "Vertical gradient from #334155 at the top to #0f172a in the lower half.",
@@ -85,7 +131,13 @@ pub fn fallback_style() -> Value {
         "composition": "Subject centred in the upper half; lower part is dark calm ground.",
         "mood": "Quiet, clear, slightly warm evening light.",
         "motifs": "A soft round sun or moon in #f59e0b, low rolling ground shapes."
-    })
+    });
+    if detail == Detail::Rich {
+        style["lighting"] = json!("Warm key light from the upper right (#f59e0b glow, #fde68a rim light); shadows #0b1120, soft.");
+        style["depth"] = json!("Sky, far hills fading into #334155 haze, mid ground, subject, dark #0f172a foreground shapes at the side edges.");
+        style["texture"] = json!("Film grain at opacity 0.08; faint stripes on fabric and wood.");
+    }
+    style
 }
 
 /// What to draw and how.
@@ -93,6 +145,7 @@ pub fn fallback_style() -> Value {
 pub struct IllustrateOptions {
     pub model: String,
     pub effort: String,
+    pub detail: Detail,
     pub concurrency: usize,
     /// Per API call.
     pub timeout: Duration,
@@ -111,6 +164,7 @@ impl IllustrateOptions {
         Self {
             model: DEFAULT_MODEL.into(),
             effort: DEFAULT_EFFORT.into(),
+            detail: Detail::default(),
             concurrency: DEFAULT_CONCURRENCY,
             timeout: DEFAULT_TIMEOUT,
             max_tokens: None,
@@ -150,6 +204,7 @@ pub struct SceneIllustration {
 pub struct IllustrationReport {
     pub model: String,
     pub effort: String,
+    pub detail: Detail,
     pub style: Option<Value>,
     pub style_cached: bool,
     pub style_usage: Usage,
@@ -199,27 +254,49 @@ impl IllustrationReport {
     }
 }
 
-/// Expected and worst-case cost (USD) of illustrating `scenes` scenes, or `None` for a model
-/// without a known price. Output tokens per scene are the measured averages of Claude Opus 5.5
+/// Expected and worst-case cost (USD) of illustrating `scenes` scenes at `detail`, or `None`
+/// for a model without a known price. Output tokens per scene are the measured averages of Claude Opus 5.5
 /// on the zh / ja examples at effort medium (~3,300; Sonnet 5.5 used ~1,750), rounded up; the
 /// other efforts are scaled from a low/medium probe. The worst case assumes every scene needs
 /// its correction call.
-pub fn estimate_cost(model: &str, effort: &str, scenes: usize) -> Option<(f64, f64)> {
+pub fn estimate_cost(
+    model: &str,
+    effort: &str,
+    detail: Detail,
+    scenes: usize,
+) -> Option<(f64, f64)> {
     let (_, p_in, p_out) = PRICES.iter().find(|(m, _, _)| *m == model)?;
-    let scene_out: f64 = match effort {
+    let simple_out: f64 = match effort {
         "low" => 1_800.0,
         "medium" => 3_500.0,
         "high" => 6_000.0,
         "xhigh" => 9_000.0,
         _ => 13_000.0,
     };
-    let style = (1_200.0 * p_in + 1_000.0 * p_out) / 1e6;
-    let scene = (1_700.0 * p_in + scene_out * p_out) / 1e6;
+    // Rich: RICH_SCENE_OUT more output tokens (the longer SVG), a longer prompt and style.
+    let (scene_in, scene_out, style_out, svg_tokens) = match detail {
+        Detail::Simple => (1_700.0, simple_out, 1_000.0, 4_000.0),
+        Detail::Rich => (
+            RICH_SCENE_IN,
+            simple_out + RICH_SCENE_OUT,
+            1_600.0,
+            4_000.0 + RICH_SCENE_OUT,
+        ),
+    };
+    let style = (1_200.0 * p_in + style_out * p_out) / 1e6;
+    let scene = (scene_in * p_in + scene_out * p_out) / 1e6;
     // A correction call resends the first reply as input.
-    let retry = ((1_900.0 + 4_000.0) * p_in + scene_out * p_out) / 1e6;
+    let retry = ((scene_in + 200.0 + svg_tokens) * p_in + scene_out * p_out) / 1e6;
     let n = scenes as f64;
     Some((style + n * scene, style + n * (scene + retry)))
 }
+
+/// Extra output tokens of a `rich` picture over a `simple` one at the same effort, and the
+/// input tokens of a rich scene call (longer prompt and style guide). Measured 2026-11-16 with
+/// Claude Opus 5.5 at medium on zh-xian / en-coffee: 6,114-13,338 output tokens (avg 8,525)
+/// for 10-15 KB of SVG, ~3,990 input; rounded up.
+const RICH_SCENE_OUT: f64 = 6_000.0;
+const RICH_SCENE_IN: f64 = 4_000.0;
 
 /// Cache key: 32 hex digits over the given parts.
 pub fn cache_key(parts: &[&str]) -> String {
@@ -411,6 +488,7 @@ fn header(sb: &Storyboard, opts: &IllustrateOptions, kind: &str) -> Value {
         "kind": kind,
         "model": opts.model,
         "effort": opts.effort,
+        "detail": opts.detail.as_str(),
         "timeout_secs": opts.timeout.as_secs().max(1),
         "title": sb.title,
         "language": lang_code(sb.language),
@@ -465,6 +543,7 @@ pub fn illustrate_with_key_check(
     let mut report = IllustrationReport {
         model: opts.model.clone(),
         effort: opts.effort.clone(),
+        detail: opts.detail,
         scenes: (0..sb.scenes.len())
             .map(|i| SceneIllustration {
                 scene: i,
@@ -520,7 +599,7 @@ pub fn illustrate_with_key_check(
 
     // ---- style guide
     let mut style_parts: Vec<String> = vec![
-        CACHE_VERSION.into(),
+        opts.detail.cache_version().into(),
         "style".into(),
         opts.model.clone(),
         opts.effort.clone(),
@@ -589,7 +668,7 @@ pub fn illustrate_with_key_check(
                         report
                             .warnings
                             .push("the style reply had no style; using a built-in style".into());
-                        fallback_style()
+                        fallback_style(opts.detail)
                     }
                 }
             }
@@ -611,7 +690,7 @@ pub fn illustrate_with_key_check(
                 report.warnings.push(format!(
                     "the style call failed ({message}); using a built-in style"
                 ));
-                fallback_style()
+                fallback_style(opts.detail)
             }
         }
     };
@@ -694,7 +773,7 @@ pub fn illustrate_with_key_check(
 
 fn scene_key(opts: &IllustrateOptions, style: &Value, prompt: &str, canvas_key: &str) -> String {
     cache_key(&[
-        CACHE_VERSION,
+        opts.detail.cache_version(),
         "scene",
         &opts.model,
         &opts.effort,

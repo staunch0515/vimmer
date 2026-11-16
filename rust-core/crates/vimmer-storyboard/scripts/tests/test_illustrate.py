@@ -4,6 +4,7 @@
         rust-core/crates/vimmer-storyboard/scripts/tests -v
 """
 
+import hashlib
 import io
 import json
 import os
@@ -15,7 +16,7 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import illustrate as il  # noqa: E402
-from test_generate_storyboard import FAKE_KEY, FakeClient  # noqa: E402
+from test_generate_storyboard import FAKE_KEY, FakeClient, fixture  # noqa: E402
 
 STYLE = {
     "name": "Dusk",
@@ -112,7 +113,7 @@ class Prompts(unittest.TestCase):
         scene = il.request_params(request())
         self.assertEqual(scene["thinking"], {"type": "adaptive"})
         self.assertEqual(scene["output_config"], {"effort": "medium"})
-        self.assertEqual(scene["max_tokens"], il.DEFAULT_MAX_TOKENS["scene"])
+        self.assertEqual(scene["max_tokens"], il.DEFAULT_MAX_TOKENS[("simple", "scene")])
         self.assertEqual(scene["fallbacks"], "default")
         self.assertNotIn("temperature", scene)
         style = il.request_params(request("style", max_tokens=5000))
@@ -120,6 +121,93 @@ class Prompts(unittest.TestCase):
         self.assertEqual(style["max_tokens"], 5000)
         haiku = il.request_params(request(model="claude-haiku-5-5"))
         self.assertNotIn("fallbacks", haiku)
+
+
+class DetailLevels(unittest.TestCase):
+    def test_simple_prompts_are_unchanged(self):
+        # `simple` must stay byte for byte what it was before the detail levels (2026-11-16), so
+        # its pictures keep their look; a missing `detail` means `simple`.
+        digest = lambda s: hashlib.sha256(s.encode()).hexdigest()  # noqa: E731
+        self.assertEqual(
+            digest(il.STYLE_SYSTEM),
+            "96591a77a14a33c3150d202d85a0397491440fc8d9a59e379aa62a45adfc4b40",
+        )
+        self.assertEqual(
+            digest(il.SCENE_SYSTEM),
+            "0468a5e0a762abb88d09bc79e819fbd1e04ba9d57ef1d1b706b1265ecf41903e",
+        )
+        for kind in il.KINDS:
+            req = request(kind)
+            self.assertEqual(il.request_params(req), il.request_params(dict(req, detail="simple")))
+        self.assertIn("a few dozen well-chosen shapes", il.system_prompt(request()))
+        style = il.request_params(request("style"))
+        self.assertEqual(style["output_config"]["format"]["schema"], il.STYLE_SCHEMA)
+
+    def test_rich_scene_prompt(self):
+        req = request(detail="rich", style=dict(STYLE, lighting="key light upper right"))
+        system = il.system_prompt(req)
+        self.assertIn("never clip art", system)
+        self.assertIn("feTurbulence", system)
+        self.assertIn("15-25 KB", system)
+        self.assertIn("y > 594", system)
+        self.assertIn("- lighting: key light upper right", system)
+        self.assertIn('viewBox="0 0 1920 1080"', system)
+        for rule in ("script", "foreignObject", "#id", "No text"):
+            self.assertIn(rule, system)
+        self.assertNotIn("a few dozen", system)
+        self.assertNotIn("{", system.replace("{style}", ""))
+        params = il.request_params(req)
+        self.assertEqual(params["max_tokens"], il.DEFAULT_MAX_TOKENS[("rich", "scene")])
+        self.assertGreater(params["max_tokens"], il.DEFAULT_MAX_TOKENS[("simple", "scene")])
+
+    def test_rich_style_asks_for_light_depth_and_texture(self):
+        req = request("style", detail="rich", orientation="portrait", width=1080, height=1920)
+        system = il.system_prompt(req)
+        self.assertIn("1080x1920 (portrait)", system)
+        self.assertIn("One key light", system)
+        schema = il.request_params(req)["output_config"]["format"]["schema"]
+        self.assertIs(schema, il.RICH_STYLE_SCHEMA)
+        for key in ("lighting", "depth", "texture"):
+            self.assertIn(key, schema["required"])
+            self.assertNotIn(key, il.STYLE_SCHEMA["required"])
+        self.assertEqual(set(schema["required"]), set(schema["properties"]))
+
+    def test_rich_style_fields_are_printed_in_order(self):
+        style = dict(STYLE, texture="grain 0.08", lighting="upper right", depth="five layers")
+        lines = il.format_style(style).splitlines()
+        self.assertEqual(
+            [line.split(":")[0] for line in lines[-3:]], ["- lighting", "- depth", "- texture"]
+        )
+
+    def test_recorded_rich_reply(self):
+        # A real rich reply (claude-opus-5-5, effort medium, 2026-11-16, zh-xian scene 1).
+        data = fixture("recorded_rich_zh_scene.json")
+        result = il.interpret(data, request(detail="rich"))
+        self.assertEqual(result["stop_reason"], "end_turn")
+        self.assertTrue(result["svg"].startswith("<svg"))
+        self.assertTrue(result["svg"].endswith("</svg>"))
+        self.assertIn("feTurbulence", result["svg"])
+        out = result["usage"]["output_tokens"]
+        self.assertAlmostEqual(
+            result["usage"]["cost_usd"], (result["usage"]["input_tokens"] * 4 + out * 20) / 1e6
+        )
+
+    def test_recorded_rich_style(self):
+        data = fixture("recorded_rich_zh_style.json")
+        result = il.interpret(data, request("style", detail="rich"))
+        for key in il.RICH_STYLE_SCHEMA["required"]:
+            self.assertTrue(result["style"][key], key)
+
+    def test_unknown_detail_is_a_usage_error(self):
+        code, result = run_main(request(detail="fancy"), FakeClient(message("x")))
+        self.assertEqual(code, 1)
+        self.assertEqual(result["error"]["kind"], "usage")
+
+    def test_rich_request_runs(self):
+        client = FakeClient(message('<svg viewBox="0 0 1920 1080"><rect/></svg>'))
+        code, result = run_main(request(detail="rich"), client)
+        self.assertEqual(code, 0)
+        self.assertIn("never clip art", client.calls[0]["system"])
 
 
 class Replies(unittest.TestCase):

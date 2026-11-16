@@ -25,7 +25,7 @@ use vimmer_storyboard::generate::{
     DEFAULT_MAX_RETRIES, DEFAULT_MODEL, EFFORTS,
 };
 use vimmer_storyboard::illustrate::{
-    estimate_cost, illustrate, IllustrateOptions, IllustrationReport,
+    estimate_cost, illustrate, Detail, IllustrateOptions, IllustrationReport,
     DEFAULT_CONCURRENCY as DEFAULT_ILLUSTRATE_JOBS, DEFAULT_EFFORT as DEFAULT_ILLUSTRATE_EFFORT,
     DEFAULT_MODEL as DEFAULT_ILLUSTRATE_MODEL,
 };
@@ -167,6 +167,10 @@ struct IllustrateArgs {
     /// Reasoning effort for the illustrations: low, medium, high, xhigh or max.
     #[arg(long, default_value = DEFAULT_ILLUSTRATE_EFFORT, value_parser = clap::builder::PossibleValuesParser::new(EFFORTS))]
     illustrate_effort: String,
+    /// How elaborate the pictures are: `rich` (layered, lit, textured; about 3x the cost) or
+    /// `simple` (the original flat pictures with a few dozen shapes).
+    #[arg(long, default_value = "rich", value_parser = clap::builder::PossibleValuesParser::new(Detail::NAMES))]
+    illustrate_detail: String,
     /// Illustrations drawn at the same time.
     #[arg(long, default_value_t = DEFAULT_ILLUSTRATE_JOBS)]
     illustrate_jobs: usize,
@@ -573,9 +577,10 @@ async fn run_illustrations(
         .filter(|s| s.image.is_none())
         .count();
     let model = args.illustrate_model.clone();
-    match estimate_cost(&model, &args.illustrate_effort, todo) {
+    let detail = Detail::parse(&args.illustrate_detail).unwrap_or_default();
+    match estimate_cost(&model, &args.illustrate_effort, detail, todo) {
         Some((typical, worst)) => eprintln!(
-            "illustrating {todo} scene(s) with {model} (effort {}): estimated ${typical:.2} (at most about ${worst:.2} if every picture needs a correction; cached pictures are free)",
+            "illustrating {todo} scene(s) with {model} (effort {}, detail {detail}): estimated ${typical:.2} (at most about ${worst:.2} if every picture needs a correction; cached pictures are free)",
             args.illustrate_effort
         ),
         None => eprintln!(
@@ -598,6 +603,7 @@ async fn run_illustrations(
     let mut opts = IllustrateOptions::new(render.remotion_dir.join("public"), chrome);
     opts.model = model;
     opts.effort = args.illustrate_effort.clone();
+    opts.detail = detail;
     opts.concurrency = args.illustrate_jobs.max(1);
     opts.timeout = timeout;
     opts.record_dir = record_dir;

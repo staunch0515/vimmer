@@ -430,7 +430,7 @@ fn style_refusal_falls_back_to_the_built_in_style() {
     f.reply(None, svg_reply(GOOD_SVG));
     let (report, _) = f.run(&storyboard(1), true);
     assert_eq!(report.drawn(), 1);
-    assert_eq!(report.style.unwrap()["name"], fallback_style()["name"]);
+    assert_eq!(report.style.unwrap()["name"], fallback_style(Detail::Simple)["name"]);
     assert!(report.warnings[0].contains("built-in style"));
     assert!((report.usage.cost_usd - 0.11).abs() < 1e-9);
 }
@@ -477,12 +477,12 @@ fn portrait_canvas_is_requested() {
 
 #[test]
 fn estimate_grows_with_scenes_and_effort() {
-    let (opus, opus_max) = estimate_cost("claude-opus-5-5", "medium", 8).unwrap();
-    let (sonnet, _) = estimate_cost("claude-sonnet-5-5", "medium", 8).unwrap();
-    let (low, _) = estimate_cost("claude-opus-5-5", "low", 8).unwrap();
+    let (opus, opus_max) = estimate_cost("claude-opus-5-5", "medium", Detail::Simple, 8).unwrap();
+    let (sonnet, _) = estimate_cost("claude-sonnet-5-5", "medium", Detail::Simple, 8).unwrap();
+    let (low, _) = estimate_cost("claude-opus-5-5", "low", Detail::Simple, 8).unwrap();
     assert!(opus > sonnet && opus > low && opus_max > opus);
     assert!(opus > 0.5 && opus < 2.0, "{opus}");
-    assert_eq!(estimate_cost("claude-unknown", "medium", 3), None);
+    assert_eq!(estimate_cost("claude-unknown", "medium", Detail::Simple, 3), None);
 }
 
 #[test]
@@ -544,4 +544,249 @@ fn raster_failure_keeps_the_svg_and_a_rerun_needs_no_api_call() {
     assert_eq!(f.runs(), 2, "the kept SVG is only rasterized");
     assert_eq!(again.drawn(), 1);
     assert!(again.scenes[0].cached);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Detail levels
+
+#[test]
+fn simple_cache_keys_are_unchanged() {
+    // `simple` pictures cached before the detail levels existed must still be found: the key is
+    // the original formula (cache version "illustrate-v1", no detail part).
+    let f = Fixture::new("simplekey");
+    f.reply(Some(1), style_reply());
+    f.reply(None, svg_reply(GOOD_SVG));
+    let (report, _) = f.run(&storyboard(1), true);
+    assert_eq!(report.detail, Detail::Simple);
+    let style = r##"{"name":"Test style","palette":["#000000","#ffffff"]}"##;
+    let key = cache_key(&[
+        "illustrate-v1",
+        "scene",
+        "claude-opus-5-5",
+        "medium",
+        style,
+        "picture 1",
+        "1920x1080",
+    ]);
+    assert_eq!(key, "bc729f8b70f1f9682fadfc91403face7");
+    assert_eq!(
+        report.scenes[0].image.as_deref(),
+        Some(format!("generated/illustrations/{key}.png").as_str())
+    );
+    assert_eq!(f.request(2)["detail"], "simple");
+}
+
+#[test]
+fn rich_pictures_have_their_own_requests_and_cache() {
+    let mut f = Fixture::new("rich");
+    let sb = storyboard(2);
+    f.reply(Some(1), style_reply());
+    f.reply(None, svg_reply(GOOD_SVG));
+    let (simple, _) = f.run(&sb, true);
+    assert_eq!(simple.drawn(), 2);
+    assert_eq!(f.runs(), 3);
+
+    f.opts.detail = Detail::Rich;
+    f.reply(Some(4), style_reply());
+    let (rich, events) = f.run(&sb, true);
+    assert_eq!(rich.detail, Detail::Rich);
+    assert_eq!(rich.drawn(), 2, "{:?}", rich.all_warnings());
+    assert_eq!(f.runs(), 6, "a rich style call and one call per scene: nothing cached");
+    assert!(!rich.style_cached);
+    assert!(events.iter().any(|e| e.contains("Test style")));
+    for n in 4..=6 {
+        assert_eq!(f.request(n)["detail"], "rich");
+    }
+    for (s, r) in simple.scenes.iter().zip(&rich.scenes) {
+        assert_ne!(s.image, r.image, "simple and rich pictures are separate files");
+    }
+    // Both levels stay cached side by side.
+    let (again, _) = f.run(&sb, false);
+    assert!(again.scenes.iter().all(|s| s.cached));
+    f.opts.detail = Detail::Simple;
+    let (back, _) = f.run(&sb, false);
+    assert!(back.style_cached && back.scenes.iter().all(|s| s.cached));
+    assert_eq!(
+        back.scenes.iter().map(|s| &s.image).collect::<Vec<_>>(),
+        simple.scenes.iter().map(|s| &s.image).collect::<Vec<_>>()
+    );
+    assert_eq!(f.runs(), 6);
+}
+
+#[test]
+fn rich_fallback_style_has_the_rich_fields() {
+    let simple = fallback_style(Detail::Simple);
+    assert!(simple.get("lighting").is_none(), "the simple prompt stays as it was");
+    let rich = fallback_style(Detail::Rich);
+    for key in ["lighting", "depth", "texture"] {
+        assert!(rich[key].as_str().is_some_and(|s| !s.is_empty()), "{key}");
+    }
+    assert_eq!(rich["palette"], simple["palette"]);
+}
+
+#[test]
+fn detail_names_parse_both_ways() {
+    for d in [Detail::Simple, Detail::Rich] {
+        assert_eq!(Detail::parse(d.as_str()), Some(d));
+        assert_eq!(d.to_string(), d.as_str());
+    }
+    assert_eq!(Detail::parse(" RICH "), Some(Detail::Rich));
+    assert_eq!(Detail::parse("fancy"), None);
+    assert_eq!(Detail::NAMES, ["simple", "rich"]);
+    assert_eq!(Detail::default(), Detail::Simple);
+    assert_eq!(serde_json::to_value(Detail::Rich).unwrap(), "rich");
+}
+
+#[test]
+fn rich_estimate_stays_under_the_budget_and_above_simple() {
+    for scenes in [1, 5, 10] {
+        let (simple, simple_max) =
+            estimate_cost("claude-opus-5-5", "medium", Detail::Simple, scenes).unwrap();
+        let (rich, rich_max) =
+            estimate_cost("claude-opus-5-5", "medium", Detail::Rich, scenes).unwrap();
+        assert!(rich > 2.0 * simple && rich_max > rich && rich_max > simple_max);
+        assert!(rich < 4.0 * simple, "{rich} vs {simple}");
+    }
+    // The target: a 5-scene video's rich pictures under about $1.50 with the defaults.
+    let (five, _) = estimate_cost("claude-opus-5-5", DEFAULT_EFFORT, Detail::Rich, 5).unwrap();
+    assert!(five > 0.8 && five < 1.5, "{five}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The sanitizer on what the rich prompt asks for
+
+/// The SVG of a real `rich` reply (claude-opus-5-5, effort medium, 2026-11-16, zh-xian scene 1),
+/// saved with --record.
+fn recorded_rich_svg() -> String {
+    let raw: Value = serde_json::from_str(include_str!(
+        "../scripts/tests/fixtures/recorded_rich_zh_scene.json"
+    ))
+    .unwrap();
+    let text: String = raw["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b["type"] == "text")
+        .map(|b| b["text"].as_str().unwrap())
+        .collect();
+    let start = text.find("<svg").unwrap();
+    let end = text.rfind("</svg>").unwrap() + "</svg>".len();
+    text[start..end].to_string()
+}
+
+#[test]
+fn a_recorded_rich_picture_passes_the_sanitizer_untouched() {
+    let svg = recorded_rich_svg();
+    let clean = vimmer_media::sanitize_svg(&svg, 1920, 1080).unwrap();
+    assert_eq!(clean.removed, Vec::<String>::new());
+    for needle in ["<feTurbulence", "<radialGradient", "<use ", "<filter", "<pattern"] {
+        assert!(clean.svg.contains(needle), "{needle} kept");
+    }
+    assert!(svg.len() < 60 * 1024, "{} bytes", svg.len());
+}
+
+/// The building blocks of the rich prompt's example: grain filter, glow, haze, vignette, soft
+/// shadow, symbol + use, pattern, mix-blend-mode.
+const RICH_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080"><defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1c2b4a"/><stop offset="1" stop-color="#0b1120"/></linearGradient><radialGradient id="glow" cx="0.7" cy="0.2" r="0.5"><stop offset="0" stop-color="#ffcf87" stop-opacity="0.6"/><stop offset="1" stop-color="#ffcf87" stop-opacity="0"/></radialGradient><filter id="soft" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="14"/></filter><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7"/><feColorMatrix type="saturate" values="0"/></filter><filter id="wobble"><feTurbulence baseFrequency="0.02" result="t"/><feDisplacementMap in="SourceGraphic" in2="t" scale="6"/></filter><pattern id="brick" width="40" height="20" patternUnits="userSpaceOnUse"><path d="M0 0h40v20H0z" fill="#3a2a2a"/><path d="M0 10h40M20 0v10" stroke="#2a1d1d"/></pattern><symbol id="win" viewBox="0 0 20 30"><rect width="20" height="30" rx="3" fill="#ffd28a"/></symbol></defs><rect width="1920" height="1080" fill="url(#sky)"/><rect width="1920" height="1080" fill="url(#glow)"/><rect x="700" y="300" width="500" height="300" fill="url(#brick)" filter="url(#wobble)"/><use href="#win" x="760" y="340" width="20" height="30"/><use xlink:href="#win" x="820" y="340" width="20" height="30"/><ellipse cx="960" cy="620" rx="300" ry="30" fill="#05070d" opacity="0.5" filter="url(#soft)"/><rect width="1920" height="1080" filter="url(#grain)" opacity="0.08" style="mix-blend-mode:overlay"/></svg>"##;
+
+#[test]
+fn the_rich_building_blocks_are_kept() {
+    let clean = vimmer_media::sanitize_svg(RICH_SVG, 1920, 1080).unwrap();
+    assert_eq!(clean.removed, Vec::<String>::new());
+    for needle in [
+        "<feTurbulence",
+        "<feDisplacementMap",
+        "<feColorMatrix",
+        "<pattern",
+        "<symbol",
+        r##"href="#win""##,
+        "mix-blend-mode:overlay",
+        r##"filter="url(#grain)""##,
+    ] {
+        assert!(clean.svg.contains(needle), "{needle} kept");
+    }
+}
+
+#[test]
+fn unsafe_content_inside_rich_features_is_still_stripped() {
+    let cases: &[(&str, &str, &str)] = &[
+        // (inserted before </svg>, must not appear in the output, removal note)
+        (
+            r#"<filter id="f"><feImage href="https://evil.example/x.png"/><feTurbulence baseFrequency="0.9"/></filter>"#,
+            "evil.example",
+            "element <feImage>",
+        ),
+        (
+            r#"<rect width="9" height="9" filter="url(https://evil.example/f.svg#f)"/>"#,
+            "evil.example",
+            "external url()",
+        ),
+        (
+            r#"<rect width="9" height="9" style="mix-blend-mode:overlay;fill:url(http://evil.example/p)"/>"#,
+            "evil.example",
+            "external url()",
+        ),
+        (
+            r#"<rect width="9" height="9" style="mix-blend-mode:overlay;background:image-set('x.png' 1x)"/>"#,
+            "image-set",
+            "script-like CSS",
+        ),
+        (
+            r#"<pattern id="p" href="https://evil.example/pat.svg#p" width="9" height="9"><rect width="9" height="9"/></pattern>"#,
+            "evil.example",
+            "attribute href (external link)",
+        ),
+        (
+            r#"<use href="https://evil.example/sprites.svg#tree"/>"#,
+            "evil.example",
+            "attribute href (external link)",
+        ),
+        (
+            r#"<symbol id="s"><script>alert(1)</script><rect width="9" height="9"/></symbol>"#,
+            "alert",
+            "element <script>",
+        ),
+        (
+            r#"<pattern id="q" width="9" height="9"><foreignObject><div>x</div></foreignObject></pattern>"#,
+            "foreignObject",
+            "element <foreignObject>",
+        ),
+        (
+            r#"<radialGradient id="g"><animate attributeName="r" to="9"/><stop offset="0"/></radialGradient>"#,
+            "animate",
+            "element <animate>",
+        ),
+        (
+            r#"<feTurbulence baseFrequency="0.9"><set attributeName="seed" to="2"/></feTurbulence>"#,
+            "<set",
+            "element <set>",
+        ),
+        (
+            r#"<filter id="h" onload="alert(1)"><feGaussianBlur stdDeviation="9"/></filter>"#,
+            "onload",
+            "attribute onload",
+        ),
+        (
+            r#"<style>@import url(https://evil.example/a.css); rect{mix-blend-mode:overlay}</style>"#,
+            "evil.example",
+            "CSS @import",
+        ),
+        (
+            r#"<rect width="9" height="9" fill="javascript:alert(1)"/>"#,
+            "javascript",
+            "attribute fill (javascript: value)",
+        ),
+    ];
+    for (insert, gone, note) in cases {
+        let svg = RICH_SVG.replace("</svg>", &format!("{insert}</svg>"));
+        let clean = vimmer_media::sanitize_svg(&svg, 1920, 1080)
+            .unwrap_or_else(|e| panic!("{insert}: {e}"));
+        assert!(!clean.svg.contains(gone), "{insert} -> {}", clean.svg);
+        assert!(
+            clean.removed.iter().any(|r| r == note),
+            "{insert}: removed {:?}",
+            clean.removed
+        );
+        assert!(clean.svg.contains("<feTurbulence"), "the safe parts stay");
+    }
 }
