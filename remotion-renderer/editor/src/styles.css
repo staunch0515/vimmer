@@ -559,3 +559,57 @@ textarea { resize: vertical; width: 100%; }
 .narration-bar.on { border-color: var(--amber); }
 .narration-bar .warn { color: var(--amber); }
 .narration-bar .error { color: var(--danger); }
+/* 提示词 Prompts picker (above the message box) */
+.saved-commands { display: flex; flex-direction: column; gap: 6px; }
+.saved-head { gap: 4px; }
+.saved-head .btn.active { color: var(--text); background: var(--hover); }
+.saved-list { display: flex; flex-direction: column; gap: 2px; max-height: 30vh; overflow-y: auto; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius); }
+.saved-item { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.saved-use {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; text-align: left; padding: 4px 6px;
+  background: transparent; border: 0; border-radius: 6px; color: var(--text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.saved-use:hover { background: var(--hover); }
+.saved-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved-tag { flex: none; font-size: 10px; padding: 0 4px; border-radius: 4px; background: rgba(99, 102, 241, 0.22); color: var(--text-2); }
+.saved-tools { display: flex; flex: none; }
+.saved-tools .btn.small, .saved-item > .btn.small { padding: 0 6px; }
+.saved-io { flex-wrap: wrap; gap: 4px; padding-top: 4px; }
+.saved-form { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid rgba(99, 102, 241, 0.45); border-radius: var(--radius); background: var(--elevated); }
+.saved-form-title { font-weight: 600; font-size: 12px; }
+.saved-form .link { align-self: flex-start; }
+.saved-toast { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-2); }
+.chat-user-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 2px; }
+.chat-user-foot .link { font-size: 11px; opacity: 0.75; }
+.chat-user-foot .link:hover { opacity: 1; }
+.assistant-row.chat-send .saved-save { margin-right: auto; }
+.link:disabled { opacity: 0.4; cursor: default; }
+/* 提示词管理 Prompt manager (inside the Assistant tab) */
+.prompt-manager { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--elevated); }
+.prompt-manager-title { flex: 1; }
+.prompt-filters input[type="search"] { flex: 1; min-width: 0; }
+.assistant-row.prompt-filters select { flex: 0 1 auto; max-width: 45%; }
+.prompt-manager .saved-list { max-height: 40vh; }
+.manager-item { align-items: flex-start; padding: 2px 0; }
+.manager-text { flex: 1; min-width: 0; padding: 2px 6px; font-size: 12px; }
+.manager-text .saved-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.manager-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved-cat { flex: none; font-size: 10px; padding: 0 4px; border-radius: 4px; border: 1px solid var(--border-strong); color: var(--text-2); }
+.manager-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 范围 Scope of a message: 全部 / 选几幕 / 当前这一幕 (above the message box) */
+.scope { display: flex; flex-direction: column; gap: 4px; }
+.scope-row { gap: 4px; flex-wrap: wrap; }
+.scope-btn {
+  height: 24px; padding: 0 8px; border-radius: 12px; border: 1px solid var(--border-strong); background: transparent;
+  color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.scope-btn:hover:not(:disabled) { background: var(--hover); }
+.scope-btn.on { background: rgba(99, 102, 241, 0.22); border-color: rgba(99, 102, 241, 0.6); color: var(--text); }
+.scope-btn:disabled { opacity: 0.4; cursor: default; }
+.scope-id { font-size: 10px; color: var(--text-3); }
+.scope-list { display: flex; flex-direction: column; gap: 2px; max-height: 24vh; overflow-y: auto; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius); }
+.scope-item { gap: 6px; min-width: 0; font-size: 12px; }
+.scope-num { flex: none; }
+.scope-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.chat-scope-line { margin-bottom: 4px; }
+.prompt-scope select { flex: 1; min-width: 0; }
