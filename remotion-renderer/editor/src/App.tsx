@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { PlayerRef } from "@remotion/player";
 import sample from "../../../fixtures/sample-timeline.json";
 import type { VideoTimeline } from "../../src/types/timeline";
@@ -44,6 +44,9 @@ import { beatMarks, detectBeats, type DetectedBeats } from "./beats";
 import { resolveAutoGrades } from "../../src/motion/look";
 import { loadMusicLibrary, musicForBeats, pickKey, pickMusic, resolvedMusic, type MusicLibrary, type PickedTrack } from "./music";
 import type { BeatStatus } from "./components/SoundPanel";
+import { listenKey, rememberClips, toPreviewMs, toSavedMs, withNarration, type HeardClips, type ListenClip, type TtsChoice } from "./narration";
+import { listenNarration } from "./listen";
+import { NarrationBar } from "./components/NarrationBar";
 import "./studio/studio.css";
 import { ASSET_DRAG_TYPE } from "./studio/AssetPanel";
 import { errorText, tauriApi } from "./studio/api";
@@ -253,6 +256,54 @@ export const App = () => {
   const currentCheck: CheckView =
     check.status !== "idle" && check.key === wantedCheck ? check : { status: "running", key: wantedCheck ?? "" };
 
+  // 试听 Listen: narration clips heard so far (made by the render's code into its cache), and
+  // whether the preview plays them ("listen to all"). The preview then shows each heard scene as
+  // long as the render will make it; the saved timeline is not changed. The playhead and the
+  // timeline below stay in saved time: Player frames are mapped through `narrated`.
+  const [heard, setHeard] = useState<HeardClips>({});
+  const [narrationOn, setNarrationOn] = useState(false);
+  const [listenAll, setListenAll] = useState<{ busy: boolean; error: string | null; warnings: string[] }>({ busy: false, error: null, warnings: [] });
+  const onHeard = useCallback((engine: TtsChoice, clips: ListenClip[]) => setHeard((h) => rememberClips(h, engine, clips)), []);
+  const narrated = useMemo(
+    () => (narrationOn ? withNarration(previewTimeline, heard, renderEngine) : null),
+    [narrationOn, previewTimeline, heard, renderEngine],
+  );
+  const narratable = timeline.scenes.some((s) => listenKey(s, renderEngine) !== null);
+  const narratedRef = useRef(narrated);
+  narratedRef.current = narrated;
+  const fpsRef = useRef(timeline.fps);
+  fpsRef.current = timeline.fps;
+  /** Saved-timeline frame → Player frame. */
+  const toPlayerFrame = (f: number): number => {
+    const n = narratedRef.current;
+    const r = fpsRef.current;
+    return n ? Math.round((toPreviewMs(n, frameToMs(f, r)) * r) / 1000) : f;
+  };
+  const onPlayerFrame = useCallback((f: number) => {
+    const n = narratedRef.current;
+    const r = fpsRef.current;
+    setFrame(n ? Math.floor((toSavedMs(n, frameToMs(f, r)) * r) / 1000) : f);
+  }, []);
+  useEffect(() => setNarrationOn(false), [docKey]);
+  const doListenAll = async () => {
+    setListenAll({ busy: true, error: null, warnings: [] });
+    const engine = renderEngine;
+    const result = await listenNarration(text, [], engine);
+    if (!result.ok) {
+      setListenAll({ busy: false, error: result.error, warnings: [] });
+      return;
+    }
+    setHeard((h) => rememberClips(h, engine, result.clips));
+    setListenAll({ busy: false, error: null, warnings: result.warnings });
+    setNarrationOn(true);
+    setFrame(0);
+    // Once the Player has the narrated timeline: from the start, with sound.
+    window.setTimeout(() => {
+      playerRef.current?.seekTo(0);
+      playerRef.current?.play();
+    }, 50);
+  };
+
   useEffect(() => {
     if (!inTauri()) return;
     loadAssetRoot().then(setAssetRoot).catch(() => setAssetRoot(null));
@@ -282,7 +333,7 @@ export const App = () => {
   // Keep the playhead inside the timeline when edits shorten it.
   useEffect(() => {
     const max = frameCount(timeline) - 1;
-    if (frame > max) playerRef.current?.seekTo(max);
+    if (frame > max) playerRef.current?.seekTo(toPlayerFrame(max));
   }, [timeline, frame]);
 
   const selectedLayer =
@@ -523,7 +574,7 @@ export const App = () => {
 
   const seek = (f: number) => {
     const clamped = Math.max(0, Math.min(f, frameCount(timeline) - 1));
-    playerRef.current?.seekTo(clamped);
+    playerRef.current?.seekTo(toPlayerFrame(clamped));
     setFrame(clamped);
   };
 
@@ -652,10 +703,10 @@ export const App = () => {
         center={
         <section className="stage" onDragOver={onAssetDrag} onDrop={onAssetDrop}>
           <Preview
-            timeline={previewTimeline}
+            timeline={narrated?.timeline ?? previewTimeline}
             assetRoot={assetRoot}
             playerRef={playerRef}
-            onFrame={setFrame}
+            onFrame={onPlayerFrame}
             selectedLayer={selectedLayer}
             subtitlesSelected={state.selection.kind === "subtitle"}
             onMoveSubtitles={(box) => dispatch({ type: "setSubtitleBox", box })}
@@ -672,6 +723,18 @@ export const App = () => {
             <span className="spacer" />
             <span className="dim">Space play · ⌘S save · ⌘Z undo · ⇧⌘Z redo</span>
           </div>
+          <NarrationBar
+            narrated={narrated}
+            savedMs={totalMs(timeline)}
+            narratable={narratable}
+            status={listenAll}
+            onListenAll={() => void doListenAll()}
+            onOff={() => {
+              setNarrationOn(false);
+              // Same place in the plain preview.
+              window.setTimeout(() => playerRef.current?.seekTo(frame), 0);
+            }}
+          />
         </section>
         }
         right={
@@ -695,6 +758,13 @@ export const App = () => {
           pickedTrack={pickedTrack}
           pickError={pickError}
           audioUrl={(path) => resolveAsset(path, assetRoot ? assetUrlFor(assetRoot) : null)}
+          listen={{
+            engine: renderEngine,
+            heard,
+            onHeard,
+            timelineJson: () => text,
+            audioUrl: (path) => resolveAsset(path, assetRoot ? assetUrlFor(assetRoot) : null),
+          }}
         />
         </div>
         }

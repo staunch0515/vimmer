@@ -10,6 +10,7 @@ use std::{
 };
 
 mod beats_cmd;
+mod tts_cmd;
 mod check_cmd;
 mod edit_cmd;
 mod expand_cmd;
@@ -304,6 +305,8 @@ async fn main() -> ExitCode {
         return beats_cmd::main(args);
     } else if args.get(1).is_some_and(|a| a == "music") {
         return music_cmd::main(args);
+    } else if args.get(1).is_some_and(|a| a == "tts") {
+        return tts_cmd::main(args).await;
     } else {
         run(Cli::parse_from(args)).await
     };

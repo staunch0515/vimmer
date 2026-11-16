@@ -289,6 +289,112 @@ const publicFile = (publicDir: string, source: unknown): string | null => {
   return file.startsWith(resolve(publicDir) + sep) && existsSync(file) ? file : null;
 };
 
+const TTS_ENDPOINT = "/__vimmer/tts";
+/** Syntheses running at once (each a `vimmer tts` process); more wait, up to TTS_QUEUE. */
+export const TTS_RUNNING = 2;
+export const TTS_QUEUE = 8;
+const TTS_TIMEOUT_MS = 5 * 60 * 1000;
+
+type TtsArgs = { timelineJson: string; sceneIds: string[]; tts: "say" | "kokoro" | null };
+
+/** Checks a "listen" request: the timeline, optional scene ids, optional engine. */
+export const parseTtsArgs = (raw: string): TtsArgs | string => {
+  let v: { timelineJson?: unknown; sceneIds?: unknown; tts?: unknown };
+  try {
+    v = JSON.parse(raw) as typeof v;
+  } catch {
+    return "the request is not JSON";
+  }
+  if (!v || typeof v !== "object") return "the request is not an object";
+  if (typeof v.timelineJson !== "string") return "timelineJson must be a string";
+  const ids = v.sceneIds ?? [];
+  if (!Array.isArray(ids) || ids.length > 500 || !ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 64)) {
+    return "sceneIds must be a list of scene ids";
+  }
+  if (v.tts != null && v.tts !== "say" && v.tts !== "kokoro") return "tts must be say or kokoro";
+  return { timelineJson: v.timelineJson, sceneIds: ids as string[], tts: (v.tts as TtsArgs["tts"]) ?? null };
+};
+
+/** argv for `vimmer tts`: the timeline on stdin, `--scene=<id>` so an id starting with `-` stays an id. */
+export const ttsCliArgs = (a: TtsArgs, publicDir: string): string[] => {
+  const out = ["tts", "-", "--json", "--public-dir", publicDir];
+  if (a.tts) out.push(`--tts=${a.tts}`);
+  for (const id of a.sceneIds) out.push(`--scene=${id}`);
+  return out;
+};
+
+/** True when `help` (of `vimmer tts --help`) is from a CLI that has what this endpoint passes. */
+export const helpHasTts = (help: string): boolean => ["--json", "--public-dir", "--scene", "--tts"].every((o) => help.includes(o));
+
+/**
+ * At most `running` tasks at once, at most `queue` waiting; past that `run` rejects with "busy"
+ * at once instead of piling up processes.
+ */
+export const limiter = (running: number, queue: number) => {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return {
+    get active() {
+      return active;
+    },
+    get waiting() {
+      return waiting.length;
+    },
+    run: async <T>(task: () => Promise<T>): Promise<T> => {
+      if (active >= running) {
+        if (waiting.length >= queue) throw new Error("busy");
+        await new Promise<void>((go) => waiting.push(go));
+      } else active += 1;
+      try {
+        return await task();
+      } finally {
+        const next = waiting.shift();
+        if (next) next();
+        else active -= 1;
+      }
+    },
+  };
+};
+
+const ttsSlots = limiter(TTS_RUNNING, TTS_QUEUE);
+const ttsHelp = new Map<string, boolean>();
+
+/** Null when `bin` has `vimmer tts`, else what to do. Probed once per build. */
+const checkTtsCli = async (bin: string): Promise<string | null> => {
+  let stamp: string;
+  try {
+    stamp = `${bin}@${statSync(bin).mtimeMs}`;
+  } catch {
+    return `The vimmer CLI was not found. ${BUILD_CLI}`;
+  }
+  let ok = ttsHelp.get(stamp);
+  if (ok === undefined) {
+    const out = await runCli(bin, ["tts", "--help"], "", 10_000);
+    ok = out.code === 0 && helpHasTts(out.stdout);
+    ttsHelp.set(stamp, ok);
+  }
+  return ok ? null : `The vimmer CLI at ${bin} is too old: it has no \`vimmer tts\` (listening before a render). ${BUILD_CLI}`;
+};
+
+const runCli = (bin: string, args: string[], stdin: string, timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> =>
+  new Promise((ok) => {
+    const child = spawn(bin, args, { stdio: "pipe" });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
+    child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      ok({ code: -1, stdout, stderr: String(e) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      ok({ code, stdout, stderr });
+    });
+    child.stdin.end(stdin);
+  });
+
 export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
   name: "vimmer-edit-assistant",
   configureServer(server) {
@@ -361,6 +467,38 @@ export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
           return send(res, 200, JSON.parse(line));
         } catch {
           return send(res, 200, { ok: false, error: `vimmer music failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}` });
+        }
+      })();
+    });
+    // "Listen" (试听): the narration of some or all scenes, synthesized by `vimmer tts` into the
+    // render's TTS cache (same files a render uses). Clips are served from the public dir.
+    server.middlewares.use(TTS_ENDPOINT, (req: IncomingMessage, res: ServerResponse) => {
+      void (async () => {
+        if (req.method !== "POST") return send(res, 405, { ok: false, error: "POST only" });
+        if (!isLocalRequest(req)) return send(res, 403, { ok: false, error: "local requests only" });
+        let raw: string;
+        try {
+          raw = await readBody(req);
+        } catch (e) {
+          return send(res, 413, { ok: false, error: String(e) });
+        }
+        const args = parseTtsArgs(raw);
+        if (typeof args === "string") return send(res, 400, { ok: false, error: args });
+        const bin = findVimmer(repo);
+        if (!bin) return send(res, 200, { ok: false, error: `Build the CLI to listen before rendering: ${BUILD_CLI}` });
+        const stale = await checkTtsCli(bin);
+        if (stale) return send(res, 200, { ok: false, error: stale });
+        let out: { code: number | null; stdout: string; stderr: string };
+        try {
+          out = await ttsSlots.run(() => runCli(bin, ttsCliArgs(args, publicDir), args.timelineJson, TTS_TIMEOUT_MS));
+        } catch {
+          return send(res, 200, { ok: false, error: "Too many narrations are being made right now; try again in a moment." });
+        }
+        const line = out.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
+        try {
+          return send(res, 200, JSON.parse(line));
+        } catch {
+          return send(res, 200, { ok: false, error: `vimmer tts failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}` });
         }
       })();
     });

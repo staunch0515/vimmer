@@ -7,6 +7,7 @@ mod assistant;
 mod beats;
 mod generate;
 mod music;
+mod narration;
 mod paths;
 mod project;
 mod project_assets;
@@ -31,6 +32,7 @@ fn main() {
             beats::detect_beats,
             music::music_library,
             music::music_pick,
+            narration::listen_narration,
             render::start_render,
             render::cancel_render,
             render::render_defaults,

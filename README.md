@@ -56,6 +56,32 @@ still shows the scene `text`:
   it ("台词改成…"), and a storyboard scene may carry `spoken` (see Storyboard).
 - `fixtures/spoken-lines-demo.json` shows all three cases.
 
+#### Listening before a render (试听)
+
+Narration is normally synthesized only when rendering; the editor can make it earlier, with the
+render's own code, engine choice and TTS cache (`public/generated/tts/`, same file names), so a
+clip heard in the editor is reused by the render without synthesizing it again (and the other way
+round). Nothing is written to the timeline.
+
+- **▶ 试听 Listen** (scene inspector, under Voice): synthesizes this scene's spoken line (else its
+  text) with its voice and the engine chosen in the render panel (else the render's default), plays
+  it, and shows the speech against the scene: "念完需 4.2 秒，本场景 3.0 秒，渲染时会自动拉长到 4.5 秒".
+  Switching scenes stops it. Editing the text, spoken line or voice makes a new clip on the next listen.
+- **🔊 试听全部 Listen to all** (under the preview): synthesizes every narrated scene, then the
+  preview plays with the narration, each clip at its scene's start and each scene as long as the
+  render will make it (speech + 300 ms when longer); the bar names the scenes that will be stretched.
+  The playhead and the timeline below stay in the saved timeline's time. Scenes edited since are
+  silent in that preview until listened to again. **关闭旁白** returns to the plain preview.
+- Kokoro chosen but not installed: like the render, `say` speaks and a note says so.
+- At most two syntheses run at once (desktop app and dev server alike); more wait.
+- Desktop app: the `listen_narration` command. Browser dev editor: `POST /__vimmer/tts` (local
+  requests only) runs the CLI, which must be built (`cargo build -p vimmer-cli`, or `VIMMER_BIN`):
+
+```bash
+# The same thing from the command line (clips + lengths as JSON; --scene to pick scenes)
+vimmer tts fixtures/spoken-lines-demo.json --json --public-dir remotion-renderer/public
+```
+
 ### Transitions (`transition_in`)
 
 Optional per scene: `{ "kind": ..., "duration_ms": ... }`, where `kind` is `fade`,
@@ -558,7 +584,8 @@ npm run render:test      # writes out/test-scene.mp4
 - `vimmer-cli`: `vimmer <timeline.json> -o out.mp4` (`--tts kokoro` for Kokoro narration), and
   `vimmer generate <input.txt> --lang zh -o out.mp4` (text → Claude storyboard → MP4, with
   `--illustrate` for Claude-drawn pictures), `vimmer illustrate <storyboard.json>`, and
-  `vimmer beats <audio>` (tempo and beats of a music file).
+  `vimmer beats <audio>` (tempo and beats of a music file), and `vimmer tts <timeline.json>`
+  (narration into the render's TTS cache without rendering: "Listen" in the editor).
 - `vimmer-storyboard`: converter from a storyboard JSON (the format an LLM writes, see
   below) to a validated timeline JSON (offline, bin `vimmer-storyboard`), and the Claude
   generation behind `vimmer generate` (Python helpers `scripts/generate_storyboard.py` and
