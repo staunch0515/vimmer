@@ -301,6 +301,12 @@ fn file_urls_are_percent_encoded() {
 fn real_chrome_devtools_and_screenshot_give_the_same_pixels() {
     let remotion = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer");
     let chrome = find_chrome(&remotion).expect("a headless Chrome");
+    // A relative Chrome path (as `--remotion-dir ../remotion-renderer` gives) must work too.
+    let cwd = std::env::current_dir().unwrap();
+    let chrome = match chrome.strip_prefix(&cwd) {
+        Ok(rel) => rel.to_path_buf(),
+        Err(_) => chrome,
+    };
     let dir = std::env::temp_dir()
         .join(format!("vimmer-svg-real-{}", std::process::id()))
         .join("with space 路径");

@@ -855,6 +855,16 @@ pub fn rasterize_svg_with(
 ) -> Result<RasterMethod, SvgError> {
     let svg = std::path::absolute(svg).map_err(|e| SvgError::Raster(e.to_string()))?;
     let png = std::path::absolute(png).map_err(|e| SvgError::Raster(e.to_string()))?;
+    // The DevTools Chrome runs inside its profile dir, so a relative path to it (e.g. from
+    // `--remotion-dir ../remotion-renderer`) must be resolved here; a bare name stays a PATH
+    // lookup.
+    let chrome_abs;
+    let chrome = if chrome.components().count() > 1 {
+        chrome_abs = std::path::absolute(chrome).map_err(|e| SvgError::Raster(e.to_string()))?;
+        chrome_abs.as_path()
+    } else {
+        chrome
+    };
     let _ = std::fs::remove_file(&png);
     let used = match method {
         RasterMethod::Screenshot => {
