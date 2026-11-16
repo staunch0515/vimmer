@@ -20,7 +20,7 @@ import { MoodMusicFields, MusicModeSwitch } from "./MusicPanel";
 import type { MusicLibrary, PickedTrack } from "../music";
 import { clipFor, spokenText, withSpokenLine } from "../narration";
 import { PageList, TextLayoutFields } from "./TextLayoutFields";
-import { insertPageBreak, withLayoutPart } from "../textLayout";
+import { KEYWORD_YELLOW, addHighlight, insertPageBreak, removeHighlight, withLayoutPart } from "../textLayout";
 import { pagePreview, resolveTextLayout } from "../../../src/textPages";
 import { LookFields } from "./LookFields";
 import { ListenButton, type ListenProps } from "./ListenButton";
@@ -148,11 +148,56 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, list
           />
         </Field>
       )}
-      <Field label="Highlights" hint="Comma-separated words">
+      <Field label="关键词高亮 Highlights" hint="逗号分隔；中文里也可以只高亮几个字">
         <input
+          data-highlights
           value={(scene.highlights ?? []).join(", ")}
-          onChange={(e) => patch({ highlights: e.target.value.split(",").map((w) => w.trim()).filter(Boolean) })}
+          onChange={(e) => patch({ highlights: e.target.value.split(/[,，]/).map((w) => w.trim()).filter(Boolean) })}
         />
+        <div className="row" style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+          <button
+            type="button"
+            className="btn small"
+            data-highlight-selection
+            title="先在上面的文字里选中几个字，再点这里"
+            // Keep the text box's selection: the click must not take the focus.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              const el = document.querySelector<HTMLTextAreaElement>("textarea[data-scene-text]");
+              const picked = el ? el.value.slice(el.selectionStart, el.selectionEnd) : "";
+              const next = addHighlight(scene.highlights, picked);
+              if (next.length !== (scene.highlights ?? []).length) patch({ highlights: next });
+            }}
+          >
+            ★ 高亮选中的字
+          </button>
+          {(scene.highlights ?? []).map((w) => (
+            <span key={w} className="chip" data-highlight-chip={w} style={{ color: timeline.brand?.colors?.accent ?? undefined }}>
+              {w}{" "}
+              <button type="button" className="btn ghost small" aria-label={`取消高亮 ${w}`} onClick={() => patch({ highlights: removeHighlight(scene.highlights, w) })}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+        {(timeline.brand?.colors?.accent ?? "").toLowerCase() !== KEYWORD_YELLOW && (
+          <div className="row dim" style={{ marginTop: 4 }}>
+            高亮颜色 = 品牌的 Accent 色
+            <button
+              type="button"
+              className="btn ghost small"
+              data-keyword-yellow
+              onClick={() =>
+                dispatch({
+                  type: "setBrand",
+                  brand: { ...(timeline.brand ?? {}), colors: { ...(timeline.brand?.colors ?? {}), accent: KEYWORD_YELLOW } },
+                })
+              }
+            >
+              <span style={{ display: "inline-block", width: 10, height: 10, background: KEYWORD_YELLOW, borderRadius: 2 }} /> 关键词用黄色
+            </button>
+          </div>
+        )}
       </Field>
       <div className="section-title">文字 Text</div>
       <TextLayoutFields

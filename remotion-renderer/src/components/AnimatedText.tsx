@@ -18,6 +18,7 @@ import type { Brand, TextBackground, TextLayout, TextPage, TextPosition, TextSty
 import { useBrand } from "./Brand";
 import { PAGE_FADE_FRAMES, fontPx, isDefaultLayout, pageAt, resolveTextLayout, topInsetPx } from "../textPages";
 import { msToFrames } from "../layout";
+import { LINE_BREAK, highlightParts, splitWordsAndBreaks } from "../highlight";
 
 type Props = {
   text: string;
@@ -48,6 +49,12 @@ const POSITION_SCRIM: Record<TextPosition, string> = {
 };
 const JUSTIFY: Record<TextPosition, string> = { top: "flex-start", middle: "center", bottom: "flex-end" };
 
+// The middle band moved to centre `y` (a fraction of the height) for text at a free point.
+export const bandScrim = (y: number): string => {
+  const pct = (d: number) => `${+((y + d) * 100).toFixed(2)}%`;
+  return `linear-gradient(to bottom, rgba(9, 9, 11, 0) ${pct(-0.35)}, rgba(9, 9, 11, 0.45) ${pct(-0.15)}, rgba(9, 9, 11, 0.45) ${pct(0.15)}, rgba(9, 9, 11, 0) ${pct(0.35)})`;
+};
+
 const STAGGER_FRAMES = 3;
 const WORD_FADE_FRAMES = 12;
 
@@ -57,19 +64,26 @@ export const normalize = (word: string): string => word.toLowerCase().replace(/[
 // STAGGER_FRAMES after the one before it, counting from `frame` 0; highlighted words glow in.
 // Without it, every word is shown at rest. Shared by the scene text and text layers. `shadow` is a
 // text style's shadow: highlighted words then keep it under their glow (without it they show only
-// the glow, as they always did).
+// the glow, as they always did). With `highlights` (the raw list), a word that does not match as a
+// whole may glow in part: a keyword inside CJK text (src/highlight.ts); its parts reveal together.
+// A LINE_BREAK entry in `words` is a line break (src/highlight.ts `splitWordsAndBreaks`); it takes
+// no reveal step.
 export const AnimatedWords: React.FC<{
   words: string[];
   highlightSet: Set<string>;
   frame: number;
   animate?: boolean;
   shadow?: string;
-}> = ({ words, highlightSet, frame, animate = true, shadow }) => {
+  highlights?: readonly string[];
+}> = ({ words, highlightSet, frame, animate = true, shadow, highlights }) => {
   const brand = useBrand();
+  let step = -1;
   return (
   <>
     {words.map((word, i) => {
-      const start = i * STAGGER_FRAMES;
+      if (word === LINE_BREAK) return <br key={`br-${i}`} />;
+      step += 1;
+      const start = step * STAGGER_FRAMES;
       const opacity = animate
         ? interpolate(frame, [start, start + WORD_FADE_FRAMES], [0, 1], {
             extrapolateLeft: "clamp",
@@ -83,7 +97,9 @@ export const AnimatedWords: React.FC<{
           })
         : 0;
       const isHighlight = highlightSet.has(normalize(word));
-      const glow = isHighlight
+      const parts = !isHighlight && highlights?.length ? highlightParts(word, highlights) : null;
+      const partial = parts !== null && parts.some((p) => p.highlight);
+      const glow = isHighlight || partial
         ? animate
           ? interpolate(frame, [start, start + 30], [0, 1], {
               extrapolateLeft: "clamp",
@@ -103,7 +119,17 @@ export const AnimatedWords: React.FC<{
             ...(isHighlight ? glowStyle(highlightStyle(glow, brand), shadow) : {}),
           }}
         >
-          {word}
+          {partial
+            ? parts.map((p, k) =>
+                p.highlight ? (
+                  <span key={k} style={glowStyle(highlightStyle(glow, brand), shadow)}>
+                    {p.text}
+                  </span>
+                ) : (
+                  p.text
+                ),
+              )
+            : word}
         </span>
       );
     })}
@@ -137,17 +163,36 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = fals
   const plain = isDefaultLayout(layout, brand);
   const resolved = resolveTextLayout(layout, brand);
   const position = plain ? "bottom" : resolved.position;
+  const at = plain ? null : resolved.at;
+
+  // A free point: a full-width row (8% side padding) whose centre sits at y of the height,
+  // shifted sideways so the text centre is at x of the width. Otherwise the padded text area.
+  const area: React.CSSProperties = at
+    ? {
+        top: `${Math.fround(at.y) * 100}%`,
+        bottom: "auto",
+        height: "auto",
+        transform: `translate(${(Math.fround(at.x ?? 0.5) - 0.5) * width}px, -50%)`,
+        flexDirection: "row",
+        justifyContent: "center",
+        padding: "0 8%",
+      }
+    : {
+        justifyContent: JUSTIFY[position],
+        alignItems: "center",
+        // Fixed bottom inset keeps scene text clear of the subtitle band.
+        padding: position === "bottom" ? "8% 8% 260px" : `${topInsetPx(position, brand, sceneId, width, height)}px 8% 260px`,
+      };
 
   // One page of words in the text area, revealed from `pageFrame` 0.
   const page = (words: string[], pageFrame: number, extra?: React.CSSProperties, key?: string) => (
     <AbsoluteFill
       key={key}
       style={{
-        justifyContent: JUSTIFY[position],
-        alignItems: "center",
-        // Fixed bottom inset keeps scene text clear of the subtitle band.
-        padding: position === "bottom" ? "8% 8% 260px" : `${topInsetPx(position, brand, sceneId, width, height)}px 8% 260px`,
+        ...area,
         ...extra,
+        // The outgoing page's lift adds to a free point's placement.
+        ...(at && extra?.transform ? { transform: `${area.transform} ${extra.transform}` } : {}),
       }}
     >
       <div
@@ -173,11 +218,18 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = fals
             highlightSet={highlightSet}
             frame={pageFrame}
             box={style.background}
+            highlights={highlights}
             scale={scale}
             shadow={style.shadow ? shadow : undefined}
           />
         ) : (
-          <AnimatedWords words={words} highlightSet={highlightSet} frame={pageFrame} shadow={style.shadow ? shadow : undefined} />
+          <AnimatedWords
+            words={words}
+            highlightSet={highlightSet}
+            highlights={highlights}
+            frame={pageFrame}
+            shadow={style.shadow ? shadow : undefined}
+          />
         )}
       </div>
     </AbsoluteFill>
@@ -185,7 +237,7 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = fals
 
   let body: React.ReactNode;
   if (!pages || pages.length < 2) {
-    body = page(splitWords(text), frame);
+    body = page(splitWordsAndBreaks(text), frame);
   } else {
     const starts = pages.map((p) => msToFrames(p.start_ms, fps));
     const k = pageAt(starts.map((start_ms) => ({ start_ms })), frame);
@@ -194,16 +246,16 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = fals
     body = (
       <>
         {out >= 0
-          ? page(splitWords(pages[out].text), frame - starts[out], { opacity: 1 - fade, transform: `translateY(${-24 * fade}px)` }, `page-${out}`)
+          ? page(splitWordsAndBreaks(pages[out].text), frame - starts[out], { opacity: 1 - fade, transform: `translateY(${-24 * fade}px)` }, `page-${out}`)
           : null}
-        {page(splitWords(pages[k].text), frame - starts[k], undefined, `page-${k}`)}
+        {page(splitWordsAndBreaks(pages[k].text), frame - starts[k], undefined, `page-${k}`)}
       </>
     );
   }
   if (!onImage) return <>{body}</>;
   return (
     <>
-      <AbsoluteFill style={{ background: POSITION_SCRIM[position] }} />
+      <AbsoluteFill style={{ background: at ? bandScrim(Math.fround(at.y)) : POSITION_SCRIM[position] }} />
       {body}
     </>
   );
@@ -226,7 +278,8 @@ const BoxedWords: React.FC<{
   box: TextBackground;
   scale: number;
   shadow?: string;
-}> = ({ words, highlightSet, frame, box, scale, shadow }) => {
+  highlights?: readonly string[];
+}> = ({ words, highlightSet, frame, box, scale, shadow, highlights }) => {
   const pad = box.padding ?? 0.4;
   const border = borderPx(box, scale);
   const fade = interpolate(frame, [0, WORD_FADE_FRAMES], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
@@ -263,7 +316,7 @@ const BoxedWords: React.FC<{
       </div>
       <div style={{ gridArea: "1 / 1", lineHeight }}>
         <span style={line}>
-          <AnimatedWords words={words} highlightSet={highlightSet} frame={frame} shadow={shadow} />
+          <AnimatedWords words={words} highlightSet={highlightSet} highlights={highlights} frame={frame} shadow={shadow} />
         </span>
       </div>
     </>

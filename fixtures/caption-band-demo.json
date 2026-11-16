@@ -1,0 +1,54 @@
+{
+  "fps": 30,
+  "resolution": { "width": 1080, "height": 1920 },
+  "brand": {
+    "colors": { "accent": "#f5c400", "background": "#000000" },
+    "text_layout": { "position": { "y": 0.64 } },
+    "text_style": { "background": { "color": "#000000a6", "padding": 0.22, "radius": 0.18 }, "shadow": "none" }
+  },
+  "scenes": [
+    {
+      "id": "keywords",
+      "duration_ms": 4000,
+      "text": "输入文字就能\n变出一支影片",
+      "highlights": ["文字", "影片"],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "text_layout": { "position": { "y": 0.6 }, "size": 96 },
+      "layers": [
+        { "id": "media", "kind": "image", "src": "assets/sample.jpeg", "fit": "cover", "x": 0, "y": 0, "width": 1, "height": 0.5, "z": -1 }
+      ]
+    },
+    {
+      "id": "mixed",
+      "duration_ms": 4000,
+      "text": "用AI生成脚本\n只要三步",
+      "highlights": ["AI", "三步"],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "transition_in": { "kind": "fade", "duration_ms": 400 },
+      "text_layout": { "position": { "y": 0.6, "x": 0.5 }, "size": 96 },
+      "layers": [
+        { "id": "media", "kind": "image", "src": "assets/design.png", "fit": "cover", "x": 0, "y": 0, "width": 1, "height": 0.5, "z": -1 }
+      ]
+    },
+    {
+      "id": "brand-default",
+      "duration_ms": 4000,
+      "text": "Vimmer 让短视频\n更简单",
+      "highlights": ["Vimmer", "简单"],
+      "image": null,
+      "motion": "static",
+      "audio": null,
+      "transition_in": { "kind": "fade", "duration_ms": 400 },
+      "layers": [
+        { "id": "media", "kind": "image", "src": "assets/sample.png", "fit": "cover", "x": 0, "y": 0, "width": 1, "height": 0.55, "z": -1 }
+      ]
+    }
+  ],
+  "subtitles": [
+    { "start_ms": 8400, "end_ms": 11600, "text": "关键词黄色，字幕仍在底部" }
+  ]
+}

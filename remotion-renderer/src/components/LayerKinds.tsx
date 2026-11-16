@@ -100,6 +100,7 @@ export const TextLayerView: React.FC<{ layer: TextLayer; boxHeight: number | nul
         <AnimatedWords
           words={words}
           highlightSet={highlightKeys(layer.highlights ?? [])}
+          highlights={layer.highlights ?? []}
           frame={frame}
           animate={layer.reveal === "words"}
           shadow={shadow}

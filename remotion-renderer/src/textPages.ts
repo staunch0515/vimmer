@@ -7,7 +7,7 @@
 // Without them (the editor preview) the pages are split here and timed by characters over the
 // scene, exactly as the render times a scene without narration.
 
-import type { Brand, Paging, Resolution, Scene, TextLayout, TextPage, TextPosition } from "./types/timeline";
+import type { Brand, Paging, Resolution, Scene, TextLayout, TextPage, TextPoint, TextPosition } from "./types/timeline";
 
 export const DEFAULT_TEXT_PX = 92;
 export const MIN_TEXT_PX = 40;
@@ -27,14 +27,20 @@ export const LOGO_GAP_FRAC = 0.02;
 /** Frames the outgoing page takes to fade out while the next one reveals. */
 export const PAGE_FADE_FRAMES = 8;
 
-export type ResolvedTextLayout = { size: number; position: TextPosition; paging: Paging };
+// `position` is "middle" for a free point; `at` is the point, which wins.
+export type ResolvedTextLayout = { size: number; position: TextPosition; at: TextPoint | null; paging: Paging };
+
+/** Whether a text_layout.position is a free point rather than a named place. */
+export const isTextPoint = (p: unknown): p is TextPoint => typeof p === "object" && p !== null && typeof (p as TextPoint).y === "number";
 
 /** Each part of the scene's layout, else the brand's, else the built-in one. */
 export const resolveTextLayout = (own: TextLayout | null | undefined, brand: Brand | null | undefined): ResolvedTextLayout => {
   const b = brand?.text_layout;
+  const place = own?.position ?? b?.position ?? "bottom";
   return {
     size: own?.size ?? b?.size ?? DEFAULT_TEXT_PX,
-    position: own?.position ?? b?.position ?? "bottom",
+    position: isTextPoint(place) ? "middle" : place,
+    at: isTextPoint(place) ? place : null,
     paging: own?.paging ?? b?.paging ?? "off",
   };
 };

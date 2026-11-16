@@ -1672,6 +1672,47 @@ fn bigger_text_title_on_top_and_paging_one_scene() {
 }
 
 #[test]
+fn text_position_point_from_the_assistant() {
+    // "字幕放在画面 60% 的位置": a point, set as a whole value.
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/text_layout", "value": {"position": {"y": 0.6}}}]),
+    );
+    assert_eq!(out.timeline["scenes"][0]["text_layout"], json!({"position": {"y": 0.6}}));
+    assert!(out.summary.iter().any(|l| l.contains("at y 0.6")), "{:?}", out.summary);
+    let out = ok(
+        &out.timeline,
+        json!([{"op": "add", "path": "/scenes/0/text_layout/position", "value": {"y": 0.7, "x": 0.4}}]),
+    );
+    assert!(out.summary.iter().any(|l| l.contains("at y 0.7, x 0.4")), "{:?}", out.summary);
+    // A brand-wide default point.
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/brand", "value": {"text_layout": {"position": {"y": 0.62}}}}]),
+    );
+    assert_eq!(out.timeline["brand"]["text_layout"]["position"]["y"].as_f64(), Some(0.62));
+    // Out of range, and a part of the point on its own, are refused.
+    let r = err(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/text_layout", "value": {"position": {"y": 1.5}}}]),
+    );
+    assert!(text(&r).contains("position.y 1.5 must be between 0 (top) and 1 (bottom)"), "{}", text(&r));
+    let r = err(
+        &out.timeline,
+        json!([{"op": "add", "path": "/brand/text_layout/position/y", "value": 0.5}]),
+    );
+    assert!(!text(&r).is_empty());
+}
+
+#[test]
+fn cjk_substring_highlight_from_the_assistant() {
+    let mut t = small();
+    t["scenes"][0]["text"] = json!("输入文字就能生成视频");
+    let out = ok(&t, json!([{"op": "add", "path": "/scenes/0/highlights/-", "value": "文字"}]));
+    assert_eq!(out.timeline["scenes"][0]["highlights"], json!(["文字"]));
+}
+
+#[test]
 fn text_layout_values_are_checked() {
     let r = err(&small(), json!([{"op": "add", "path": "/scenes/0/text_layout", "value": {"size": 300}}]));
     assert!(text(&r).contains("text_layout.size 300 must be between 40 and 160"), "{}", text(&r));

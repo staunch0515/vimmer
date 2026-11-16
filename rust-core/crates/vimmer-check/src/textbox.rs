@@ -148,6 +148,7 @@ pub(crate) fn layer_box(
                 bottom_y: 0.0,
                 top_y: 0.0,
                 position: vimmer_dsl::TextPosition::Bottom,
+                at: None,
             };
             let title = words_width(&lt.title, &area(f), fonts, Role::Heading);
             let sub = lt.subtitle.as_deref().map_or(0.0, |s| {

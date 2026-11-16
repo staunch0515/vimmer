@@ -47,7 +47,7 @@ pub use srt::{parse_srt, SrtError};
 pub use template::{
     expand_scene, expand_templates, SceneTemplate, TemplateError, TemplateInfo, CATALOG,
 };
-pub use text_layout::{
+pub use text_layout::{TextPlace, TextPoint, 
     Paging, ResolvedTextLayout, TextLayout, TextPage, TextPosition, DEFAULT_TEXT_PX, MAX_TEXT_PX,
     MIN_TEXT_PX,
 };
