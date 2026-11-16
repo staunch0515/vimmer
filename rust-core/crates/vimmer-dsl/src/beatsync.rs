@@ -375,6 +375,7 @@ mod tests {
             music: None,
             brand: None,
             subtitle_box: None,
+            look: None,
         }
     }
 

@@ -385,6 +385,11 @@ pub fn resolve_music_pick(
         return Ok(None);
     };
     let choice = library.pick(&pick, seed)?;
+    // `auto` grades follow the pick's mood, which is gone once the pick becomes a file.
+    crate::look::resolve_auto_grades(t);
+    let Some(music) = t.music.as_mut() else {
+        return Ok(None);
+    };
     music.source = Some(choice.track.source());
     music.pick = None;
     if music.beat_sync_on().is_some() && music.beats.is_none() {
@@ -688,6 +693,18 @@ mod tests {
         assert_eq!(synced.music.unwrap().beats.unwrap().bpm, 100.0);
         // Nothing to do without a pick.
         assert_eq!(resolve_music_pick(&mut t, &lib()).unwrap(), None);
+    }
+
+    #[test]
+    fn resolving_turns_auto_grades_into_the_moods_preset_first() {
+        let json = r#"{"fps":30,"resolution":{"width":1920,"height":1080},"scenes":[
+            {"id":"a","duration_ms":3000,"text":"hi","look":{"grade":{"preset":"auto"}}}],
+            "music":{"pick":{"mood":"upbeat"},"volume":0.3},"look":{"grade":{"preset":"auto","strength":0.5}}}"#;
+        let mut t: VideoTimeline = serde_json::from_str(json).unwrap();
+        resolve_music_pick(&mut t, &lib()).unwrap().unwrap();
+        assert!(t.music.as_ref().unwrap().pick.is_none());
+        assert_eq!(t.look.unwrap().grade.unwrap().preset, "vivid");
+        assert_eq!(t.scenes[0].look.as_ref().unwrap().grade.as_ref().unwrap().preset, "vivid");
     }
 
     #[test]

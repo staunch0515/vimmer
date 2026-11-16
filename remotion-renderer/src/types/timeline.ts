@@ -87,7 +87,25 @@ export type Scene = {
   template?: SceneTemplate | null;
   // Short sounds mixed in at moments of this scene (at most 16). Absent or empty: none.
   sfx?: SoundEffect[];
+  // This scene's grade and atmosphere overlays, over the timeline's `look` part by part.
+  // Absent: the timeline's look (none when it has none), exactly as before.
+  look?: Look | null;
 };
+
+// ---- Look (画面氛围). Mirrors rust-core/crates/vimmer-dsl/src/look.rs; drawing in
+// components/Atmosphere.tsx, inheritance, presets and particles in motion/look.ts.
+
+// none | auto (from the music mood) | warm | tech_blue | noir | moody | vintage | vivid
+export type Grade = { preset: string; strength?: number /* 0..1, default 1 */ };
+export type OverlayKind = "snow" | "dust" | "bokeh" | "film_grain";
+export type Overlay = {
+  kind: OverlayKind;
+  intensity?: number; // 0..1, default 0.5
+  color?: string; // dust and bokeh only; default warm white / soft gold
+};
+// Each part optional. A scene's `grade` replaces the default grade; a scene's `overlays` (even
+// empty: none here) replaces the default list; a part left out is inherited.
+export type Look = { grade?: Grade | null; overlays?: Overlay[] | null };
 
 // Mirrors `SoundEffect` in vimmer-dsl/src/model.rs. Exactly one of `at_ms` / `on`. Mixed into the
 // soundtrack by the Rust core on the frame of its moment; plays to its end (past the scene end).
@@ -406,6 +424,8 @@ export type VideoTimeline = {
   // Where the subtitles sit. Absent: the built-in place (centered, bottom edge 4 % of the frame
   // width above the bottom), exactly as before. Mirrors `SubtitleBox` in model.rs.
   subtitle_box?: SubtitleBox | null;
+  // Default grade and atmosphere overlays of every scene. Absent: none, exactly as before.
+  look?: Look | null;
 };
 
 export type SubtitleBox = {

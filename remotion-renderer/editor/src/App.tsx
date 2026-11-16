@@ -41,6 +41,7 @@ import { inTauri } from "./project";
 import { assetUrlFor, loadAssetRoot } from "./media";
 import { resolveAsset } from "../../src/assets";
 import { beatMarks, detectBeats, type DetectedBeats } from "./beats";
+import { resolveAutoGrades } from "../../src/motion/look";
 import { loadMusicLibrary, musicForBeats, pickKey, pickMusic, resolvedMusic, type MusicLibrary, type PickedTrack } from "./music";
 import type { BeatStatus } from "./components/SoundPanel";
 import "./studio/studio.css";
@@ -147,7 +148,8 @@ export const App = () => {
   const pickError = picked && picked.key === currentPickKey && "error" in picked.result ? picked.result.error : null;
   // The preview plays what the render will play: a pick becomes the chosen file.
   const previewTimeline = useMemo(
-    () => (timeline.music?.pick ? { ...timeline, music: resolvedMusic(timeline.music, pickedTrack) } : timeline),
+    // `auto` grades follow the pick's mood, so they are settled before the pick becomes a file.
+    () => (timeline.music?.pick ? { ...resolveAutoGrades(timeline), music: resolvedMusic(timeline.music, pickedTrack) } : timeline),
     [timeline, pickedTrack],
   );
   const marks = useMemo(

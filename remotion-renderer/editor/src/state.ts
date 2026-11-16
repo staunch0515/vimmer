@@ -1,4 +1,4 @@
-import type { Brand, SubtitleBox, Keyframe, Layer, LayerKind, Music, Scene, SceneTemplate, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import type { Brand, Look, SubtitleBox, Keyframe, Layer, LayerKind, Music, Scene, SceneTemplate, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
 import { templateScene } from "./templates";
 import { emptyScene, type Selection } from "./model";
 import { clampLayers, moveInStack, newLayer } from "./layers";
@@ -49,6 +49,8 @@ export type Action =
   | { type: "setBrand"; brand: Brand | null }
   // Where the subtitles sit (null: the built-in place).
   | { type: "setSubtitleBox"; box: SubtitleBox | null }
+  // The default look of every scene (null removes it).
+  | { type: "setLook"; look: Look | null }
   // A new scene made from a template, after scene `after` (-1: at the start).
   | { type: "insertTemplate"; name: string; after: number; params?: SceneTemplate["params"] }
   | { type: "patchTemplate"; index: number; params: SceneTemplate["params"] }
@@ -336,6 +338,10 @@ const edit = (state: EditorState, action: Action): EditorState => {
     case "setSubtitleBox": {
       const { subtitle_box: _old, ...rest } = t;
       return commit(state, action.box ? { ...rest, subtitle_box: clampBox(action.box) } : rest);
+    }
+    case "setLook": {
+      const { look: _old, ...rest } = t;
+      return commit(state, action.look ? { ...rest, look: action.look } : rest);
     }
     case "setBrand": {
       const { brand: _old, ...rest } = t;

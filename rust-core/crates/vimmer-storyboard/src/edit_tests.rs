@@ -1793,3 +1793,92 @@ fn a_long_spoken_line_on_a_short_scene_warns() {
         out.warnings
     );
 }
+
+// --- look (画面氛围) ------------------------------------------------------------------------------
+
+#[test]
+fn snow_on_one_scene_and_a_warm_default_grade_are_accepted_and_summarized() {
+    // "加点雪花" on the selected scene.
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/look", "value": {"overlays": [{"kind": "snow", "intensity": 0.6}]}}]),
+    );
+    assert_eq!(
+        out.timeline["scenes"][0]["look"],
+        json!({"overlays": [{"kind": "snow", "intensity": 0.6}]})
+    );
+    assert!(
+        out.summary.iter().any(|l| l.starts_with("a: look none -> snow 60%")),
+        "{:?}",
+        out.summary
+    );
+    // "整体调成温暖色调": the timeline default.
+    let warm = ok(
+        &out.timeline,
+        json!([{"op": "add", "path": "/look", "value": {"grade": {"preset": "warm", "strength": 0.8}}}]),
+    );
+    assert!(
+        warm.summary
+            .iter()
+            .any(|l| l == "look (all scenes): none -> grade warm 80%"),
+        "{:?}",
+        warm.summary
+    );
+    // Fields inside a look, one at a time.
+    let more = ok(
+        &warm.timeline,
+        json!([
+            {"op": "replace", "path": "/look/grade/strength", "value": 0.5},
+            {"op": "add", "path": "/scenes/0/look/overlays/-", "value": {"kind": "bokeh", "color": "#ffcc88"}},
+            {"op": "add", "path": "/scenes/1/look", "value": {"overlays": []}}
+        ]),
+    );
+    assert_eq!(more.timeline["scenes"][0]["look"]["overlays"][1]["kind"], "bokeh");
+    // Removing the scene look goes back to the old shape.
+    let back = ok(&out.timeline, json!([{"op": "remove", "path": "/scenes/0/look"}]));
+    assert_eq!(back.timeline, small());
+    assert!(
+        back.summary.iter().any(|l| l.contains("look snow 60% -> none")),
+        "{:?}",
+        back.summary
+    );
+}
+
+#[test]
+fn look_fields_and_values_are_checked() {
+    for (patch, want) in [
+        (
+            json!([{"op": "add", "path": "/look", "value": {"grade": {"preset": "pink"}}}]),
+            "`pink` is unknown",
+        ),
+        (
+            json!([{"op": "add", "path": "/look", "value": {"filter": "sepia"}}]),
+            "unknown field `filter`",
+        ),
+        (
+            json!([{"op": "add", "path": "/scenes/0/look", "value": {"overlays": [{"kind": "rain"}]}}]),
+            "`rain` is unknown",
+        ),
+        (
+            json!([{"op": "add", "path": "/scenes/0/look", "value": {"overlays": [{"kind": "snow", "intensity": 1.5}]}}]),
+            "intensity 1.5",
+        ),
+        (
+            json!([{"op": "add", "path": "/scenes/0/look", "value": {"overlays": [{"kind": "snow", "speed": 2}]}}]),
+            "unknown field `speed`",
+        ),
+        (
+            json!([{"op": "add", "path": "/scenes/0/look", "value": {"overlays": [{"kind": "film_grain", "color": "#fff"}]}}]),
+            "has no color",
+        ),
+        (
+            json!([{"op": "add", "path": "/scenes/0/look", "value": {"overlays": [
+                {"kind": "snow"}, {"kind": "dust"}, {"kind": "bokeh"}, {"kind": "film_grain"}
+            ]}}]),
+            "at most 3",
+        ),
+    ] {
+        let e = err(&small(), patch);
+        assert!(text(&e).contains(want), "{want}: {e}");
+    }
+}

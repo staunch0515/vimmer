@@ -534,3 +534,7 @@ textarea { resize: vertical; width: 100%; }
 .chat-model { display: flex; gap: 6px; align-items: center; flex: 1; min-width: 0; white-space: nowrap; }
 .assistant-row .chat-model select { flex: 1; min-width: 0; }
 .assistant-row.chat-send { justify-content: flex-end; }
+/* 画面氛围 Look fields */
+.look-fields { display: flex; flex-direction: column; gap: 6px; }
+.look-overlay { border: 1px solid var(--border, #2a2a30); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.look-overlay input[type="color"] { width: 36px; height: 24px; padding: 0; border: none; background: none; }

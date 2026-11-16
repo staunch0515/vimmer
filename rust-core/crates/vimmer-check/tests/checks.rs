@@ -1084,3 +1084,42 @@ fn a_spoken_line_is_what_the_narration_checks_measure() {
     let f = one(&fs, "dsl.invalid", None, None);
     assert!(f.message.contains("spoken line"), "{}", f.message);
 }
+
+#[test]
+fn bad_look_values_are_invalid_and_a_good_look_adds_no_findings() {
+    let mut t = fixture_json_timeline();
+    let plain = run(&t, None);
+    // A valid look changes nothing in the report (contrast checks ignore grading).
+    t.look = Some(
+        serde_json::from_str(r#"{"grade":{"preset":"noir"},"overlays":[{"kind":"snow"}]}"#).unwrap(),
+    );
+    t.scenes[0].look =
+        Some(serde_json::from_str(r#"{"grade":{"preset":"auto","strength":0.5}}"#).unwrap());
+    assert_eq!(run(&t, None), plain);
+    // Unknown preset and kind, out-of-range numbers: one dsl.invalid finding each.
+    t.look = Some(
+        serde_json::from_str(r#"{"grade":{"preset":"sepia","strength":2},"overlays":[{"kind":"rain"}]}"#)
+            .unwrap(),
+    );
+    t.scenes[0].look =
+        Some(serde_json::from_str(r#"{"overlays":[{"kind":"dust","intensity":-1}]}"#).unwrap());
+    let fs = run(&t, None);
+    let invalid = find(&fs, "dsl.invalid", None, None);
+    let all: Vec<&str> = invalid.iter().map(|f| f.message.as_str()).collect();
+    assert_eq!(invalid.len(), 4, "{all:#?}");
+    for want in ["`sepia` is unknown", "strength 2", "`rain` is unknown", "intensity -1"] {
+        assert!(all.iter().any(|m| m.contains(want)), "{want}: {all:#?}");
+    }
+}
+
+fn fixture_json_timeline() -> VideoTimeline {
+    serde_json::from_value(serde_json::json!({
+        "fps": 30, "resolution": {"width": 1920, "height": 1080},
+        "scenes": [
+            {"id": "a", "duration_ms": 3000, "text": "Hello there"},
+            {"id": "b", "duration_ms": 3000, "text": "Second scene"}
+        ],
+        "subtitles": []
+    }))
+    .unwrap()
+}

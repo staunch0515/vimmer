@@ -353,6 +353,7 @@ mod tests {
             transition_in: None,
             keyframes: vec![],
             layers: vec![],
+            look: None,
         }
     }
 
@@ -368,6 +369,7 @@ mod tests {
             subtitles: vec![],
             music: None,
             subtitle_box: None,
+            look: None,
         }
     }
 

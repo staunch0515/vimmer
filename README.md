@@ -415,6 +415,60 @@ large). SVG is not accepted because templates draw the logo as an image layer.
 `brand.logo_safe_area`, `brand.logo_subtitles`, `brand.unknown_scene` and
 `assets.missing_font` / `assets.missing_logo` (see the table under Quality check).
 
+### Look: color grade and atmosphere (`look`, `scene.look`) — 画面氛围
+
+A look colors the scene picture and draws animated atmosphere over it. Everything is local (CSS/SVG
+in the renderer, no LUT files, no extra installs). Without a `look` a timeline renders exactly as
+before (no extra elements or filters).
+
+```json
+"look": {
+  "grade": { "preset": "warm", "strength": 0.8 },
+  "overlays": [ { "kind": "dust", "intensity": 0.4 }, { "kind": "film_grain", "intensity": 0.3 } ]
+}
+```
+
+- **Where**: `look` at the top level is the default of every scene; `scene.look` has the same shape.
+  A scene's `grade` replaces the default grade; a scene's `overlays` list replaces the default list
+  (`"overlays": []` = no overlays in that scene); a part a scene leaves out is inherited.
+- **`grade.preset`**: `warm` (温暖文艺), `tech_blue` (科技蓝), `moody` (悬疑暗调: muted, dark, teal
+  shadows), `noir` (black and white), `vintage` (faded film), `vivid`, `none` (switch a default grade
+  off for one scene), `auto` (from the music mood, below). `strength` 0..1 (default 1) blends from the
+  untouched picture to the full preset. Each preset is one SVG color matrix plus, for most, a soft
+  vignette.
+- **`overlays`**: up to 4, each kind once, drawn in list order: `snow` (飘落的雪花), `dust` (浮动的
+  尘埃), `bokeh` (柔和光斑), `film_grain` (胶片颗粒, new grain every frame). `intensity` 0..1 (default
+  0.5) sets particle count, size and opacity (grain strength). `color` tints `dust` and `bokeh` only
+  (defaults: warm white, soft gold). Particle counts are capped (snow 150, dust 120, bokeh 20).
+- **Stacking**: the grade applies to the scene picture — background image or video, layers and scene
+  text. Overlays sit above it. The brand logo and the subtitles are drawn on top, ungraded and never
+  covered. Under a transition the held previous scene keeps its own look.
+- **Determinism**: particles and grain are a pure function of the absolute timeline frame and a seed
+  (the overlay's index and kind; a scene's own overlays add the scene id). No `Math.random`, no clock,
+  so chunked renders match a full render and the editor preview shows the same frames. Overlays that
+  come from the timeline default keep moving across scene cuts.
+- **`auto`**: the preset follows `music.pick.mood`. The render turns `auto` into the concrete preset
+  just before it swaps the pick for the chosen file (`resolve_music_pick`); music given as a `source`
+  file has no mood, so `auto` is then `none`.
+
+  | music mood | `auto` preset |
+  |---|---|
+  | warm, hopeful, romantic, nostalgic | `warm` |
+  | calm, reflective, ambient | `vintage` |
+  | tense, suspense, dark, mysterious, sad | `moody` |
+  | happy, playful, upbeat, energetic, fun | `vivid` |
+  | epic, dramatic, inspiring, tech, corporate, futuristic | `tech_blue` |
+  | anything else, or no mood | `none` |
+
+- **Validation** (`vimmer check` reports these as `dsl.invalid`): unknown preset or kind, `strength` /
+  `intensity` outside 0..1, more than 4 overlays, a kind listed twice, a bad color or a color on
+  `snow` / `film_grain`. The contrast checks look at the ungraded picture (they ignore grading).
+- **Editor**: the scene inspector has a 画面氛围 Look section (grade, strength, own overlays); the
+  default for all scenes is at the bottom of the Brand tab. **Assistant**: "加点雪花", "整体调成温暖色调",
+  "淡一点" (it stacks at most 3 overlays per look).
+- Example: `fixtures/atmosphere-demo.json` (snow, dust + warm, bokeh + tech blue, film grain + noir,
+  and a scene that inherits the default `auto` grade with dust; music mood `calm` → `vintage`).
+
 ### Templates (`scene.template`)
 
 A template scene is a few params instead of layers:

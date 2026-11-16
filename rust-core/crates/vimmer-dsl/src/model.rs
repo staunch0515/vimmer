@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::brand::Brand;
 use crate::layer::{Layer, VideoClip};
+use crate::look::Look;
 use crate::template::SceneTemplate;
 use crate::text_style::TextStyle;
 
@@ -229,6 +230,10 @@ pub struct Scene {
     /// Short sounds mixed in at moments of this scene.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sfx: Vec<SoundEffect>,
+    /// This scene's color grade and atmosphere overlays, over the timeline's `look` part by part
+    /// (see [`crate::look`]). Absent: the timeline's look (none when it has none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<Look>,
 }
 
 impl Scene {
@@ -615,9 +620,21 @@ pub struct VideoTimeline {
     /// Where the subtitles sit (see [`SubtitleBox`]). Absent: the built-in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subtitle_box: Option<SubtitleBox>,
+    /// Default color grade and atmosphere overlays of every scene (see [`crate::look`]).
+    /// Absent: no grade, no overlays, exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<Look>,
 }
 
 impl VideoTimeline {
+    /// The look scene `index` is drawn with (its own over the timeline default).
+    pub fn scene_look(&self, index: usize) -> crate::look::EffectiveLook {
+        Look::effective(
+            self.look.as_ref(),
+            self.scenes.get(index).and_then(|s| s.look.as_ref()),
+        )
+    }
+
     /// The subtitle box in use: `subtitle_box`, or the built-in place.
     pub fn subtitle_box_or_default(&self) -> SubtitleBox {
         self.subtitle_box
@@ -896,6 +913,30 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
         assert_eq!(back, t);
         assert_eq!(t.scenes.iter().map(|s| s.sfx.len()).sum::<usize>(), 9);
+    }
+
+    #[test]
+    fn every_fixture_round_trips_and_old_ones_write_no_look_key() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fixtures");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.ends_with(".json") || name.starts_with("brand.") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).unwrap();
+            let t: VideoTimeline = serde_json::from_str(&raw).unwrap();
+            let out = serde_json::to_string(&t).unwrap();
+            let back: VideoTimeline = serde_json::from_str(&out).unwrap();
+            assert_eq!(back, t, "{name}");
+            if !raw.contains("\"look\"") {
+                assert!(!out.contains("\"look\""), "{name}");
+                // Same JSON value as the pre-look serializer wrote: a parse of the old file
+                // re-serialized equals a parse with `look` removed (there is nothing to remove).
+                let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+                assert!(v.get("look").is_none());
+            }
+        }
     }
 
     #[test]

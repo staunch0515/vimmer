@@ -1051,6 +1051,7 @@ mod tests {
                         music: None,
                         brand: b.cloned(),
                         subtitle_box: None,
+                        look: None,
                     };
                     validate(&t).unwrap_or_else(|e| panic!("{case}: {e:?}"));
                     // Everything stays inside the frame.
@@ -1153,6 +1154,7 @@ mod tests {
                 music: None,
                 brand: None,
                 subtitle_box: None,
+                look: None,
             };
             validate(&t).unwrap_or_else(|e| panic!("{name}: {e:?}"));
         }
