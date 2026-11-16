@@ -10,7 +10,7 @@
     "editor": "vite --config editor/vite.config.ts",
     "editor:build": "vite build --config editor/vite.config.ts",
     "typecheck:editor": "tsc --noEmit -p editor/tsconfig.json",
-    "test:motion": "node --experimental-strip-types --test test/motion.test.ts test/editor-normalize.test.ts test/render-options.test.ts test/editor-keyframes.test.ts test/editor-history.test.ts test/editor-subtitle-box.test.ts test/editor-layout.test.ts test/studio-format.test.ts test/text-style.test.ts test/editor-narration.test.ts test/editor-assistant-chat.test.ts test/look.test.ts test/editor-look.test.ts test/editor-listen.test.ts test/editor-saved-prompts.test.ts test/editor-scope.test.ts test/text-pages.test.ts test/editor-text-layout.test.ts test/editor-voiceover.test.ts test/editor-recording.test.ts test/editor-voices.test.ts",
+    "test:motion": "node --experimental-strip-types --test test/motion.test.ts test/editor-normalize.test.ts test/render-options.test.ts test/editor-keyframes.test.ts test/editor-history.test.ts test/editor-subtitle-box.test.ts test/editor-layout.test.ts test/studio-format.test.ts test/text-style.test.ts test/editor-narration.test.ts test/editor-assistant-chat.test.ts test/look.test.ts test/editor-look.test.ts test/editor-listen.test.ts test/editor-saved-prompts.test.ts test/editor-scope.test.ts test/text-pages.test.ts test/editor-text-layout.test.ts test/editor-voiceover.test.ts test/editor-recording.test.ts test/editor-voices.test.ts test/editor-media-gate.test.ts",
     "test:words": "node --experimental-strip-types --test test/word-subtitles.test.ts"
   },
   "dependencies": {

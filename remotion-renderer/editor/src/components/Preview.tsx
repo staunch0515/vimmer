@@ -8,6 +8,7 @@ import { outlineHeight } from "../layers";
 import { AssetUrlContext, resolveAsset, type AssetUrl } from "../../../src/assets";
 import { ClipLengthContext, type ClipLength } from "../../../src/components/ClipVideo";
 import { assetUrlFor } from "../media";
+import * as gate from "../mediaGate";
 import { usePreviewTimeline } from "../templates";
 import { AudioLengthsContext } from "../../../src/voiceover";
 
@@ -205,6 +206,34 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
     player.addEventListener("frameupdate", handler);
     return () => player.removeEventListener("frameupdate", handler);
   }, [playerRef, onFrame]);
+
+  // The play gate (mediaGate.ts): a play right after a take is kept waits until the new files have
+  // loaded. The Player's own play button is taken over only while the gate holds.
+  useEffect(() => {
+    const el = frameRef.current;
+    const p = () => playerRef.current;
+    gate.registerPreview(
+      {
+        play: () => p()?.play(),
+        pause: () => p()?.pause(),
+        toggle: () => p()?.toggle(),
+        isPlaying: () => p()?.isPlaying() ?? false,
+      },
+      el,
+    );
+    const onClick = (e: MouseEvent) => {
+      const button = (e.target as Element | null)?.closest?.('button[aria-label="Play video"]');
+      if (!button || !gate.holding()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      gate.playWhenSettled();
+    };
+    el?.addEventListener("click", onClick, true);
+    return () => {
+      el?.removeEventListener("click", onClick, true);
+      gate.registerPreview(null, null);
+    };
+  }, [playerRef]);
 
   // Template scenes are shown expanded by the Rust code the renderer uses (see templates.ts).
   const { timeline: expanded, errors: templateErrors } = usePreviewTimeline(timeline);

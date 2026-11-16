@@ -49,6 +49,7 @@ import { listenKey, rememberClips, toPreviewMs, toSavedMs, withNarration, type H
 import { listenNarration } from "./listen";
 import { NarrationBar } from "./components/NarrationBar";
 import { useAudioLengths } from "./audioLengths";
+import { togglePlay } from "./mediaGate";
 import * as vo from "./voiceover";
 import type { VoicePanelProps } from "./components/VoiceoverPanel";
 import { SceneRecorder } from "./components/SceneRecorder";
@@ -531,7 +532,7 @@ export const App = () => {
         e.preventDefault();
       } else if (e.code === "Space" && !typing) {
         e.preventDefault();
-        playerRef.current?.toggle();
+        togglePlay();
       }
     };
     window.addEventListener("keydown", onKey);

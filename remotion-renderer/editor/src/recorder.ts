@@ -29,9 +29,30 @@ export type Recorder = {
   start: () => void;
   stop: () => void;
   discard: () => void;
+  /** Ref for the take's playback <audio>, so discarding stops it before its file goes away. */
+  playbackRef: (el: HTMLAudioElement | null) => void;
 };
 
 const BLOCK = 4096;
+
+/** How long a discarded take's blob URL stays valid after its <audio> let go of it. */
+const REVOKE_DELAY_MS = 2000;
+
+/**
+ * Stops a take's playback element and lets go of its file: pause, drop the source, reset. Done
+ * before the blob URL is revoked, so WebKit never loads from (or plays) a URL that is going away
+ * while the preview starts playing (see mediaGate.ts).
+ */
+const detach = (el: HTMLAudioElement | null): void => {
+  if (!el) return;
+  try {
+    el.pause();
+    el.removeAttribute("src");
+    el.load();
+  } catch {
+    /* already gone */
+  }
+};
 
 const micError = (e: unknown): string => {
   const name = (e as { name?: string })?.name ?? "";
@@ -59,6 +80,10 @@ export const useRecorder = (onTick?: (elapsedMs: number) => void): Recorder => {
   const tick = useRef(onTick);
   tick.current = onTick;
   const peak = useRef(Number.NEGATIVE_INFINITY);
+  const playback = useRef<HTMLAudioElement | null>(null);
+  const playbackRef = useCallback((el: HTMLAudioElement | null) => {
+    playback.current = el;
+  }, []);
 
   const release = useCallback(() => {
     const l = live.current;
@@ -93,8 +118,11 @@ export const useRecorder = (onTick?: (elapsedMs: number) => void): Recorder => {
 
   const discard = useCallback(() => {
     release();
+    detach(playback.current);
+    playback.current = null;
     setTake((t) => {
-      if (t) URL.revokeObjectURL(t.url);
+      // Revoked later, once the <audio> is gone: nothing may still be reading the take.
+      if (t) window.setTimeout(() => URL.revokeObjectURL(t.url), REVOKE_DELAY_MS);
       return null;
     });
     setPhase("idle");
@@ -177,7 +205,7 @@ export const useRecorder = (onTick?: (elapsedMs: number) => void): Recorder => {
   // Leaving the panel stops the microphone.
   useEffect(() => () => void release(), [release]);
 
-  return { phase, count, elapsedMs, peakDb, take, error, start, stop, discard };
+  return { phase, count, elapsedMs, peakDb, take, error, start, stop, discard, playbackRef };
 };
 
 export type Saved = { path: string } | { error: string };
