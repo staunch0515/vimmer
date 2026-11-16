@@ -68,9 +68,15 @@ pub fn resolve_text_pages(
         // Where narration_clips puts the scene: its first frame, in ms.
         let scene_start = (u64::from(starts[i]) * 1000 + fps / 2) / fps;
         let narration = own_narration(scene).and_then(|(_, offset)| Some((offset, *clip_ms.get(&i)?)));
-        let words: Option<Vec<(String, u64)>> = page_words.get(&i).map(|ws| {
+        let words: Option<Vec<(String, u64, u64)>> = page_words.get(&i).map(|ws| {
             ws.iter()
-                .map(|(t, at)| (t.clone(), at.saturating_sub(scene_start)))
+                .map(|(t, at, end)| {
+                    (
+                        t.clone(),
+                        at.saturating_sub(scene_start),
+                        end.saturating_sub(scene_start),
+                    )
+                })
                 .collect()
         });
         let (clock, timing) = match (narration, &words) {
@@ -213,10 +219,11 @@ mod tests {
             vec![0, 4_400 * 7 / 23, 4_400 * 15 / 23]
         );
         // Words (video time): each page 150 ms before its first word.
-        let words: Vec<(String, u64)> = TEXT
+        // Each character 200 ms, spoken for 120 ms (a pause before every page's first word).
+        let words: Vec<(String, u64, u64)> = TEXT
             .chars()
             .enumerate()
-            .map(|(k, c)| (c.to_string(), 1_000 + 200 * k as u64))
+            .map(|(k, c)| (c.to_string(), 1_000 + 200 * k as u64, 1_120 + 200 * k as u64))
             .collect();
         let pw = PageWords::from([(1usize, words)]);
         let notes = resolve_text_pages(&mut t, &pw, &clip);

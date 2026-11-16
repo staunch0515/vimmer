@@ -89,7 +89,8 @@ export const TextLayoutFields = ({ name, layout, inherited, onChange }: Props) =
 
 const secs = (ms: number) => (ms / 1000).toFixed(1);
 
-/** The pages of the selected scene with when each shows; a click moves the playhead there. */
+/** The pages of the selected scene with when each shows; a click moves the playhead into that
+ * page (past its cross-fade, so the page reads in the preview). */
 export const PageList = ({
   pages,
   paging,
@@ -133,7 +134,7 @@ export const PageList = ({
         <ol className="pages">
           {pages.map((p, k) => (
             <li key={k}>
-              <button type="button" className="page-item" data-page-item={k} onClick={() => onSeek?.(p.startMs)}>
+              <button type="button" className="page-item" data-page-item={k} onClick={() => onSeek?.(Math.round(Math.min(p.startMs + 600, (p.startMs + p.endMs) / 2)))}>
                 <span className="mono dim">
                   {secs(p.startMs)}–{secs(p.endMs)}s
                 </span>{" "}

@@ -195,8 +195,8 @@ pub async fn add_word_subtitles(
 }
 
 /// Aligned words of the narration of paged scenes (see `crate::pages`), by scene index:
-/// (word text, start in ms from the video start).
-pub type PageWords = std::collections::HashMap<usize, Vec<(String, u64)>>;
+/// (word text, start and end in ms from the video start).
+pub type PageWords = std::collections::HashMap<usize, Vec<(String, u64, u64)>>;
 
 /// Whether a narration clip is worth recognizing for text paging: its scene shows its text in
 /// pages and the narration speaks that same text.
@@ -622,7 +622,10 @@ pub(crate) async fn apply_word_subtitles_with(
         if let Some(words) = words.as_ref().filter(|_| pages_follow_clip(timeline, clip)) {
             page_words.insert(
                 clip.scene_index,
-                words.iter().map(|w| (w.text.clone(), w.start_ms)).collect(),
+                words
+                    .iter()
+                    .map(|w| (w.text.clone(), w.start_ms, w.end_ms))
+                    .collect(),
             );
         }
     }
@@ -1948,8 +1951,8 @@ mod tests {
         let words = &page_words[&1];
         // Video time: the scene starts at 1000 ms; the second sentence's 第 is the 8th unit
         // (。 rides on 里), spoken from 2800 ms.
-        assert_eq!(words[0], ("第".to_string(), 1100));
-        assert_eq!(words[7], ("第".to_string(), 2800));
+        assert_eq!((words[0].0.as_str(), words[0].1), ("第", 1100));
+        assert_eq!((words[7].0.as_str(), words[7].1), ("第", 2800));
 
         // Without an engine the render only notes it (no subtitle warning): pages go by length.
         let mut t = paged_timeline();

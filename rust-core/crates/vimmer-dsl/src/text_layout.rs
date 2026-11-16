@@ -499,23 +499,32 @@ pub fn proportional_starts(pages: &[String], from_ms: u64, span_ms: u64, min_ms:
 }
 
 /// Page starts from the narration's word timings: each page from [`PAGE_LEAD_MS`] before its
-/// first word is spoken. `words` are (word text, start ms from the scene start) of the spoken
-/// text, which is the scene text. `None` when a page's first word is not among them.
-pub fn word_starts(pages: &[String], words: &[(String, u64)]) -> Option<Vec<u64>> {
+/// first word is spoken, but not before the word before it has been said (sentences spoken
+/// without a pause flip as the last word ends). `words` are (word text, start ms, end ms, from
+/// the scene start) of the spoken text, which is the scene text. `None` when a page's first word
+/// is not among them.
+pub fn word_starts(pages: &[String], words: &[(String, u64, u64)]) -> Option<Vec<u64>> {
     let mut out = Vec::with_capacity(pages.len());
     let mut page_key = 0u64;
     for (k, page) in pages.iter().enumerate() {
         if k == 0 {
             out.push(0);
         } else {
-            let mut word_key = 0u64;
-            let start = words.iter().find_map(|(w, at)| {
+            let (mut word_key, mut before_end) = (0u64, 0u64);
+            let mut found = None;
+            for (w, at, end) in words {
                 let len = key_len(w);
-                let hit = len > 0 && word_key >= page_key;
+                if len > 0 && word_key >= page_key {
+                    found = Some((*at, before_end));
+                    break;
+                }
                 word_key += len;
-                hit.then_some(*at)
-            })?;
-            out.push(start.saturating_sub(PAGE_LEAD_MS));
+                if len > 0 {
+                    before_end = *end;
+                }
+            }
+            let (at, before_end) = found?;
+            out.push(at.saturating_sub(PAGE_LEAD_MS).max(before_end.min(at)));
         }
         page_key += key_len(page);
     }
@@ -541,9 +550,9 @@ pub enum PageClock<'a> {
     Scene { duration_ms: u64 },
     /// A narration clip of the scene text starting `offset_ms` into the scene, `clip_ms` long.
     Clip { offset_ms: u64, clip_ms: u64 },
-    /// The clip's aligned words: (text, start ms from the scene start).
+    /// The clip's aligned words: (text, start ms, end ms, from the scene start).
     Words {
-        words: &'a [(String, u64)],
+        words: &'a [(String, u64, u64)],
         offset_ms: u64,
         clip_ms: u64,
     },
@@ -765,30 +774,34 @@ mod tests {
 
     #[test]
     fn word_timing_lands_pages_on_their_first_spoken_word() {
+        let w = |v: &[(&str, u64, u64)]| -> Vec<(String, u64, u64)> {
+            v.iter().map(|(t, a, b)| (t.to_string(), *a, *b)).collect()
+        };
         let pages = s(&["一二。", "三四五。", "六。"]);
-        let words: Vec<(String, u64)> = [
-            ("一", 300),
-            ("二。", 500),
-            ("三", 1_200),
-            ("四", 1_400),
-            ("五。", 1_600),
-            ("六。", 2_500),
-        ]
-        .iter()
-        .map(|(w, t)| (w.to_string(), *t))
-        .collect();
+        let words = w(&[
+            ("一", 300, 480),
+            ("二。", 500, 700),
+            ("三", 1_200, 1_380),
+            ("四", 1_400, 1_580),
+            ("五。", 1_600, 2_450),
+            ("六。", 2_500, 2_700),
+        ]);
         let clock = PageClock::Words {
             words: &words,
             offset_ms: 300,
             clip_ms: 2_600,
         };
-        assert_eq!(page_starts(&pages, &clock), vec![0, 1_050, 2_350]);
+        // 1200 - 150 after a pause; 六 follows 五 without one: it flips as 五 ends (2450).
+        assert_eq!(page_starts(&pages, &clock), vec![0, 1_050, 2_450]);
         // English words carry their spaces and punctuation.
         let pages = s(&["Hello there.", "How are you?"]);
-        let words: Vec<(String, u64)> = [("Hello ", 0), ("there. ", 400), ("How ", 1_000), ("are ", 1_200), ("you?", 1_400)]
-            .iter()
-            .map(|(w, t)| (w.to_string(), *t))
-            .collect();
+        let words = w(&[
+            ("Hello ", 0, 350),
+            ("there. ", 400, 700),
+            ("How ", 1_000, 1_150),
+            ("are ", 1_200, 1_350),
+            ("you?", 1_400, 1_700),
+        ]);
         assert_eq!(word_starts(&pages, &words), Some(vec![0, 850]));
         // Missing words: proportional over the clip.
         let clock = PageClock::Words {
