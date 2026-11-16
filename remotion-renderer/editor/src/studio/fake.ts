@@ -288,7 +288,11 @@ export const createFakeApi = (options: FakeOptions = {}): StudioApi => {
       const stem = (path.split("/").pop() ?? "Imported").replace(/(\.timeline)?\.json$/, "");
       const p = add(stem, timelineWith(stem, ["assets/sample.jpeg"]), { origin: "imported", thumb: "/assets/sample.jpeg", thumbVersion: 1 });
       p.assets = [asset("assets/sample.jpeg", 184_000, { width: 1600, height: 900 })];
-      return { project: p.summary, copied: ["assets/sample.jpeg"], missing: [] };
+      return { project: p.summary, copied: ["assets/sample.jpeg"], missing: [], borrowed: [] };
+    },
+    exportTimeline: async (dir, path) => {
+      find(dir);
+      return { path, filesDir: path.replace(/\.json$/, "") + "-files", copied: ["assets/sample.jpeg"], missing: [] };
     },
     reveal: async () => undefined,
 

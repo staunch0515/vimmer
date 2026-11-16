@@ -10,6 +10,7 @@ import { useRecorder, saveTake } from "../recorder";
 import { currentLine, prompterLines } from "../recording";
 import * as vo from "../voiceover";
 import { RecordControls } from "./RecordControls";
+import { audioChanging } from "../mediaGate";
 
 type Props = {
   timeline: VideoTimeline;
@@ -76,8 +77,10 @@ export const Teleprompter = ({ timeline, playheadMs, lengths, dispatch, onSeekMs
       setSaveError(placed.error);
       return placed.error;
     }
-    dispatch({ type: "commitTimeline", timeline: placed.timeline, selection: { kind: "voiceover", index: placed.index } });
+    // Stop the take's playback and hold the preview before the timeline's audio changes.
     rec.discard();
+    audioChanging();
+    dispatch({ type: "commitTimeline", timeline: placed.timeline, selection: { kind: "voiceover", index: placed.index } });
     onClose();
     return null;
   };

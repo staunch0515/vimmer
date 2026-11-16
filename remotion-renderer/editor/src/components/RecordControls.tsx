@@ -54,7 +54,8 @@ export const RecordControls = ({ rec, startLabel, onKeep, keepLabel, saving, tak
       )}
       {phase === "stopped" && rec.take && (
         <div className="rec-take">
-          <audio controls src={rec.take.url} data-rec-playback />
+          {/* preload="none": the take is loaded only when it is played, not while it may be kept. */}
+          <audio controls preload="none" src={rec.take.url} ref={rec.playbackRef} data-rec-playback />
           <span className="dim small-text">这一条 {(rec.take.ms / 1000).toFixed(1)} 秒</span>
           {takeNote}
           <div className="button-row">

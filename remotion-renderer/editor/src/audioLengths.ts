@@ -1,23 +1,18 @@
 // Lengths of the audio files the voice-over track (and scene audio) names, measured in the
-// browser from the files' metadata. A file is measured once per URL; a file that fails to load
-// stays unknown (the track then treats it as voiceover.ts's UNKNOWN_LENGTH_MS long).
+// browser from the files themselves (audioMeasure.ts: no media element). A file is measured once
+// per URL; a file that fails to load stays unknown (the track then treats it as voiceover.ts's UNKNOWN_LENGTH_MS long).
 import { useEffect, useMemo, useState } from "react";
 import type { VideoTimeline } from "../../src/types/timeline";
 import { resolveAsset, type AssetUrl } from "../../src/assets";
 import type { Lengths } from "./voiceover";
+import { measureAudioFile } from "./audioMeasure";
 
 const measured = new Map<string, Promise<number | null>>();
 
 export const measureAudio = (url: string): Promise<number | null> => {
   let p = measured.get(url);
   if (!p) {
-    p = new Promise((resolve) => {
-      const a = new Audio();
-      a.preload = "metadata";
-      a.onloadedmetadata = () => resolve(Number.isFinite(a.duration) ? Math.round(a.duration * 1000) : null);
-      a.onerror = () => resolve(null);
-      a.src = url;
-    });
+    p = measureAudioFile(url);
     measured.set(url, p);
     // A failure is not remembered, so a file added later (a new recording) is measured again.
     void p.then((ms) => ms === null && measured.delete(url));

@@ -55,6 +55,7 @@ fn main() {
             studio::duplicate_project,
             studio::trash_project,
             studio::import_timeline,
+            studio::export_timeline,
             studio::reveal_path,
             project_assets::list_assets,
             project_assets::import_assets,

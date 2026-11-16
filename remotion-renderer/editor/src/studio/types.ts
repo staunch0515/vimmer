@@ -43,6 +43,17 @@ export type OpenedProject = {
 export type ImportedProject = {
   project: ProjectSummary;
   copied: string[];
+  /** Files the timeline names that were found nowhere. */
+  missing: string[];
+  /** Files not next to the timeline but found in another project (also in `copied`). */
+  borrowed: { path: string; project: string }[];
+};
+
+/** "Save as" from a project: the timeline, and the project files it names in `filesDir`. */
+export type ExportedTimeline = {
+  path: string;
+  filesDir: string | null;
+  copied: string[];
   missing: string[];
 };
 

@@ -15,6 +15,7 @@ import type {
   GenerateProgress,
   ImportedAsset,
   ImportedProject,
+  ExportedTimeline,
   Lang,
   OpenedProject,
   Orientation,
@@ -39,6 +40,8 @@ export interface StudioApi {
   trashProject(dir: string): Promise<void>;
   /** Makes a project from a timeline file, copying the files it names. */
   importTimeline(path: string): Promise<ImportedProject>;
+  /** Writes the project's timeline to `path` and copies the files it names into `<name>-files/` next to it. */
+  exportTimeline(dir: string, path: string, contents: string): Promise<ExportedTimeline>;
   /** Shows a project folder or one of its files in Finder. */
   reveal(path: string): Promise<void>;
 
@@ -94,6 +97,7 @@ export const tauriApi: StudioApi = {
   duplicateProject: (dir) => invoke("duplicate_project", { dir }),
   trashProject: (dir) => invoke("trash_project", { dir }),
   importTimeline: (path) => invoke("import_timeline", { path }),
+  exportTimeline: (dir, path, contents) => invoke("export_timeline", { dir, path, contents }),
   reveal: (path) => invoke("reveal_path", { path }),
 
   listAssets: (dir, timelineJson) => invoke("list_assets", { dir, timelineJson }),

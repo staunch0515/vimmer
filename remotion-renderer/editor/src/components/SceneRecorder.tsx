@@ -7,6 +7,7 @@ import type { Action } from "../state";
 import { useRecorder, saveTake } from "../recorder";
 import { scriptOf } from "../recording";
 import { RecordControls } from "./RecordControls";
+import { audioChanging } from "../mediaGate";
 
 /** Pause after the take before the scene ends (the narration step's 300 ms tail). */
 const TAIL_MS = 300;
@@ -38,12 +39,14 @@ export const SceneRecorder = ({ scene, index, dispatch }: { scene: Scene; index:
       setSaveError(saved.error);
       return saved.error;
     }
+    // Stop the take's playback and hold the preview before the timeline's audio changes.
+    rec.discard();
+    audioChanging();
     dispatch({
       type: "patchScene",
       index,
       patch: { audio: { source: saved.path, offset_ms: 0 }, ...(longer && stretch ? { duration_ms: needed } : {}) },
     });
-    rec.discard();
     setOpen(false);
     return null;
   };
