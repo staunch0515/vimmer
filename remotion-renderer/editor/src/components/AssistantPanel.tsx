@@ -11,6 +11,8 @@ import {
   buildConversation, busy as isBusy, chatReducer, failureOf, initialChat, nextExchangeId, openProposal,
   type Exchange,
 } from "../chat";
+import { NEEDS_SCENE_HINT, fillPlaceholders, needsScene, sceneLabel, type SavedCommand, type SceneRef } from "../savedCommands";
+import { SavedCommands, useSavedCommands, type SaveDraft } from "./SavedCommands";
 
 type Props = {
   timeline: VideoTimeline;
@@ -32,9 +34,10 @@ const DECISION_LABEL = {
 const shortModel = (id: AssistantModel): string =>
   (ASSISTANT_MODELS.find((m) => m.id === id)?.label ?? id).replace(/^Claude /, "");
 
-const selectedSceneId = (t: VideoTimeline, s: Selection): string | null => {
+const selectedScene = (t: VideoTimeline, s: Selection): SceneRef | null => {
   const index = s.kind === "scene" ? s.index : s.kind === "keyframe" || s.kind === "layer" ? s.sceneIndex : -1;
-  return t.scenes[index]?.id ?? null;
+  const id = t.scenes[index]?.id;
+  return id ? { index, id } : null;
 };
 
 /**
@@ -46,8 +49,14 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
   const [useScene, setUseScene] = useState(true);
   const [chat, chatDispatch] = useReducer(chatReducer, docKey, initialChat);
   const logEnd = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const [commands, setCommands] = useSavedCommands();
+  const [saveDraft, setSaveDraft] = useState<SaveDraft | null>(null);
+  /** Shown when a message needs a scene ({场景}) and none is selected. */
+  const [sceneHint, setSceneHint] = useState(false);
   const model = chat.model;
-  const sceneId = selectedSceneId(timeline, selection);
+  const scene = selectedScene(timeline, selection);
+  const sceneId = scene?.id ?? null;
   const current = serialize(timeline);
   const busy = isBusy(chat);
   const conversation = buildConversation(chat.exchanges);
@@ -60,22 +69,42 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
     logEnd.current?.scrollIntoView?.({ block: "nearest" });
   }, [chat.exchanges]);
 
-  const send = async () => {
-    const text = instruction.trim();
-    if (!text || busy) return;
+  /** Sends the input, or a saved command directly (`saved`; the input is then left as it is). */
+  const send = async (saved?: SavedCommand) => {
+    const raw = (saved ? saved.text : instruction).trim();
+    if (!raw || busy) return;
+    // {场景} / {scene} become the selected scene's label; without a scene nothing is sent.
+    const filled = fillPlaceholders(raw, scene);
+    if (!filled.ok) {
+      setSceneHint(true);
+      return;
+    }
+    setSceneHint(false);
+    const text = filled.text;
     const id = nextExchangeId(chat);
     const generation = chat.generation;
-    const scene = useScene ? sceneId : null;
-    chatDispatch({ type: "send", instruction: text, sceneId: scene, base: current });
-    setInstruction("");
+    const aboutScene = saved ? saved.useScene : useScene;
+    if (saved) setUseScene(saved.useScene);
+    const sceneForRequest = aboutScene ? sceneId : null;
+    chatDispatch({ type: "send", instruction: text, sceneId: sceneForRequest, base: current });
+    if (!saved) setInstruction("");
     const result = await proposeEdit({
       timelineJson: current,
       instruction: text,
-      sceneId: scene,
+      sceneId: sceneForRequest,
       model,
       ...(conversation.turns.length ? { conversation } : {}),
     });
     chatDispatch({ type: "answer", id, generation, result });
+  };
+
+  /** Puts a saved command in the box (scene filled in when one is selected) for editing before Send. */
+  const applyCommand = (c: SavedCommand) => {
+    const filled = fillPlaceholders(c.text, scene);
+    setInstruction(filled.ok ? filled.text : c.text);
+    setSceneHint(!filled.ok);
+    setUseScene(c.useScene);
+    input.current?.focus();
   };
 
   const accept = (e: Exchange, p: EditProposal) => {
@@ -123,16 +152,37 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
           </div>
         )}
         {chat.exchanges.map((e) => (
-          <ExchangeView key={e.id} exchange={e} current={current} onAccept={accept} onReject={(id) => chatDispatch({ type: "reject", id })} />
+          <ExchangeView
+            key={e.id}
+            exchange={e}
+            current={current}
+            onAccept={accept}
+            onReject={(id) => chatDispatch({ type: "reject", id })}
+            onSave={(ex) => setSaveDraft({ text: ex.instruction, useScene: ex.sceneId !== null })}
+          />
         ))}
         <div ref={logEnd} />
       </div>
 
+      <SavedCommands
+        commands={commands}
+        setCommands={setCommands}
+        onUse={applyCommand}
+        onSend={(c) => void send(c)}
+        busy={busy}
+        draft={saveDraft}
+        onDraftDone={() => setSaveDraft(null)}
+      />
+
       <textarea
+        ref={input}
         rows={3}
         value={instruction}
         placeholder={asked ? "Answer the question above · 回答上面的问题" : "e.g. 第二段节奏快一点，加一个淡入转场 · make scene 3 slower · switch to vertical"}
-        onChange={(e) => setInstruction(e.target.value)}
+        onChange={(e) => {
+          setInstruction(e.target.value);
+          setSceneHint(false);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
@@ -145,7 +195,19 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
         <input type="checkbox" checked={useScene && !!sceneId} disabled={!sceneId} onChange={(e) => setUseScene(e.target.checked)} />
         {sceneId ? <>About the selected scene <span className="mono">{sceneId}</span></> : "No scene selected"}
       </label>
+      {needsScene(instruction) && scene && (
+        <div className="dim small">{"{场景}"} → {sceneLabel(scene.index, scene.id)}</div>
+      )}
+      {sceneHint && !scene && <div className="assistant-warning" role="alert">{NEEDS_SCENE_HINT}</div>}
       <div className="assistant-row chat-send">
+        <button
+          className="link small saved-save"
+          onClick={() => setSaveDraft({ text: instruction, useScene: useScene && !!sceneId })}
+          disabled={!instruction.trim()}
+          title="Save the text in the box as a reusable command"
+        >
+          ☆ 保存为常用指令
+        </button>
         <button className="btn primary" onClick={() => void send()} disabled={!instruction.trim() || busy}>
           {busy ? "Thinking… 思考中" : "Send 发送"}
         </button>
@@ -160,9 +222,10 @@ type ExchangeProps = {
   current: string;
   onAccept: (e: Exchange, p: EditProposal) => void;
   onReject: (id: number) => void;
+  onSave: (e: Exchange) => void;
 };
 
-const ExchangeView = ({ exchange: e, current, onAccept, onReject }: ExchangeProps) => {
+const ExchangeView = ({ exchange: e, current, onAccept, onReject, onSave }: ExchangeProps) => {
   const failure = failureOf(e);
   const open = openProposal(e);
   const stale = open !== null && e.base !== current;
@@ -170,7 +233,10 @@ const ExchangeView = ({ exchange: e, current, onAccept, onReject }: ExchangeProp
     <>
       <div className="chat-user">
         <div>{e.instruction}</div>
-        {e.sceneId && <div className="dim small mono">{e.sceneId}</div>}
+        <div className="chat-user-foot">
+          {e.sceneId ? <span className="dim small mono">{e.sceneId}</span> : <span />}
+          <button className="link small" onClick={() => onSave(e)} title="Save this message as a reusable command">☆ 收藏 Save</button>
+        </div>
       </div>
       {e.result === null && <div className="assistant-card chat-wait dim">Thinking… 思考中</div>}
       {failure && (

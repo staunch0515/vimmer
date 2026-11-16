@@ -940,6 +940,23 @@ panel says when older ones are no longer sent. **新对话 New chat** starts ove
 kept in memory only and is cleared when you open another file or project. Editing the
 timeline by hand between messages is fine: the next message uses the timeline as it is.
 
+**常用指令 (saved commands).** Instructions you repeat can be saved: **☆ 收藏 Save** on any of
+your messages in the chat, or **☆ 保存为常用指令** under the message box (saves the text in the
+box). You can give it a short name (default: its first 12 characters) and it remembers whether
+"about the selected scene" was ticked. **常用指令 ▾** above the message box lists them: click one
+to put it in the box (edit, then Send as usual), or **▶** (or Shift+click) to send it at once.
+Write **{场景}** (or `{scene}`) where the scene goes: it becomes the selected scene, e.g.
+「把{场景}按句子拆成几幕」 → 「把第 3 幕 (scene-03)按句子拆成几幕」; with no scene selected,
+nothing is sent and a hint asks you to select one. When saving a sent message, one click turns
+its 「第 3 幕 (scene-03)」 back into {场景}. **管理 Manage** renames / edits (✎), deletes (✕, with
+撤销 Undo), moves (↑ ↓), and has **导出 Export** (a small JSON file; **复制 Copy** puts the same
+JSON on the clipboard), **导入 Import** (adds the commands from such a file; same text is
+skipped; a file with anything wrong is refused as a whole). Up to 50 commands. A few examples
+are there at first; edit or delete them. The list is yours, not the project's: it is kept in
+the editor's local storage (`vimmer.savedCommands.v1`), separately for the desktop app and the
+browser editor, so use Export / Import to copy it between them or to the iMac. Saved commands
+never call Claude by themselves.
+
 The chat is a separate, optional part of the request (`conversation` in the helper request,
 `vimmer edit --conversation FILE` on the command line, with
 `{"turns": [{"user", "status", "reply", "changes", "decision"}], "dropped": n}`). It is not the
