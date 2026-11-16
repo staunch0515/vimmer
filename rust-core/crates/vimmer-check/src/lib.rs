@@ -18,6 +18,7 @@ pub mod logo;
 pub mod media;
 pub mod motion;
 pub mod music;
+pub mod pages;
 pub mod rendered;
 pub mod report;
 mod sfnt;

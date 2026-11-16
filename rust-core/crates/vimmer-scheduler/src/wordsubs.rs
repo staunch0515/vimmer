@@ -190,6 +190,37 @@ pub async fn add_word_subtitles(
     warnings: &mut Vec<String>,
     notes: &mut Vec<String>,
 ) -> Result<usize, SchedulerError> {
+    let mut page_words = PageWords::new();
+    add_word_subtitles_with(timeline, cfg, probe, ctx, warnings, notes, &mut page_words).await
+}
+
+/// Aligned words of the narration of paged scenes (see `crate::pages`), by scene index:
+/// (word text, start in ms from the video start).
+pub type PageWords = std::collections::HashMap<usize, Vec<(String, u64)>>;
+
+/// Whether a narration clip is worth recognizing for text paging: its scene shows its text in
+/// pages and the narration speaks that same text.
+pub(crate) fn pages_follow_clip(timeline: &VideoTimeline, clip: &NarrationClip) -> bool {
+    let scene = &timeline.scenes[clip.scene_index];
+    scene.text.as_deref() == Some(clip.text.as_str())
+        && scene
+            .text_page_texts(timeline.brand.as_ref(), timeline.resolution)
+            .len()
+            > 1
+}
+
+/// [`add_word_subtitles`] that also recognizes the narration of paged scenes (even without
+/// subtitles to time) and hands their aligned words to `page_words`. A timeline without paged
+/// scenes recognizes and times exactly what [`add_word_subtitles`] does.
+pub async fn add_word_subtitles_with(
+    timeline: &mut VideoTimeline,
+    cfg: &SchedulerConfig,
+    probe: Arc<dyn AudioProbe>,
+    ctx: &RenderContext,
+    warnings: &mut Vec<String>,
+    notes: &mut Vec<String>,
+    page_words: &mut PageWords,
+) -> Result<usize, SchedulerError> {
     if !cfg.word_subtitles.enabled {
         return Ok(0);
     }
@@ -209,7 +240,19 @@ pub async fn add_word_subtitles(
             ));
         }
     }
-    let clips = clips_to_time(&timeline.subtitles, all, cfg.word_subtitles.auto_subtitles);
+    let paged: Vec<NarrationClip> = all
+        .iter()
+        .filter(|c| pages_follow_clip(timeline, c))
+        .cloned()
+        .collect();
+    let mut clips = clips_to_time(&timeline.subtitles, all, cfg.word_subtitles.auto_subtitles);
+    let for_subtitles = clips.len();
+    // Paged scenes whose narration no subtitle needs: recognized for the page timing only.
+    for clip in paged {
+        if !clips.iter().any(|c| c.scene_index == clip.scene_index) {
+            clips.push(clip);
+        }
+    }
     if clips.is_empty() {
         return Ok(0);
     }
@@ -226,13 +269,31 @@ pub async fn add_word_subtitles(
     let engine: Arc<dyn Transcriber> = match engine {
         Ok(engine) => Arc::new(engine),
         Err(e) => {
-            warnings.push(format!(
-                "word-by-word subtitles skipped, subtitles stay as they are: {e}"
-            ));
+            if for_subtitles > 0 {
+                warnings.push(format!(
+                    "word-by-word subtitles skipped, subtitles stay as they are: {e}"
+                ));
+            }
+            if clips.len() > for_subtitles {
+                notes.push(format!(
+                    "text pages follow the narration by length, not word by word: {e}"
+                ));
+            }
             return Ok(0);
         }
     };
-    apply_word_subtitles(timeline, &clips, engine, probe, ws, ctx, warnings).await
+    apply_word_subtitles_with(
+        timeline,
+        &clips,
+        for_subtitles,
+        engine,
+        probe,
+        ws,
+        ctx,
+        warnings,
+        page_words,
+    )
+    .await
 }
 
 /// Time budget for one recognition call: a fixed allowance for loading the model plus a
@@ -418,6 +479,7 @@ pub(crate) fn clips_to_time(
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) async fn apply_word_subtitles(
     timeline: &mut VideoTimeline,
     clips: &[NarrationClip],
@@ -426,6 +488,35 @@ pub(crate) async fn apply_word_subtitles(
     ws: &WordSubtitleConfig,
     ctx: &RenderContext,
     warnings: &mut Vec<String>,
+) -> Result<usize, SchedulerError> {
+    let mut page_words = PageWords::new();
+    apply_word_subtitles_with(
+        timeline,
+        clips,
+        clips.len(),
+        engine,
+        probe,
+        ws,
+        ctx,
+        warnings,
+        &mut page_words,
+    )
+    .await
+}
+
+/// Recognizes `clips`; the first `for_subtitles` time subtitles, the rest only text pages.
+/// Every clip of a paged scene ([`pages_follow_clip`]) leaves its words in `page_words`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn apply_word_subtitles_with(
+    timeline: &mut VideoTimeline,
+    clips: &[NarrationClip],
+    for_subtitles: usize,
+    engine: Arc<dyn Transcriber>,
+    probe: Arc<dyn AudioProbe>,
+    ws: &WordSubtitleConfig,
+    ctx: &RenderContext,
+    warnings: &mut Vec<String>,
+    page_words: &mut PageWords,
 ) -> Result<usize, SchedulerError> {
     let scene_id = |timeline: &VideoTimeline, clip: &NarrationClip| {
         timeline.scenes[clip.scene_index].id.clone()
@@ -527,8 +618,17 @@ pub(crate) async fn apply_word_subtitles(
             )
         })
         .collect();
+    for (clip, words) in clips.iter().zip(&clip_words) {
+        if let Some(words) = words.as_ref().filter(|_| pages_follow_clip(timeline, clip)) {
+            page_words.insert(
+                clip.scene_index,
+                words.iter().map(|w| (w.text.clone(), w.start_ms)).collect(),
+            );
+        }
+    }
+    let (clips, clip_words) = (&clips[..for_subtitles], &clip_words[..for_subtitles]);
     // Each cue is timed from the one clip whose narration its text matches best.
-    let owners = assign_cues(&timeline.subtitles, clips, &clip_words);
+    let owners = assign_cues(&timeline.subtitles, clips, clip_words);
     let mut timed = 0;
     for (k, clip) in clips.iter().enumerate() {
         let Some(words) = &clip_words[k] else {
@@ -1256,6 +1356,8 @@ mod tests {
             text: Some(text.into()),
             highlights: vec![],
             text_style: None,
+            text_layout: None,
+            text_pages: Vec::new(),
             image: None,
             motion: MotionType::Static,
             video: None,
@@ -1787,6 +1889,86 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+
+    fn paged_timeline() -> VideoTimeline {
+        let mut scene = narrated("p", 4000, "第一句话在这里。第二句话也在这里。");
+        scene.text_layout = Some(serde_json::from_str(r#"{"paging":"auto","size":160}"#).unwrap());
+        VideoTimeline {
+            brand: None,
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes: vec![narrated("intro", 1000, "你好。"), scene],
+            subtitles: vec![],
+            music: None,
+            subtitle_box: None,
+            look: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn paged_narration_is_recognized_for_its_pages_without_touching_subtitles() {
+        let mut t = paged_timeline();
+        let cfg = SchedulerConfig::new(
+            PathBuf::from("w"),
+            PathBuf::from("o.mp4"),
+            PathBuf::from("r"),
+        );
+        let clips = narration_clips(&t, &cfg);
+        assert!(!pages_follow_clip(&t, &clips[0]), "one page: not paged");
+        assert!(pages_follow_clip(&t, &clips[1]));
+        let engine = Arc::new(FixedTranscriber(
+            vec![
+                RecognizedToken::new("第一句话在这里", 100, 1500),
+                RecognizedToken::new("第二句话也在这里", 1800, 3200),
+            ],
+            Mutex::new(vec![]),
+        ));
+        let mut page_words = PageWords::new();
+        let mut warnings = vec![];
+        let n = apply_word_subtitles_with(
+            &mut t,
+            &clips[1..],
+            0,
+            engine,
+            Arc::new(FixedProbe(3400)),
+            &auto(),
+            &RenderContext::silent(),
+            &mut warnings,
+            &mut page_words,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 0);
+        assert!(t.subtitles.is_empty(), "no cue made for paging");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let words = &page_words[&1];
+        // Video time: the scene starts at 1000 ms; the second sentence's 第 is the 8th unit
+        // (。 rides on 里), spoken from 2800 ms.
+        assert_eq!(words[0], ("第".to_string(), 1100));
+        assert_eq!(words[7], ("第".to_string(), 2800));
+
+        // Without an engine the render only notes it (no subtitle warning): pages go by length.
+        let mut t = paged_timeline();
+        let mut cfg = cfg;
+        cfg.word_subtitles.whisper_cli = Some(PathBuf::from("/nonexistent/whisper-cli"));
+        let (mut warnings, mut notes) = (vec![], vec![]);
+        add_word_subtitles_with(
+            &mut t,
+            &cfg,
+            Arc::new(FixedProbe(1000)),
+            &RenderContext::silent(),
+            &mut warnings,
+            &mut notes,
+            &mut PageWords::new(),
+        )
+        .await
+        .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(notes.iter().any(|n| n.starts_with("text pages follow the narration by length")), "{notes:?}");
     }
 
     fn layer(json: &str) -> vimmer_dsl::Layer {

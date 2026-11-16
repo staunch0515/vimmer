@@ -8,7 +8,8 @@
 //! graphics-safe area for 16:9, used here for 9:16 as well. Phone apps cover more of a 9:16
 //! frame with their own buttons and captions; that is not checked.
 
-use vimmer_dsl::{style_scale, Resolution, SubtitleBox, TextStyle, VideoTimeline};
+use vimmer_dsl::text_layout::top_inset_px;
+use vimmer_dsl::{style_scale, Resolution, SubtitleBox, TextPosition, TextStyle, VideoTimeline};
 
 use crate::fonts::Fonts;
 use crate::text::{cue_lines_with, scene_text_lines_with, shown_text, MAX_CUE_LINES};
@@ -53,8 +54,12 @@ pub struct SceneTextArea {
     pub line_width: f64,
     /// Lines that fit between the top padding and the bottom inset.
     pub max_lines: u32,
-    /// Y of the text's bottom edge (text is bottom-aligned and grows upward).
+    /// Y of the text area's bottom edge (bottom text is aligned to it and grows upward).
     pub bottom_y: f64,
+    /// Y of the text area's top edge (the top padding; `top` text hangs from it).
+    pub top_y: f64,
+    /// Where the text block sits between `top_y` and `bottom_y`.
+    pub position: TextPosition,
 }
 
 /// How far a text style reaches beyond the glyphs, px.
@@ -91,11 +96,34 @@ impl StyleReach {
 }
 
 impl SceneTextArea {
+    /// The text area of scene `i` as drawn: its text style, and its text layout's size and
+    /// position (see `vimmer_dsl::text_layout`).
+    pub fn for_scene(t: &VideoTimeline, i: usize) -> (Self, StyleReach) {
+        let scene = &t.scenes[i];
+        let brand = t.brand.as_ref();
+        let style = scene.effective_text_style(brand);
+        let layout = scene.effective_text_layout(brand);
+        let top = top_inset_px(layout.position, brand, &scene.id, t.resolution);
+        Self::styled_at(t.resolution, &style, layout.font_px(t.resolution), layout.position, top)
+    }
+
     /// The scene text's area with its style: a box (`AnimatedText.tsx` draws it per line, with
     /// the padding plus one word gap of horizontal room on each line) and an outline take width
     /// from every line, and room above the top line.
     pub fn styled(res: Resolution, style: &TextStyle) -> (Self, StyleReach) {
-        let mut area = Self::new(res);
+        let top = f64::from(res.width) * SCENE_PADDING_FRAC;
+        Self::styled_at(res, style, SCENE_FONT_PX, TextPosition::Bottom, top)
+    }
+
+    /// [`Self::styled`] for a `font_px` text at `position` under a `top_y` top padding.
+    pub fn styled_at(
+        res: Resolution,
+        style: &TextStyle,
+        font_px: f64,
+        position: TextPosition,
+        top_y: f64,
+    ) -> (Self, StyleReach) {
+        let mut area = Self::at(res, font_px, position, top_y);
         let reach = StyleReach::of(style, area.font_px, res);
         if reach == StyleReach::default() {
             return (area, reach);
@@ -114,25 +142,44 @@ impl SceneTextArea {
                 * (SCENE_LINE_HEIGHT + 2.0 * pad_em + SCENE_BORDER_LINE_GAP_EM)
                 + 2.0 * reach.border;
         }
-        let (w, h) = (f64::from(res.width), f64::from(res.height));
-        let avail = h - w * SCENE_PADDING_FRAC - SCENE_BOTTOM_INSET_PX - reach.total();
+        let h = f64::from(res.height);
+        let avail = h - top_y - SCENE_BOTTOM_INSET_PX - reach.total();
         area.max_lines = (avail / area.line_height_px).floor().max(0.0) as u32;
         (area, reach)
     }
 
+    /// The built-in area: 92 px text at the bottom.
     pub fn new(res: Resolution) -> Self {
+        let top = f64::from(res.width) * SCENE_PADDING_FRAC;
+        Self::at(res, SCENE_FONT_PX, TextPosition::Bottom, top)
+    }
+
+    /// The area of a `font_px` text at `position` under a `top_y` top padding, without a style.
+    pub fn at(res: Resolution, font_px: f64, position: TextPosition, top_y: f64) -> Self {
         let (w, h) = (f64::from(res.width), f64::from(res.height));
         let line_width = w * (1.0 - 2.0 * SCENE_PADDING_FRAC) * SCENE_MAX_WIDTH_FRAC;
-        let line_height_px = SCENE_FONT_PX * SCENE_LINE_HEIGHT;
-        let avail = h - w * SCENE_PADDING_FRAC - SCENE_BOTTOM_INSET_PX;
+        let line_height_px = font_px * SCENE_LINE_HEIGHT;
+        let avail = h - top_y - SCENE_BOTTOM_INSET_PX;
         Self {
-            font_px: SCENE_FONT_PX,
+            font_px,
             letter_spacing_em: SCENE_LETTER_SPACING_EM,
             word_gap_em: SCENE_WORD_GAP_EM,
             line_height_px,
             line_width,
             max_lines: (avail / line_height_px).floor().max(0.0) as u32,
             bottom_y: h - SCENE_BOTTOM_INSET_PX,
+            top_y,
+            position,
+        }
+    }
+
+    /// Top edge of a `lines`-line text block with a style reaching `reach` px past the glyphs.
+    pub fn text_top(&self, lines: u32, reach: f64) -> f64 {
+        let h = f64::from(lines) * self.line_height_px;
+        match self.position {
+            TextPosition::Bottom => self.bottom_y - h - reach,
+            TextPosition::Top => self.top_y - reach,
+            TextPosition::Middle => (self.top_y + self.bottom_y - h) / 2.0 - reach,
         }
     }
 }
@@ -222,29 +269,33 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
     // Scene text grows upward from a fixed bottom edge. Overflow past the padded area is
     // `text.overflow`; this catches text that fits there but crosses the safe area.
     for (i, scene) in timeline.scenes.iter().enumerate() {
-        let Some(text) = scene.text.as_deref().filter(|t| !t.trim().is_empty()) else {
-            continue;
-        };
-        let style = scene.effective_text_style(timeline.brand.as_ref());
-        let (area, reach) = SceneTextArea::styled(res, &style);
-        let lines = scene_text_lines_with(text, &area, 1.0, fonts, Role::Heading);
-        if lines > area.max_lines {
+        let pages = crate::pages::scene_pages(timeline, i);
+        if pages.is_empty() {
             continue;
         }
-        let top = area.bottom_y - f64::from(lines) * area.line_height_px - reach.total();
-        if top < safe_t {
-            out.push(
-                Finding::new(
-                    Severity::Warning,
-                    "safe_area.text",
-                    format!(
-                        "scene text ({lines} lines) reaches y={top:.0} px, above the title-safe top at {safe_t:.0} px"
-                    ),
-                    Suggestion::field("shorten the text by a line or more", crate::scene_path(i, "text")),
-                )
-                .scene(&scene.id)
-                .at(starts[i]),
-            );
+        let (area, reach) = SceneTextArea::for_scene(timeline, i);
+        let n = pages.len();
+        for (k, page) in pages.iter().enumerate() {
+            let lines = scene_text_lines_with(&page.text, &area, 1.0, fonts, Role::Heading);
+            if lines > area.max_lines {
+                continue;
+            }
+            let top = area.text_top(lines, reach.total());
+            if top < safe_t {
+                out.push(
+                    Finding::new(
+                        Severity::Warning,
+                        "safe_area.text",
+                        format!(
+                            "{} ({lines} lines) reaches y={top:.0} px, above the title-safe top at {safe_t:.0} px",
+                            crate::pages::page_name(k, n)
+                        ),
+                        Suggestion::field("shorten the text by a line or more", crate::scene_path(i, "text")),
+                    )
+                    .scene(&scene.id)
+                    .at(starts[i] + page.from_ms),
+                );
+            }
         }
     }
 

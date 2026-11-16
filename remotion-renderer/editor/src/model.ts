@@ -5,6 +5,7 @@ import { templateProblems } from "./templates";
 import { boxProblems } from "./subtitleBox";
 import { nothingToSpeak } from "./narration";
 import { lookProblems } from "../../src/motion/look";
+import { layoutProblems } from "./textLayout";
 
 export const MAX_DURATION_MS = 200_000;
 export const ALLOWED_RESOLUTIONS = [
@@ -48,7 +49,9 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
     problems.push(...checkLayers(s));
     problems.push(...checkSfx(s));
     if (s.look) problems.push(...lookProblems(s.look).map((p) => `Scene “${s.id}” look: ${p}`));
+    problems.push(...layoutProblems(s.text_layout).map((p) => `Scene “${s.id}”: ${p}`));
   }
+  problems.push(...layoutProblems(t.brand?.text_layout).map((p) => `Brand: ${p}`));
   if (t.look) problems.push(...lookProblems(t.look).map((p) => `Look: ${p}`));
   const total = totalMs(t);
   if (total > MAX_DURATION_MS) problems.push(`Timeline is ${(total / 1000).toFixed(1)} s; the limit is 200 s.`);

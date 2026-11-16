@@ -40,6 +40,16 @@ pub(crate) fn flatten(color: &str, under: [u8; 3]) -> Option<[u8; 3]> {
     rgb(color).map(|c| over(c, under))
 }
 
+/// The scene text size the brand sets for every scene (px on the frame), else the built-in one.
+fn ts_px(brand: Option<&Brand>, res: vimmer_dsl::Resolution) -> f64 {
+    brand
+        .and_then(|b| b.text_layout.as_ref())
+        .and_then(|l| l.size)
+        .map_or(SCENE_FONT_PX, |s| {
+            f64::from(s) * vimmer_dsl::style_scale(res.width, res.height)
+        })
+}
+
 pub(crate) fn is_large(font_frac: f64, weight: u16) -> bool {
     font_frac >= LARGE_FRAC || (weight >= 700 && font_frac >= LARGE_BOLD_FRAC)
 }
@@ -132,7 +142,9 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
     // and an outline wide enough to read the text against. First, so that elements sharing
     // these colors are grouped under the brand field.
     if let Some(ts) = brand.and_then(|b| b.text_style.as_ref()) {
-        let large = is_large(SCENE_FONT_PX / h, 600);
+        // The brand's default text size (its text_layout), else the built-in one.
+        let brand_px = ts_px(brand, t.resolution);
+        let large = is_large(brand_px / h, 600);
         if let Some(bx) = ts.background.as_ref() {
             if let (Some(bg), true) = (flatten(&bx.color, frame_bg), rgb(&bx.color).is_some_and(|c| c[3] > 0)) {
                 if let Some(fg) = flatten(text, bg) {
@@ -147,7 +159,7 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
                 }
             }
         }
-        if let Some(o) = reads_on(ts, SCENE_FONT_PX, t.resolution) {
+        if let Some(o) = reads_on(ts, brand_px, t.resolution) {
             let bg = over(o, frame_bg);
             if let Some(fg) = flatten(text, bg) {
                 out.push(Sample {
@@ -166,14 +178,15 @@ fn samples(t: &VideoTimeline) -> Vec<Sample> {
         let base = (!picture).then_some(frame_bg);
         if scene.text.as_deref().is_some_and(|s| !s.trim().is_empty()) && !picture {
             let style = scene.effective_text_style(brand);
-            let bg = styled_bg(&style, SCENE_FONT_PX, t.resolution, frame_bg);
+            let font_px = scene.effective_text_layout(brand).font_px(t.resolution);
+            let bg = styled_bg(&style, font_px, t.resolution, frame_bg);
             if let Some(fg) = flatten(text, bg) {
                 out.push(Sample {
                     scene: si,
                     what: "the scene text".into(),
                     fg,
                     bg,
-                    large: is_large(SCENE_FONT_PX / h, 600),
+                    large: is_large(font_px / h, 600),
                     path: text_path(false, scene_path(si, "text")),
                 });
             }

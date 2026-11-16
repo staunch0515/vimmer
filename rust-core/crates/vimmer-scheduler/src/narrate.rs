@@ -528,6 +528,8 @@ mod tests {
             text: text.map(String::from),
             highlights: vec![],
             text_style: None,
+            text_layout: None,
+            text_pages: Vec::new(),
             image: None,
             motion: MotionType::Static,
             video: None,

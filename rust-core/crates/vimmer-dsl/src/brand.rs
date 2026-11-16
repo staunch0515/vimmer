@@ -161,6 +161,10 @@ pub struct Brand {
     /// (each part on its own; see [`crate::text_style`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_style: Option<TextStyle>,
+    /// Default size, position and paging of every scene text that sets none (each part on its
+    /// own; see [`crate::text_layout`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_layout: Option<crate::text_layout::TextLayout>,
 }
 
 /// The color to use: the element's own, else the brand's, else the built-in one.
@@ -270,6 +274,9 @@ impl Brand {
         }
         if let Some(ts) = &self.text_style {
             out.extend(ts.problems("text_style."));
+        }
+        if let Some(tl) = &self.text_layout {
+            out.extend(tl.problems("text_layout."));
         }
         if let Some(logo) = &self.logo {
             if let Some(p) = file_problem(&logo.src, &LOGO_EXTENSIONS, "a logo") {

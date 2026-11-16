@@ -1,0 +1,348 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "cap_em": 39.338,
+        "pages": [
+          "咖啡豆要新鲜研磨，香气才会完整地保留下来。",
+          "水温控制在九十度左右最合适。",
+          "最后慢慢注水，耐心等待萃取完成！"
+        ]
+      },
+      "kind": "split",
+      "name": "zh three sentences",
+      "paging": "auto",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "size": 92,
+      "text": "咖啡豆要新鲜研磨，香气才会完整地保留下来。水温控制在九十度左右最合适。最后慢慢注水，耐心等待萃取完成！"
+    },
+    {
+      "expected": {
+        "cap_em": 22.128,
+        "pages": [
+          "我们今天要一起学习怎样在家里冲出一杯好喝的咖啡，",
+          "从选豆子开始讲起，一直讲到磨豆、称重、",
+          "控制水温和注水的节奏，",
+          "最后再聊聊怎样清洗器具才能让它们用得更久"
+        ]
+      },
+      "kind": "split",
+      "name": "zh portrait long",
+      "paging": "auto",
+      "resolution": {
+        "height": 1920,
+        "width": 1080
+      },
+      "size": 92,
+      "text": "我们今天要一起学习怎样在家里冲出一杯好喝的咖啡，从选豆子开始讲起，一直讲到磨豆、称重、控制水温和注水的节奏，最后再聊聊怎样清洗器具才能让它们用得更久"
+    },
+    {
+      "expected": {
+        "cap_em": 25.851,
+        "pages": [
+          "第一步，选择新鲜的咖啡豆。",
+          "第二步，把豆子磨成中等粗细的粉。",
+          "第三步，用九十度的热水慢慢冲泡。"
+        ]
+      },
+      "kind": "split",
+      "name": "zh big font",
+      "paging": "auto",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "size": 140,
+      "text": "第一步，选择新鲜的咖啡豆。第二步，把豆子磨成中等粗细的粉。第三步，用九十度的热水慢慢冲泡。"
+    },
+    {
+      "expected": {
+        "cap_em": 39.338,
+        "pages": [
+          "好。我们开始吧，今天要做一杯手冲咖啡。对！"
+        ]
+      },
+      "kind": "split",
+      "name": "zh short merge",
+      "paging": "auto",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "size": 92,
+      "text": "好。我们开始吧，今天要做一杯手冲咖啡。对！"
+    },
+    {
+      "expected": {
+        "cap_em": 39.338,
+        "pages": [
+          "Brew at 92.5 degrees for the best taste.",
+          "She said \"Wait four minutes.\"",
+          "Then pour it slowly over the grounds and enjoy the cup!"
+        ]
+      },
+      "kind": "split",
+      "name": "en quotes decimals",
+      "paging": "auto",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "size": 92,
+      "text": "Brew at 92.5 degrees for the best taste. She said \"Wait four minutes.\" Then pour it slowly over the grounds and enjoy the cup!"
+    },
+    {
+      "expected": {
+        "cap_em": 22.128,
+        "pages": [
+          "Good coffee needs fresh beans,",
+          "a steady hand, water just off the boil,",
+          "a clean grinder set to medium,",
+          "and the patience to wait four full minutes",
+          "before you press the plunger down"
+        ]
+      },
+      "kind": "split",
+      "name": "en long words",
+      "paging": "auto",
+      "resolution": {
+        "height": 1920,
+        "width": 1080
+      },
+      "size": 92,
+      "text": "Good coffee needs fresh beans, a steady hand, water just off the boil, a clean grinder set to medium, and the patience to wait four full minutes before you press the plunger down"
+    },
+    {
+      "expected": {
+        "cap_em": 75.398,
+        "pages": [
+          "Hi. This is a much longer sentence about pouring water slowly.",
+          "That one is long as well, it goes on for a while too. OK."
+        ]
+      },
+      "kind": "split",
+      "name": "en small font",
+      "paging": "auto",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "size": 48,
+      "text": "Hi. This is a much longer sentence about pouring water slowly. That one is long as well, it goes on for a while too. OK."
+    },
+    {
+      "expected": {
+        "cap_em": 39.338,
+        "pages": [
+          "コーヒーは挽きたてが一番です。",
+          "お湯の温度にも気をつけましょう",
+          "ゆっくり注いでください。"
+        ]
+      },
+      "kind": "split",
+      "name": "ja line breaks",
+      "paging": "auto",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "size": 92,
+      "text": "コーヒーは挽きたてが一番です。\nお湯の温度にも気をつけましょう\nゆっくり注いでください。"
+    },
+    {
+      "expected": {
+        "cap_em": 25.447,
+        "pages": [
+          "一杯好咖啡。需要耐心。",
+          "还需要好的豆子，新鲜的水，以及合适的温度。",
+          "Enjoy it slowly. 好吗？"
+        ]
+      },
+      "kind": "split",
+      "name": "mixed",
+      "paging": "auto",
+      "resolution": {
+        "height": 1920,
+        "width": 1080
+      },
+      "size": 80,
+      "text": "一杯好咖啡。需要耐心。还需要好的豆子，新鲜的水，以及合适的温度。Enjoy it slowly. 好吗？"
+    },
+    {
+      "expected": {
+        "cap_em": 39.338,
+        "pages": [
+          "First page\nstill first",
+          "Second page",
+          "Third"
+        ]
+      },
+      "kind": "split",
+      "name": "manual",
+      "paging": "manual",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "size": 92,
+      "text": "First page\nstill first\n\n  \nSecond page\n\n\nThird"
+    },
+    {
+      "expected": {
+        "cap_em": 39.338,
+        "pages": [
+          "only one\n"
+        ]
+      },
+      "kind": "split",
+      "name": "manual one page",
+      "paging": "manual",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "size": 92,
+      "text": "only one\n"
+    },
+    {
+      "expected": {
+        "cap_em": 39.338,
+        "pages": [
+          "a. b.\n\nc"
+        ]
+      },
+      "kind": "split",
+      "name": "off",
+      "paging": "off",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "size": 92,
+      "text": "a. b.\n\nc"
+    },
+    {
+      "expected": [
+        0,
+        3333,
+        5600
+      ],
+      "from_ms": 0,
+      "kind": "proportional",
+      "min_ms": 1200,
+      "name": "proportional",
+      "pages": [
+        "aaaa",
+        "aa",
+        "aaaaaa"
+      ],
+      "span_ms": 10000
+    },
+    {
+      "expected": [
+        300,
+        1937,
+        3165
+      ],
+      "from_ms": 300,
+      "kind": "proportional",
+      "min_ms": 0,
+      "name": "proportional clip",
+      "pages": [
+        "第一句话。",
+        "第二句。",
+        "Third one here."
+      ],
+      "span_ms": 7777
+    },
+    {
+      "expected": [
+        0,
+        1000,
+        2000
+      ],
+      "from_ms": 0,
+      "kind": "proportional",
+      "min_ms": 1200,
+      "name": "proportional too short",
+      "pages": [
+        "aaaa",
+        "aa",
+        "aaaaaa"
+      ],
+      "span_ms": 3000
+    },
+    {
+      "duration_ms": 9000,
+      "expected": [
+        0,
+        4376,
+        6211
+      ],
+      "kind": "scene",
+      "name": "scene",
+      "pages": [
+        "一二三四五六七八九十。",
+        "一二。",
+        "一二三四五。"
+      ]
+    },
+    {
+      "brand": {
+        "logo": {
+          "corner": "top_left",
+          "margin": 0.05,
+          "size": 0.08,
+          "src": "l.png"
+        }
+      },
+      "expected": 288.0,
+      "kind": "top_inset",
+      "name": "top inset logo",
+      "position": "top",
+      "resolution": {
+        "height": 1920,
+        "width": 1080
+      },
+      "scene": "a"
+    },
+    {
+      "brand": {
+        "logo": {
+          "hide_on": [
+            "a"
+          ],
+          "src": "l.png"
+        }
+      },
+      "expected": 153.6,
+      "kind": "top_inset",
+      "name": "middle inset hidden logo",
+      "position": "middle",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "scene": "a"
+    },
+    {
+      "brand": {
+        "logo": {
+          "src": "l.png"
+        }
+      },
+      "expected": 153.6,
+      "kind": "top_inset",
+      "name": "bottom inset",
+      "position": "bottom",
+      "resolution": {
+        "height": 1080,
+        "width": 1920
+      },
+      "scene": "a"
+    }
+  ]
+}

@@ -64,6 +64,13 @@ export type VideoClip = {
   volume?: number; // 0..1, default 0 (muted); mixed into the soundtrack by the Rust core
 };
 
+// ---- Text layout (文字分页). Mirrors rust-core/crates/vimmer-dsl/src/text_layout.rs.
+export type TextPosition = "top" | "middle" | "bottom";
+export type Paging = "off" | "auto" | "manual";
+// Every part optional: the scene's, else the brand's, else the built-in one.
+export type TextLayout = { size?: number | null /* px at 1080p, 40..160, default 92 */; position?: TextPosition | null; paging?: Paging | null };
+export type TextPage = { text: string; start_ms: number };
+
 export type Scene = {
   id: string;
   duration_ms: number;
@@ -71,6 +78,12 @@ export type Scene = {
   highlights: string[];
   // Outline, box and shadow of `text`. Absent: brand.text_style, else the built-in look.
   text_style?: TextStyle | null;
+  // Size, position and paging of `text` (src/textPages.ts). Absent: brand.text_layout, else 92 px,
+  // bottom, no paging, exactly as before.
+  text_layout?: TextLayout | null;
+  // Pages of `text` and when each starts (ms from the scene start). Written by the Rust render into
+  // its render props only (timed on the narration); absent, the renderer pages the text itself.
+  text_pages?: TextPage[];
   image: string | null;
   motion: MotionType;
   // A clip as the background, in the image's place (motion / keyframes move it). Not with `image`.
@@ -411,6 +424,8 @@ export type Brand = {
   logo?: Logo | null;
   // Default style of the scene text and of text layers that set none (part by part).
   text_style?: TextStyle | null;
+  // Default size, position and paging of every scene text (part by part).
+  text_layout?: TextLayout | null;
 };
 
 export type VideoTimeline = {

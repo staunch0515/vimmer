@@ -936,6 +936,14 @@ fn validate_expanded(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError
                 });
             }
         }
+        if let Some(tl) = &scene.text_layout {
+            for message in tl.problems("text_layout.") {
+                errors.push(ValidationError::BadTextStyle {
+                    scene: scene.id.clone(),
+                    message,
+                });
+            }
+        }
         validate_transition(scene, i, &mut errors);
         validate_keyframes(scene, &mut errors);
         validate_layers(scene, &mut errors);
@@ -1068,6 +1076,8 @@ mod tests {
             text: Some("hello".into()),
             highlights: vec![],
             text_style: None,
+            text_layout: None,
+            text_pages: Vec::new(),
             image: None,
             motion: MotionType::Static,
             video: None,
@@ -2054,4 +2064,24 @@ mod tests {
             .any(|e| e.to_string().contains("brand: text_style.background color")));
     }
 
+
+    #[test]
+    fn scene_and_brand_text_layouts_are_validated() {
+        let mut t = timeline(vec![scene("a", 1000)]);
+        t.scenes[0].text_layout =
+            Some(serde_json::from_str(r#"{"size":200,"position":"top","paging":"auto"}"#).unwrap());
+        let errs = validate(&t).unwrap_err();
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(
+            errs[0].to_string(),
+            "scene `a` text_layout.size 200 must be between 40 and 160 (px on a 1080p frame; the default is 92)"
+        );
+        t.scenes[0].text_layout = Some(serde_json::from_str(r#"{"size":120}"#).unwrap());
+        assert!(validate(&t).is_ok());
+        t.brand = Some(serde_json::from_str(r#"{"text_layout":{"size":20}}"#).unwrap());
+        assert!(validate(&t)
+            .unwrap_err()
+            .iter()
+            .any(|e| e.to_string().starts_with("brand: text_layout.size 20 must be")));
+    }
 }

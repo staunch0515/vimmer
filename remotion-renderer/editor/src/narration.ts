@@ -1,6 +1,6 @@
 // The spoken line (台词) of a scene's narration. Pure (type imports only), so it is unit-tested
 // with Node (test/editor-narration.test.ts). Mirrors `Scene::spoken_text` in vimmer-dsl/src/model.rs.
-import type { Narration, Scene } from "../../src/types/timeline";
+import type { Narration, Scene, TextPage } from "../../src/types/timeline";
 import type { TtsName } from "./renderOptions";
 
 const said = (t: string | null | undefined): string | null => (t && t.trim() ? t : null);
@@ -122,7 +122,14 @@ export type NarratedPreview<T extends { scenes: Scene[] }> = {
  * its audio and the render's length. The saved timeline is not touched (this is a copy for the
  * Player); scenes with their own audio keep it, exactly as a render does.
  */
-export const withNarration = <T extends { scenes: Scene[] }>(t: T, heard: HeardClips, engine: TtsChoice): NarratedPreview<T> => {
+export const withNarration = <T extends { scenes: Scene[] }>(
+  t: T,
+  heard: HeardClips,
+  engine: TtsChoice,
+  // Pages of a heard scene that speaks its own text, timed over its clip (src/textPages.ts
+  // `heardPages`); empty for an unpaged scene. Missing: no pages are set.
+  pager?: (scene: Scene, speechMs: number) => TextPage[],
+): NarratedPreview<T> => {
   const stretched: NarratedPreview<T>["stretched"] = [];
   const missing: string[] = [];
   const savedStarts: number[] = [];
@@ -145,7 +152,13 @@ export const withNarration = <T extends { scenes: Scene[] }>(t: T, heard: HeardC
     const to = renderLength(s.duration_ms, clip.speech_ms);
     if (to > s.duration_ms) stretched.push({ id: s.id, from: s.duration_ms, to });
     preview += to;
-    return { ...s, duration_ms: to, audio: { source: clip.source, offset_ms: 0 } };
+    const pages = pager && spokenText(s) === s.text ? pager(s, clip.speech_ms) : [];
+    return {
+      ...s,
+      duration_ms: to,
+      audio: { source: clip.source, offset_ms: 0 },
+      ...(pages.length > 1 ? { text_pages: pages } : {}),
+    };
   });
   return { timeline: { ...t, scenes }, stretched, missing, savedStarts, previewStarts, savedLengths };
 };

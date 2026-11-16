@@ -7,6 +7,8 @@ import { pickToOpen, saveTimeline } from "../project";
 import { CATALOG, parseBrand, templateInfo, type ParamSpec } from "../templates";
 import { Field, MediaInput } from "./Inspector";
 import { TextStyleFields, withPart } from "./TextStyleFields";
+import { TextLayoutFields } from "./TextLayoutFields";
+import { withLayoutPart } from "../textLayout";
 import { LookFields } from "./LookFields";
 import { autoPreset } from "../../../src/motion/look";
 
@@ -44,6 +46,7 @@ const compact = (b: Brand): Brand | null => {
   if (fonts && Object.keys(fonts).length) out.fonts = fonts;
   if (b.logo?.src) out.logo = b.logo;
   if (b.text_style && Object.keys(b.text_style).length) out.text_style = b.text_style;
+  if (b.text_layout && Object.keys(b.text_layout).length) out.text_layout = b.text_layout;
   return Object.keys(out).length ? out : null;
 };
 
@@ -180,6 +183,14 @@ export const BrandEditor = ({ timeline, selection, dispatch }: Props) => {
         style={brand.text_style}
         builtinShadow="soft on scene text, none on layers"
         onChange={(part, value) => set({ ...brand, text_style: withPart(brand.text_style, part, value) })}
+      />
+
+      <div className="section-title">文字 Text</div>
+      <div className="dim">Default size, position and paging of every scene text; a scene's own setting wins, part by part.</div>
+      <TextLayoutFields
+        name="brand"
+        layout={brand.text_layout}
+        onChange={(part, value) => set({ ...brand, text_layout: withLayoutPart(brand.text_layout, part, value) })}
       />
 
       <div className="section-title">Insert template scene</div>

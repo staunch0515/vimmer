@@ -63,7 +63,6 @@ use vimmer_dsl::{
 use crate::brand::{behind, hex, is_large, rgb, BODY_MIN_RATIO, LARGE_MIN_RATIO};
 use crate::fonts::Fonts;
 use crate::layers::{place, Rect};
-use crate::layout::SCENE_FONT_PX;
 use crate::motion::{sample, Pose};
 use crate::{is_url, scene_starts_ms, secs, textbox, Finding, Severity, Suggestion};
 
@@ -90,6 +89,26 @@ pub fn scrim_alpha(y: f64, h: f64) -> f64 {
         0.45 * (1.0 - (u - 0.30) / 0.32)
     } else {
         0.0
+    }
+}
+
+/// Scrim opacity at `y` for scene text at `position` (`POSITION_SCRIM` in `AnimatedText.tsx`):
+/// the bottom scrim, its mirror for top text, a band for middle text.
+pub fn scrim_alpha_at(position: vimmer_dsl::TextPosition, y: f64, h: f64) -> f64 {
+    match position {
+        vimmer_dsl::TextPosition::Bottom => scrim_alpha(y, h),
+        vimmer_dsl::TextPosition::Top => scrim_alpha(h - y, h),
+        vimmer_dsl::TextPosition::Middle => {
+            let u = (y / h).clamp(0.0, 1.0);
+            let d = (u - 0.5).abs();
+            if d <= 0.15 {
+                0.45
+            } else if d <= 0.35 {
+                0.45 * (0.35 - d) / 0.20
+            } else {
+                0.0
+            }
+        }
     }
 }
 
@@ -453,12 +472,11 @@ fn texts(scene: &Scene, si: usize, t: &VideoTimeline, fonts: &Fonts) -> Vec<Text
     let brand_text = brand.and_then(|b| b.colors.text.as_ref()).is_some();
     let mut out = Vec::new();
     let style = scene.effective_text_style(brand);
-    if let Some(rect) = scene
-        .text
-        .as_deref()
-        .and_then(|s| textbox::scene_text(s, res, fonts, &style))
-    {
-        let outline = reads_on_outline(&style, SCENE_FONT_PX, res);
+    let font_px = scene.effective_text_layout(brand).font_px(res);
+    let pages = textbox::scene_pages(t, si, fonts);
+    let n = pages.len();
+    for (k, (rect, page)) in pages.into_iter().enumerate() {
+        let outline = reads_on_outline(&style, font_px, res);
         let fix = if outline.is_some() {
             Suggestion::field(
                 "use an outline color that differs more from the text color",
@@ -488,16 +506,21 @@ fn texts(scene: &Scene, si: usize, t: &VideoTimeline, fonts: &Fonts) -> Vec<Text
             }
         };
         out.push(Text {
-            what: "the scene text".into(),
+            what: if n > 1 {
+                crate::pages::page_name(k, n)
+            } else {
+                "the scene text".into()
+            },
             fg: text_color.clone(),
             rect,
-            large: is_large(SCENE_FONT_PX / fh, 600),
+            large: is_large(font_px / fh, 600),
             under_scrim: false,
             box_color: style.background.as_ref().and_then(|b| rgb(&b.color)),
             outline,
             underlays: underlays(scene, None, res),
-            from_ms: 0,
-            to_ms: scene.duration_ms,
+            // The picture is checked over the scene as written (narration may stretch it).
+            from_ms: page.from_ms.min(scene.duration_ms),
+            to_ms: page.to_ms.min(scene.duration_ms),
             fix,
         });
     }
@@ -687,7 +710,7 @@ fn percentile(mut v: Vec<f64>, p: f64) -> Option<f64> {
 /// Contrast of `text` at one moment, and the median background color under it.
 fn contrast_at(
     text: &Text,
-    scene_text: bool,
+    scene_text: Option<vimmer_dsl::TextPosition>,
     canvas: &Canvas,
     pose: &Pose,
     res: Resolution,
@@ -698,7 +721,7 @@ fn contrast_at(
     let mut lum = Vec::new();
     for (x, y) in grid(text.rect, res) {
         let mut bg = background_at(canvas, pose, res, x, y);
-        let scrim = if scene_text { scrim_alpha(y, h) } else { 0.0 };
+        let scrim = scene_text.map_or(0.0, |p| scrim_alpha_at(p, y, h));
         for u in text.underlays.iter().filter(|u| u.under_scrim) {
             if u.contains(x, y) {
                 bg = over(u.color, bg);
@@ -748,7 +771,11 @@ pub fn check(t: &VideoTimeline, public_dir: &Path, ffmpeg: &Path, fonts: &Fonts)
         let Some(mut source) = open_source(scene, public_dir, res, ffmpeg) else {
             continue;
         };
-        let has_scene_text = scene.text.as_deref().is_some_and(|s| !s.trim().is_empty());
+        let has_scene_text = scene
+            .text
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+            .then(|| scene.effective_text_layout(t.brand.as_ref()).position);
         let moving = moves(scene) || scene.video.is_some();
         for text in &items {
             let min = if text.large {
@@ -857,11 +884,11 @@ mod tests {
         let r = (200.0, 100.0, 600.0, 100.0);
         let white = solid([255, 255, 255]);
         let (ratio, _) =
-            contrast_at(&text("#ffffff", r, true), false, &white, &still(), RES).unwrap();
+            contrast_at(&text("#ffffff", r, true), None, &white, &still(), RES).unwrap();
         assert!(ratio < 1.1, "{ratio}");
         let black = solid([0, 0, 0]);
         let (ratio, _) =
-            contrast_at(&text("#ffffff", r, true), false, &black, &still(), RES).unwrap();
+            contrast_at(&text("#ffffff", r, true), None, &black, &still(), RES).unwrap();
         assert!(ratio > 20.0, "{ratio}");
     }
 
@@ -870,13 +897,13 @@ mod tests {
         let pale = solid([235, 235, 235]);
         let low = (200.0, 900.0, 600.0, 100.0);
         let (plain, _) =
-            contrast_at(&text("#fafafa", low, true), false, &pale, &still(), RES).unwrap();
+            contrast_at(&text("#fafafa", low, true), None, &pale, &still(), RES).unwrap();
         let (scrimmed, _) =
-            contrast_at(&text("#fafafa", low, true), true, &pale, &still(), RES).unwrap();
+            contrast_at(&text("#fafafa", low, true), Some(vimmer_dsl::TextPosition::Bottom), &pale, &still(), RES).unwrap();
         assert!(plain < 1.2 && scrimmed > 2.0, "{plain} {scrimmed}");
         let mut boxed = text("#fafafa", (200.0, 100.0, 600.0, 100.0), false);
         boxed.box_color = rgb("#09090bcc");
-        let (ratio, _) = contrast_at(&boxed, false, &pale, &still(), RES).unwrap();
+        let (ratio, _) = contrast_at(&boxed, None, &pale, &still(), RES).unwrap();
         assert!(ratio > BODY_MIN_RATIO, "{ratio}");
     }
 
@@ -886,10 +913,10 @@ mod tests {
         let r = (200.0, 100.0, 600.0, 100.0);
         let mut t = text("#fafafa", r, true);
         t.outline = rgb("#000000");
-        let (ratio, _) = contrast_at(&t, false, &white, &still(), RES).unwrap();
+        let (ratio, _) = contrast_at(&t, None, &white, &still(), RES).unwrap();
         assert!(ratio > 18.0, "{ratio}");
         t.outline = rgb("#e4e4e7");
-        let (ratio, _) = contrast_at(&t, false, &white, &still(), RES).unwrap();
+        let (ratio, _) = contrast_at(&t, None, &white, &still(), RES).unwrap();
         assert!(ratio < 1.5, "{ratio}");
         // Too thin to count: 1 px at 1080p on 92 px text.
         let thin: TextStyle = serde_json::from_str(r##"{"outline":{"color":"#000","width":1}}"##).unwrap();

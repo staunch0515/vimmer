@@ -4,6 +4,7 @@ use crate::brand::Brand;
 use crate::layer::{Layer, VideoClip};
 use crate::look::Look;
 use crate::template::SceneTemplate;
+use crate::text_layout::{TextLayout, TextPage};
 use crate::text_style::TextStyle;
 
 /// Target frame rate for every render.
@@ -199,6 +200,15 @@ pub struct Scene {
     /// (see [`crate::text_style`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_style: Option<TextStyle>,
+    /// Size, position and paging of `text`. Absent: the brand's `text_layout`, else the built-in
+    /// layout (92 px, bottom, no paging; see [`crate::text_layout`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_layout: Option<TextLayout>,
+    /// The pages `text` is shown in and when each starts. Written by the render into its render
+    /// props for paged scenes (see [`crate::text_layout`]); never part of a saved timeline, and
+    /// recomputed by every render. Empty: the renderer pages the text itself (editor preview).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_pages: Vec<TextPage>,
     /// Path or URL of the background image, relative to the public dir.
     #[serde(default)]
     pub image: Option<String>,
@@ -254,6 +264,25 @@ impl Scene {
             .clone()
             .unwrap_or_default()
             .or(brand.and_then(|b| b.text_style.as_ref()))
+    }
+
+    /// Size, position and paging of the scene text as drawn: each part the scene's own, else the
+    /// brand's, else the built-in one.
+    pub fn effective_text_layout(&self, brand: Option<&Brand>) -> crate::text_layout::ResolvedTextLayout {
+        self.text_layout
+            .unwrap_or_default()
+            .or(brand.and_then(|b| b.text_layout.as_ref()))
+            .resolved()
+    }
+
+    /// The pages the scene text is shown in on a `res` frame (one page, the text, without
+    /// paging; none without text). Timing is decided at render ([`crate::text_layout::page_starts`]).
+    pub fn text_page_texts(&self, brand: Option<&Brand>, res: Resolution) -> Vec<String> {
+        let Some(text) = self.text.as_deref() else {
+            return Vec::new();
+        };
+        let layout = self.effective_text_layout(brand);
+        crate::text_layout::split_pages(text, layout.paging, layout.font_px(res), res)
     }
 
     /// Duration in frames at `fps`, rounded to the nearest frame.
