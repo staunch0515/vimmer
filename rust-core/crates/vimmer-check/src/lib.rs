@@ -237,6 +237,37 @@ impl Report {
     }
 }
 
+/// Writes each `(staged, original)` path of `renamed` back as the original in the findings'
+/// messages and suggestions, for a timeline whose project files were staged before the check
+/// (see `vimmer_scheduler::localize::stage_project_for_check`).
+pub fn restore_paths(findings: &mut [Finding], renamed: &[(String, String)]) {
+    fn fix(text: &mut String, renamed: &[(String, String)]) {
+        for (staged, original) in renamed {
+            if text.contains(staged.as_str()) {
+                *text = text.replace(staged.as_str(), original);
+            }
+        }
+    }
+    fn fix_value(value: &mut Value, renamed: &[(String, String)]) {
+        match value {
+            Value::String(s) => fix(s, renamed),
+            Value::Array(items) => items.iter_mut().for_each(|v| fix_value(v, renamed)),
+            Value::Object(map) => map.values_mut().for_each(|v| fix_value(v, renamed)),
+            _ => {}
+        }
+    }
+    if renamed.is_empty() {
+        return;
+    }
+    for f in findings {
+        fix(&mut f.message, renamed);
+        fix(&mut f.suggestion.text, renamed);
+        if let Some(value) = &mut f.suggestion.value {
+            fix_value(value, renamed);
+        }
+    }
+}
+
 /// The timeline as it will render: template scenes expanded into layers. Unchanged when a
 /// template's params are wrong (the check then reports that).
 pub fn expanded(timeline: &VideoTimeline) -> VideoTimeline {
@@ -359,4 +390,30 @@ pub(crate) fn is_url(s: &str) -> bool {
 
 pub(crate) fn secs(ms: u64) -> String {
     format!("{:.2} s", ms as f64 / 1000.0)
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+
+    #[test]
+    fn staged_paths_are_named_as_the_timeline_wrote_them() {
+        let staged = "generated/project/00ff-10/logo.png".to_string();
+        let renamed = vec![(staged.clone(), "assets/logo.png".to_string())];
+        let mut findings = vec![
+            Finding::new(
+                Severity::Warning,
+                "brand.logo",
+                format!("logo `{staged}` is small"),
+                Suggestion::set(format!("use a larger `{staged}`"), "/brand/logo/src", Value::from(vec![staged.clone()])),
+            ),
+            Finding::new(Severity::Info, "other", "nothing to do with it", Suggestion::text("generated/project/x")),
+        ];
+        let untouched = findings[1].clone();
+        restore_paths(&mut findings, &renamed);
+        assert_eq!(findings[0].message, "logo `assets/logo.png` is small");
+        assert_eq!(findings[0].suggestion.text, "use a larger `assets/logo.png`");
+        assert_eq!(findings[0].suggestion.value, Some(Value::from(vec!["assets/logo.png"])));
+        assert_eq!(findings[1], untouched);
+    }
 }

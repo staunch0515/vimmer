@@ -51,6 +51,12 @@ struct CheckCli {
     /// else the nearest remotion-renderer/public above the timeline or the current directory).
     #[arg(long)]
     public_dir: Option<PathBuf>,
+    /// Studio project folder whose own files the timeline names (`assets/…`, `recordings/…`).
+    /// They are found the way the desktop app's render finds them: staged into
+    /// <public-dir>/generated/project/, a project file winning over a public one. Default: the
+    /// timeline's folder when it holds a `project.json`.
+    #[arg(long)]
+    project: Option<PathBuf>,
     /// Remotion project directory.
     #[arg(long, default_value = "remotion-renderer")]
     remotion_dir: PathBuf,
@@ -95,7 +101,15 @@ pub fn main(mut args: Vec<OsString>) -> ExitCode {
             None => TtsEngine::from_env(),
         },
     };
-    let findings = check_timeline(&timeline, &opts);
+    let mut checked = timeline.clone();
+    let renamed = match (find_project(&cli), &opts.public_dir) {
+        (Some(project), Some(public)) => {
+            vimmer_scheduler::localize::stage_project_for_check(&mut checked, &project, public)
+        }
+        _ => Vec::new(),
+    };
+    let mut findings = check_timeline(&checked, &opts);
+    vimmer_check::restore_paths(&mut findings, &renamed);
     let report = Report::new(findings, Some(&cli.timeline), cli.rendered.as_deref());
     if cli.json {
         match serde_json::to_string_pretty(&report) {
@@ -118,6 +132,16 @@ fn load(path: &Path) -> Result<VideoTimeline, String> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     serde_json::from_str(&raw).map_err(|e| format!("cannot parse {}: {e}", path.display()))
+}
+
+/// `--project`, else the timeline's folder when it is a Studio project.
+fn find_project(cli: &CheckCli) -> Option<PathBuf> {
+    if let Some(dir) = &cli.project {
+        return Some(dir.clone());
+    }
+    let dir = cli.timeline.parent()?;
+    let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+    dir.join("project.json").is_file().then(|| dir.to_path_buf())
 }
 
 fn find_public_dir(cli: &CheckCli) -> Option<PathBuf> {
