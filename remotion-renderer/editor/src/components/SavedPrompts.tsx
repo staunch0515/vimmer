@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   MAX_CATEGORY, MAX_IMPORT_CHARS, MAX_NAME, MAX_PROMPTS, MAX_TEXT, NO_CATEGORY, STORAGE_KEY,
-  addPrompt, categoriesOf, defaultName, deletePrompt, exportJson, filterPrompts, generalizeScene, loadPrompts,
-  mergeImport, movePrompt, needsScene, parseImport, restorePrompt, savePrompts, starterPrompts, updatePrompt,
+  addPrompt, categoriesOf, defaultName, deletePrompt, exportJson, filterPrompts, loadPrompts,
+  mergeImport, movePrompt, parseImport, restorePrompt, savePrompts, starterPrompts, updatePrompt,
   type Removed, type SavedPrompt,
 } from "../savedPrompts";
+import { SCOPE_LABEL, SCOPE_MODES, generalizeScene, needsScene, type ScopeMode } from "../scope";
 
 /** localStorage, or null where reading it throws (private mode, blocked storage). */
 const storage = (): Storage | null => {
@@ -42,7 +43,7 @@ export const useSavedPrompts = (): [SavedPrompt[], Dispatch<SetStateAction<Saved
 };
 
 /** What the "save" form starts from (a sent message, or the text in the input). */
-export type SaveDraft = { text: string; useScene: boolean };
+export type SaveDraft = { text: string; scope?: ScopeMode };
 
 type Props = {
   prompts: SavedPrompt[];
@@ -56,7 +57,10 @@ type Props = {
   onDraftDone: () => void;
 };
 
-type Fields = { name: string; text: string; useScene: boolean; category: string };
+/** `scope` "" = no default scope (using the prompt leaves the scope as it is). */
+type Fields = { name: string; text: string; scope: ScopeMode | ""; category: string };
+
+const SCOPE_TAG: Record<ScopeMode, string> = { all: "全部", selected: "几幕", one: "本幕" };
 /** Returns an error message, or null when saved. */
 type Saver = (input: Fields) => string | null;
 
@@ -91,13 +95,13 @@ export const SavedPrompts = ({ prompts, setPrompts, onUse, onSend, busy, draft, 
         <PromptForm
           key={draft.text}
           title="☆ 保存为提示词 Save as prompt"
-          initial={{ name: "", text: draft.text, useScene: draft.useScene, category: "" }}
+          initial={{ name: "", text: draft.text, scope: draft.scope ?? "", category: "" }}
           categories={categories}
           full={prompts.length >= MAX_PROMPTS}
           offerGeneralize
           onCancel={onDraftDone}
           onSave={(input) => {
-            const r = addPrompt(prompts, input);
+            const r = addPrompt(prompts, { ...input, scope: input.scope || undefined });
             if (!r.ok) return r.error;
             setPrompts(r.list);
             setOpen(true);
@@ -132,11 +136,12 @@ export const SavedPrompts = ({ prompts, setPrompts, onUse, onSend, busy, draft, 
                 <button
                   className="saved-use"
                   onClick={(e) => (e.shiftKey && !busy ? onSend(p) : onUse(p))}
-                  title={`${p.text}${p.useScene ? "\n(about the selected scene 关于所选场景)" : ""}\n\nClick: put in the box · Shift+click: send now`}
+                  title={`${p.text}${p.scope ? `\n范围 Scope: ${SCOPE_LABEL[p.scope]}` : ""}\n\nClick: put in the box · Shift+click: send now`}
                 >
                   <span className="saved-name">{p.name}</span>
                   {p.category && <span className="saved-cat">{p.category}</span>}
-                  {needsScene(p.text) && <span className="saved-tag">场景</span>}
+                  {p.scope && <span className="saved-tag" title={`范围 ${SCOPE_LABEL[p.scope]}`}>{SCOPE_TAG[p.scope]}</span>}
+                  {needsScene(p.text) && <span className="saved-tag">{"{场景}"}</span>}
                 </button>
                 <button className="btn ghost small" onClick={() => onSend(p)} disabled={busy} aria-label={`Send ${p.name} now`} title="直接发送 Send now (a paid API call)">▶</button>
               </div>
@@ -261,11 +266,11 @@ const PromptManager = ({ prompts, setPrompts, categories, onRemove, setNotice, o
           return editing === p.id ? (
             <PromptForm
               key={p.id}
-              initial={{ name: p.name, text: p.text, useScene: p.useScene, category: p.category ?? "" }}
+              initial={{ name: p.name, text: p.text, scope: p.scope ?? "", category: p.category ?? "" }}
               categories={categories}
               onCancel={() => setEditing(null)}
               onSave={(change) => {
-                const r = updatePrompt(prompts, p.id, change);
+                const r = updatePrompt(prompts, p.id, { ...change, scope: change.scope || null });
                 if (!r.ok) return r.error;
                 setPrompts(r.list);
                 setEditing(null);
@@ -295,12 +300,12 @@ const PromptManager = ({ prompts, setPrompts, categories, onRemove, setNotice, o
       {adding ? (
         <PromptForm
           title="新建提示词 New prompt"
-          initial={{ name: "", text: "", useScene: false, category: activeCategory && activeCategory !== NO_CATEGORY ? activeCategory : "" }}
+          initial={{ name: "", text: "", scope: "", category: activeCategory && activeCategory !== NO_CATEGORY ? activeCategory : "" }}
           categories={categories}
           full={prompts.length >= MAX_PROMPTS}
           onCancel={() => setAdding(false)}
           onSave={(input) => {
-            const r = addPrompt(prompts, input);
+            const r = addPrompt(prompts, { ...input, scope: input.scope || undefined });
             if (!r.ok) return r.error;
             setPrompts(r.list);
             setAdding(false);
@@ -347,7 +352,7 @@ const PromptForm = ({ title, initial, categories, full = false, offerGeneralize 
   const [name, setName] = useState(initial.name);
   const [text, setText] = useState(initial.text);
   const [category, setCategory] = useState(initial.category);
-  const [useScene, setUseScene] = useState(initial.useScene);
+  const [scope, setScope] = useState<ScopeMode | "">(initial.scope);
   const [error, setError] = useState<string | null>(null);
   const listId = useId();
   const general = generalizeScene(text);
@@ -372,13 +377,16 @@ const PromptForm = ({ title, initial, categories, full = false, offerGeneralize 
       <datalist id={listId}>
         {categories.map((c) => <option key={c} value={c} />)}
       </datalist>
-      <label className="check">
-        <input type="checkbox" checked={useScene} onChange={(e) => setUseScene(e.target.checked)} />
-        关于所选场景 About the selected scene
+      <label className="assistant-row prompt-scope">
+        <span className="dim small">默认范围</span>
+        <select value={scope} onChange={(e) => setScope(e.target.value as ScopeMode | "")} aria-label="Default scope 默认范围">
+          <option value="">不设置（沿用当前）</option>
+          {SCOPE_MODES.map((m) => <option key={m} value={m}>{SCOPE_LABEL[m]}</option>)}
+        </select>
       </label>
       {(error || full) && <div className="field-error">{error ?? `最多保存 ${MAX_PROMPTS} 条，请先删除一些`}</div>}
       <div className="assistant-row">
-        <button className="btn primary small" disabled={!text.trim() || full} onClick={() => setError(onSave({ name, text, useScene, category }))}>保存 Save</button>
+        <button className="btn primary small" disabled={!text.trim() || full} onClick={() => setError(onSave({ name, text, scope, category }))}>保存 Save</button>
         <button className="btn small" onClick={onCancel}>取消 Cancel</button>
       </div>
     </div>

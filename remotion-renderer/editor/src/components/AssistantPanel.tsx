@@ -11,8 +11,13 @@ import {
   buildConversation, busy as isBusy, chatReducer, failureOf, initialChat, nextExchangeId, openProposal,
   type Exchange,
 } from "../chat";
-import { NEEDS_SCENE_HINT, fillPlaceholders, needsScene, sceneLabel, type SavedPrompt, type SceneRef } from "../savedPrompts";
+import type { SavedPrompt } from "../savedPrompts";
+import {
+  ALL_SCENES, SCOPE_ERROR, needsScene, sceneLabel, sceneList, outOfScope, outOfScopeWarning, pruneChosen, resolveScope, sceneOptions,
+  type ResolveError, type SceneRef, type ScopeMode,
+} from "../scope";
 import { SavedPrompts, useSavedPrompts, type SaveDraft } from "./SavedPrompts";
+import { ScopeControl } from "./ScopeControl";
 
 type Props = {
   timeline: VideoTimeline;
@@ -40,23 +45,48 @@ const selectedScene = (t: VideoTimeline, s: Selection): SceneRef | null => {
   return id ? { index, id } : null;
 };
 
+/** What {场景} becomes with this scope (for the line under the message box). */
+const placeholderTarget = (mode: ScopeMode, current: SceneRef | null, chosen: SceneRef[]): string =>
+  mode === "selected" ? sceneList(chosen) : mode === "one" && current ? sceneLabel(current.index, current.id) : ALL_SCENES;
+
+/** How a message was scoped (kept beside the chat, by exchange id). */
+type SentScope = {
+  /** The text before the scope was applied ({场景} kept), for ☆ 收藏. */
+  raw: string;
+  mode: ScopeMode;
+  /** The 选几幕 line put before the text, shown dimmed. */
+  line: string | null;
+  scopeIds: string[] | null;
+  /** The scenes when the message was sent (to tell changed scenes from new ones). */
+  knownIds: string[];
+};
+
 /**
  * Natural-language editing as a chat. Claude sees the current timeline and the recent
  * exchanges, so follow-ups work. Nothing changes until Accept; Accept is one undo step.
  */
 export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props) => {
   const [instruction, setInstruction] = useState("");
-  const [useScene, setUseScene] = useState(true);
+  /** 范围: 全部 / 选几幕 / 当前这一幕 (当前这一幕 with no scene selected acts as 全部, like the old checkbox). */
+  const [scopeMode, setScopeMode] = useState<ScopeMode>("one");
+  const [chosenIds, setChosenIds] = useState<string[]>([]);
+  const [scopeListOpen, setScopeListOpen] = useState(false);
+  const [sentScopes, setSentScopes] = useState<Record<number, SentScope>>({});
   const [chat, chatDispatch] = useReducer(chatReducer, docKey, initialChat);
   const logEnd = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const [prompts, setPrompts] = useSavedPrompts();
   const [saveDraft, setSaveDraft] = useState<SaveDraft | null>(null);
-  /** Shown when a message needs a scene ({场景}) and none is selected. */
-  const [sceneHint, setSceneHint] = useState(false);
+  /** Why the last Send did not go out (a scene is needed / none ticked). */
+  const [scopeError, setScopeError] = useState<ResolveError | null>(null);
   const model = chat.model;
   const scene = selectedScene(timeline, selection);
-  const sceneId = scene?.id ?? null;
+  const options = sceneOptions(timeline.scenes);
+  const chosen = pruneChosen(chosenIds, timeline.scenes);
+  const chosenRefs: SceneRef[] = options.filter((o) => chosen.includes(o.id)).map(({ index, id }) => ({ index, id }));
+  const preview = instruction.trim() && needsScene(instruction)
+    ? resolveScope({ mode: scopeMode, text: instruction, current: scene, chosen: chosenRefs })
+    : null;
   const current = serialize(timeline);
   const busy = isBusy(chat);
   const conversation = buildConversation(chat.exchanges);
@@ -69,23 +99,36 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
     logEnd.current?.scrollIntoView?.({ block: "nearest" });
   }, [chat.exchanges]);
 
+  /** Sets the scope a prompt was saved with (选几幕 starts from the selected scene if none is ticked). */
+  const takeScope = (mode: ScopeMode): SceneRef[] => {
+    setScopeMode(mode);
+    if (mode !== "selected" || chosenRefs.length > 0 || !scene) return chosenRefs;
+    setChosenIds([scene.id]);
+    setScopeListOpen(true);
+    return [scene];
+  };
+
   /** Sends the input, or a saved prompt directly (`saved`; the input is then left as it is). */
   const send = async (saved?: SavedPrompt) => {
     const raw = (saved ? saved.text : instruction).trim();
     if (!raw || busy) return;
-    // {场景} / {scene} become the selected scene's label; without a scene nothing is sent.
-    const filled = fillPlaceholders(raw, scene);
-    if (!filled.ok) {
-      setSceneHint(true);
+    const mode = saved?.scope ?? scopeMode;
+    const picked = saved?.scope ? takeScope(saved.scope) : chosenRefs;
+    // The scope decides the scene id and, for 选几幕, a line before the text; {场景} is filled in.
+    const r = resolveScope({ mode, text: raw, current: scene, chosen: picked });
+    if (!r.ok) {
+      setScopeError(r.error);
+      if (r.error === "noScenesChosen") setScopeListOpen(true);
       return;
     }
-    setSceneHint(false);
-    const text = filled.text;
+    setScopeError(null);
+    const { instruction: text, sceneId: sceneForRequest } = r.value;
     const id = nextExchangeId(chat);
     const generation = chat.generation;
-    const aboutScene = saved ? saved.useScene : useScene;
-    if (saved) setUseScene(saved.useScene);
-    const sceneForRequest = aboutScene ? sceneId : null;
+    setSentScopes((m) => ({
+      ...m,
+      [id]: { raw, mode: r.value.mode, line: r.value.line, scopeIds: r.value.scopeIds, knownIds: timeline.scenes.map((s) => s.id) },
+    }));
     chatDispatch({ type: "send", instruction: text, sceneId: sceneForRequest, base: current });
     if (!saved) setInstruction("");
     const result = await proposeEdit({
@@ -98,12 +141,11 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
     chatDispatch({ type: "answer", id, generation, result });
   };
 
-  /** Puts a saved prompt in the box (scene filled in when one is selected) for editing before Send. */
+  /** Puts a saved prompt in the box ({场景} kept; filled in on Send) and sets its scope, for editing before Send. */
   const applyPrompt = (c: SavedPrompt) => {
-    const filled = fillPlaceholders(c.text, scene);
-    setInstruction(filled.ok ? filled.text : c.text);
-    setSceneHint(!filled.ok);
-    setUseScene(c.useScene);
+    setInstruction(c.text);
+    setScopeError(null);
+    if (c.scope) takeScope(c.scope);
     input.current?.focus();
   };
 
@@ -158,7 +200,11 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
             current={current}
             onAccept={accept}
             onReject={(id) => chatDispatch({ type: "reject", id })}
-            onSave={(ex) => setSaveDraft({ text: ex.instruction, useScene: ex.sceneId !== null })}
+            scope={sentScopes[e.id]}
+            onSave={(ex) => {
+              const sent = sentScopes[ex.id];
+              setSaveDraft(sent ? { text: sent.raw, scope: sent.mode } : { text: ex.instruction, scope: ex.sceneId ? "one" : "all" });
+            }}
           />
         ))}
         <div ref={logEnd} />
@@ -174,6 +220,24 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
         onDraftDone={() => setSaveDraft(null)}
       />
 
+      <ScopeControl
+        mode={scopeMode}
+        onMode={(m) => {
+          setScopeMode(m);
+          setScopeError(null);
+        }}
+        current={scene}
+        options={options}
+        chosen={chosen}
+        onChosen={(ids) => {
+          setChosenIds(ids);
+          setScopeError(null);
+        }}
+        listOpen={scopeListOpen}
+        onListOpen={setScopeListOpen}
+        disabled={busy}
+      />
+
       <textarea
         ref={input}
         rows={3}
@@ -181,7 +245,7 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
         placeholder={asked ? "Answer the question above · 回答上面的问题" : "e.g. 第二段节奏快一点，加一个淡入转场 · make scene 3 slower · switch to vertical"}
         onChange={(e) => {
           setInstruction(e.target.value);
-          setSceneHint(false);
+          setScopeError(null);
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -191,18 +255,14 @@ export const AssistantPanel = ({ timeline, selection, dispatch, docKey }: Props)
         }}
         aria-label="Message to the assistant"
       />
-      <label className="check">
-        <input type="checkbox" checked={useScene && !!sceneId} disabled={!sceneId} onChange={(e) => setUseScene(e.target.checked)} />
-        {sceneId ? <>About the selected scene <span className="mono">{sceneId}</span></> : "No scene selected"}
-      </label>
-      {needsScene(instruction) && scene && (
-        <div className="dim small">{"{场景}"} → {sceneLabel(scene.index, scene.id)}</div>
+      {preview?.ok && !scopeError && (
+        <div className="dim small scope-preview-line">{"{场景}"} → {placeholderTarget(preview.value.mode, scene, chosenRefs)}</div>
       )}
-      {sceneHint && !scene && <div className="assistant-warning" role="alert">{NEEDS_SCENE_HINT}</div>}
+      {scopeError && <div className="assistant-warning" role="alert">{SCOPE_ERROR[scopeError]}</div>}
       <div className="assistant-row chat-send">
         <button
           className="link small saved-save"
-          onClick={() => setSaveDraft({ text: instruction, useScene: useScene && !!sceneId })}
+          onClick={() => setSaveDraft({ text: instruction, scope: scopeMode === "one" && !scene ? "all" : scopeMode })}
           disabled={!instruction.trim()}
           title="Save the text in the box as a reusable prompt"
         >
@@ -223,16 +283,22 @@ type ExchangeProps = {
   onAccept: (e: Exchange, p: EditProposal) => void;
   onReject: (id: number) => void;
   onSave: (e: Exchange) => void;
+  scope?: SentScope;
 };
 
-const ExchangeView = ({ exchange: e, current, onAccept, onReject, onSave }: ExchangeProps) => {
+const ExchangeView = ({ exchange: e, current, onAccept, onReject, onSave, scope }: ExchangeProps) => {
   const failure = failureOf(e);
   const open = openProposal(e);
   const stale = open !== null && e.base !== current;
+  // The 选几幕 line is shown dimmed above the user's own words.
+  const line = scope?.line && e.instruction.startsWith(`${scope.line}\n`) ? scope.line : null;
+  const words = line ? e.instruction.slice(line.length + 1) : e.instruction;
+  const outside = e.result?.ok && e.result.status === "edited" && scope ? outOfScope(e.result.outcome.summary, scope.scopeIds, scope.knownIds) : [];
   return (
     <>
       <div className="chat-user">
-        <div>{e.instruction}</div>
+        {line && <div className="dim small chat-scope-line">{line}</div>}
+        <div>{words}</div>
         <div className="chat-user-foot">
           {e.sceneId ? <span className="dim small mono">{e.sceneId}</span> : <span />}
           <button className="link small" onClick={() => onSave(e)} title="Save this message as a reusable prompt">☆ 收藏 Save</button>
@@ -264,6 +330,9 @@ const ExchangeView = ({ exchange: e, current, onAccept, onReject, onSave }: Exch
             {shortModel(e.model)} · {formatCost(e.result.usage)}
             {e.result.retries > 0 ? ` · ${e.result.retries} correction${e.result.retries > 1 ? "s" : ""}` : ""}
           </div>
+          {outside.length > 0 && e.decision === "pending" && (
+            <div className="assistant-warning scope-outside" role="alert">⚠ {outOfScopeWarning(outside)}</div>
+          )}
           {stale && <div className="assistant-warning">The timeline changed since this was proposed. Ask again. 时间线已变，请重新提问。</div>}
           {open && (
             <div className="assistant-row">

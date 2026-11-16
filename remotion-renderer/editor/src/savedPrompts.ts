@@ -7,14 +7,19 @@
 // versioned key. Export / import move it between machines as a small JSON file. A saved prompt
 // is only text: it never calls the API by itself and nothing in it is ever executed.
 
+import type { ScopeMode } from "./scope";
+
+// Type-only import: the editor's node tests load this file without a bundler.
+const isScopeMode = (v: unknown): v is ScopeMode => v === "all" || v === "selected" || v === "one";
+
 export type SavedPrompt = {
   id: string;
   /** Short name shown in the list. */
   name: string;
   /** The instruction, possibly with {场景} / {scene}. */
   text: string;
-  /** Whether "about the selected scene" was ticked when it was saved. */
-  useScene: boolean;
+  /** Default scope set when the prompt is used (全部 / 选几幕 / 当前这一幕). Absent = leave the scope as it is. */
+  scope?: ScopeMode;
   /** Optional free-text category / tag, e.g. 「拆分」「节奏」「调色」. Absent = none. */
   category?: string;
 };
@@ -36,10 +41,10 @@ export const MAX_IMPORT_CHARS = 200_000;
 
 /** Starters shown the first time (normal entries: the user can edit or delete them). */
 export const STARTERS: ReadonlyArray<PromptData> = [
-  { name: "按句子拆幕", text: "把{场景}按句子拆成几幕，每幕一句，用同一张图", useScene: true, category: "拆分" },
-  { name: "节奏快一点", text: "{场景}节奏快一点", useScene: true, category: "节奏" },
-  { name: "全部淡入转场", text: "给所有场景加淡入转场", useScene: false, category: "转场" },
-  { name: "温暖色调", text: "整体调成温暖色调", useScene: false, category: "调色" },
+  { name: "按句子拆幕", text: "把{场景}按句子拆成几幕，每幕一句，用同一张图", scope: "one", category: "拆分" },
+  { name: "节奏快一点", text: "{场景}节奏快一点", scope: "one", category: "节奏" },
+  { name: "全部淡入转场", text: "给所有场景加淡入转场", scope: "all", category: "转场" },
+  { name: "温暖色调", text: "整体调成温暖色调", scope: "all", category: "调色" },
 ];
 
 export const starterPrompts = (): SavedPrompt[] => STARTERS.map((s, i) => ({ ...s, id: `starter-${i + 1}` }));
@@ -66,10 +71,10 @@ export const cleanCategory = (category: string | undefined): string | undefined 
   return c || undefined;
 };
 
-/** Sets or removes `category` (never stored as an empty string). */
-const withCategory = <T extends object>(p: T, category: string | undefined): T & { category?: string } => {
-  const { category: _old, ...rest } = p as T & { category?: string };
-  return category ? { ...(rest as T), category } : (rest as T);
+/** Sets or removes the optional fields (never stored as empty / undefined keys). */
+const withOptional = <T extends object>(p: T, category: string | undefined, scope: ScopeMode | undefined): T & { category?: string; scope?: ScopeMode } => {
+  const { category: _c, scope: _s, ...rest } = p as T & { category?: string; scope?: ScopeMode };
+  return { ...(rest as T), ...(category ? { category } : {}), ...(scope ? { scope } : {}) };
 };
 
 export type ListResult = { ok: true; list: SavedPrompt[] } | { ok: false; error: string };
@@ -79,22 +84,25 @@ const TOO_LONG = `提示词太长（最多 ${MAX_TEXT} 字）Too long.`;
 
 export const addPrompt = (
   list: SavedPrompt[],
-  input: { name?: string; text: string; useScene: boolean; category?: string },
+  input: { name?: string; text: string; scope?: ScopeMode; category?: string },
   id: string = newPromptId(),
 ): ListResult => {
   const text = input.text.trim();
   if (!text) return { ok: false, error: EMPTY };
   if (text.length > MAX_TEXT) return { ok: false, error: TOO_LONG };
   if (list.length >= MAX_PROMPTS) return { ok: false, error: `最多保存 ${MAX_PROMPTS} 条 At most ${MAX_PROMPTS} prompts.` };
-  const added = withCategory({ id, name: cleanName(input.name, text), text, useScene: !!input.useScene }, cleanCategory(input.category));
+  const added = withOptional({ id, name: cleanName(input.name, text), text }, cleanCategory(input.category), isScopeMode(input.scope) ? input.scope : undefined);
   return { ok: true, list: [...list, added] };
 };
 
-/** Changes name, text, scene flag and/or category of one prompt. An empty name falls back to the default; an empty category removes it. */
+/**
+ * Changes name, text, scope and/or category of one prompt. An empty name falls back to the
+ * default; an empty category removes it; scope `null` removes it.
+ */
 export const updatePrompt = (
   list: SavedPrompt[],
   id: string,
-  change: { name?: string; text?: string; useScene?: boolean; category?: string },
+  change: { name?: string; text?: string; scope?: ScopeMode | null; category?: string },
 ): ListResult => {
   const old = list.find((c) => c.id === id);
   if (!old) return { ok: false, error: "Not found" };
@@ -102,9 +110,9 @@ export const updatePrompt = (
   if (!text) return { ok: false, error: EMPTY };
   if (text.length > MAX_TEXT) return { ok: false, error: TOO_LONG };
   const name = change.name === undefined ? old.name : cleanName(change.name, text);
-  const useScene = change.useScene === undefined ? old.useScene : change.useScene;
+  const scope = change.scope === undefined ? old.scope : change.scope === null ? undefined : change.scope;
   const category = change.category === undefined ? old.category : cleanCategory(change.category);
-  return { ok: true, list: list.map((c) => (c.id === id ? withCategory({ ...c, name, text, useScene }, category) : c)) };
+  return { ok: true, list: list.map((c) => (c.id === id ? withOptional({ ...c, name, text }, category, scope) : c)) };
 };
 
 export const renamePrompt = (list: SavedPrompt[], id: string, name: string): ListResult => updatePrompt(list, id, { name });
@@ -157,49 +165,27 @@ export const filterPrompts = (list: SavedPrompt[], query: string, category: stri
   });
 };
 
-// ---- The scene placeholder -----------------------------------------------------------------
-
-const PLACEHOLDER = /\{\s*(?:scene|场景)\s*\}/gi;
-
-export const needsScene = (text: string): boolean => new RegExp(PLACEHOLDER.source, "i").test(text);
-
-/** How a scene is named in an instruction: 「第 3 幕 (scene-03)」 (number as on the timeline, plus the id). */
-export const sceneLabel = (index: number, id: string): string => `第 ${index + 1} 幕 (${id})`;
-
-export type SceneRef = { index: number; id: string };
-
-export type Filled = { ok: true; text: string } | { ok: false; reason: "needsScene" };
-
-/** Replaces {场景} / {scene} with the selected scene's label. Without a scene, a text that needs one is refused. */
-export const fillPlaceholders = (text: string, scene: SceneRef | null): Filled => {
-  if (!needsScene(text)) return { ok: true, text };
-  if (!scene) return { ok: false, reason: "needsScene" };
-  return { ok: true, text: text.replace(PLACEHOLDER, sceneLabel(scene.index, scene.id)) };
-};
-
-/**
- * The reverse, for saving a sent message: scene labels made by `sceneLabel` («第 3 幕 (scene-03)»)
- * become {场景} again, so the saved prompt works for any scene. Other text is left alone.
- */
-export const generalizeScene = (text: string): string => text.replace(/第 \d+ 幕 \([A-Za-z0-9_-]{1,64}\)/g, "{场景}");
-
-export const NEEDS_SCENE_HINT = "这条提示词需要一个场景：先在时间线上选中一幕 · Select a scene first ({场景} needs one).";
-
 // ---- Storage ---------------------------------------------------------------------------------
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
 
-/** Checks one entry strictly; null if anything is wrong. `category` is optional. */
+/**
+ * Checks one entry strictly; null if anything is wrong. `category` and `scope` are optional.
+ * An older entry's `useScene` (true = about the selected scene) becomes scope "one" / "all".
+ */
 const validEntry = (v: unknown): PromptData | null => {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
-  if (typeof o.name !== "string" || typeof o.text !== "string" || typeof o.useScene !== "boolean") return null;
+  if (typeof o.name !== "string" || typeof o.text !== "string") return null;
   if (o.category !== undefined && typeof o.category !== "string") return null;
+  if (o.scope !== undefined && !isScopeMode(o.scope)) return null;
+  if (o.useScene !== undefined && typeof o.useScene !== "boolean") return null;
+  const scope: ScopeMode | undefined = isScopeMode(o.scope) ? o.scope : o.useScene === undefined ? undefined : o.useScene ? "one" : "all";
   const text = o.text.trim();
   const name = oneLine(o.name);
   const category = typeof o.category === "string" ? oneLine(o.category) : "";
   if (!text || text.length > MAX_TEXT || name.length > MAX_NAME || category.length > MAX_CATEGORY) return null;
-  return withCategory({ name: name || defaultName(text), text, useScene: o.useScene }, category || undefined);
+  return withOptional({ name: name || defaultName(text), text }, category || undefined, scope);
 };
 
 const validId = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v);
@@ -248,7 +234,7 @@ export const exportJson = (list: SavedPrompt[]): string =>
     {
       format: EXPORT_FORMAT,
       version: EXPORT_VERSION,
-      prompts: list.map(({ name, text, useScene, category }) => withCategory({ name, text, useScene }, category)),
+      prompts: list.map(({ name, text, category, scope }) => withOptional({ name, text }, category, scope)),
     },
     null,
     2,

@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   EXPORT_FORMAT, MAX_PROMPTS, MAX_NAME, MAX_TEXT, STARTERS, STORAGE_KEY,
-  addPrompt, defaultName, deletePrompt, editPromptText, exportJson, fillPlaceholders, loadPrompts, mergeImport,
-  movePrompt, needsScene, parseImport, renamePrompt, restorePrompt, savePrompts, sceneLabel, starterPrompts,
-  updatePrompt, generalizeScene, categoriesOf, filterPrompts, NO_CATEGORY, MAX_CATEGORY,
+  addPrompt, defaultName, deletePrompt, editPromptText, exportJson, loadPrompts, mergeImport,
+  movePrompt, parseImport, renamePrompt, restorePrompt, savePrompts, starterPrompts,
+  updatePrompt, categoriesOf, filterPrompts, NO_CATEGORY, MAX_CATEGORY,
   type SavedPrompt,
 } from "../editor/src/savedPrompts.ts";
+import { fillPlaceholders, generalizeScene, needsScene, sceneLabel } from "../editor/src/scope.ts";
 
 const ok = <T extends { ok: boolean }>(r: T): Extract<T, { ok: true }> => {
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -19,25 +20,25 @@ const memoryStorage = () => {
 };
 
 const three = (): SavedPrompt[] => [
-  { id: "a", name: "A", text: "one", useScene: false },
-  { id: "b", name: "B", text: "two", useScene: true },
-  { id: "c", name: "C", text: "three", useScene: false },
+  { id: "a", name: "A", text: "one", scope: "all" },
+  { id: "b", name: "B", text: "two", scope: "one" },
+  { id: "c", name: "C", text: "three", scope: "all" },
 ];
 
 test("add: default name is the first 12 characters; scene flag kept; text trimmed", () => {
-  const r = ok(addPrompt([], { text: "  把这一幕按句子拆成几幕，每幕一句，用同一张图  ", useScene: true }, "x1"));
-  assert.deepEqual(r.list, [{ id: "x1", name: "把这一幕按句子拆成几幕，…", text: "把这一幕按句子拆成几幕，每幕一句，用同一张图", useScene: true }]);
+  const r = ok(addPrompt([], { text: "  把这一幕按句子拆成几幕，每幕一句，用同一张图  ", scope: "one" }, "x1"));
+  assert.deepEqual(r.list, [{ id: "x1", name: "把这一幕按句子拆成几幕，…", text: "把这一幕按句子拆成几幕，每幕一句，用同一张图", scope: "one" }]);
   assert.equal(defaultName("短的"), "短的");
-  const named = ok(addPrompt([], { name: "  拆幕  ", text: "abc", useScene: false }, "x2"));
+  const named = ok(addPrompt([], { name: "  拆幕  ", text: "abc", scope: "all" }, "x2"));
   assert.equal(named.list[0].name, "拆幕");
-  assert.equal(ok(addPrompt([], { name: "n".repeat(100), text: "abc", useScene: false })).list[0].name.length, MAX_NAME);
+  assert.equal(ok(addPrompt([], { name: "n".repeat(100), text: "abc", scope: "all" })).list[0].name.length, MAX_NAME);
 });
 
 test("add: refuses empty, too long and a full list", () => {
-  assert.equal(addPrompt([], { text: "   ", useScene: false }).ok, false);
-  assert.equal(addPrompt([], { text: "x".repeat(MAX_TEXT + 1), useScene: false }).ok, false);
-  const full = Array.from({ length: MAX_PROMPTS }, (_, i) => ({ id: `c${i}`, name: "n", text: `t${i}`, useScene: false }));
-  assert.equal(addPrompt(full, { text: "one more", useScene: false }).ok, false);
+  assert.equal(addPrompt([], { text: "   ", scope: "all" }).ok, false);
+  assert.equal(addPrompt([], { text: "x".repeat(MAX_TEXT + 1), scope: "all" }).ok, false);
+  const full = Array.from({ length: MAX_PROMPTS }, (_, i) => ({ id: `c${i}`, name: "n", text: `t${i}`, scope: "all" }));
+  assert.equal(addPrompt(full, { text: "one more", scope: "all" }).ok, false);
 });
 
 test("rename / edit text / update scene flag", () => {
@@ -49,8 +50,8 @@ test("rename / edit text / update scene flag", () => {
   list = ok(editPromptText(list, "b", " {场景}慢一点 ")).list;
   assert.equal(list[1].text, "{场景}慢一点");
   assert.equal(list[1].name, "two"); // editing the text keeps the name
-  list = ok(updatePrompt(list, "b", { useScene: false })).list;
-  assert.equal(list[1].useScene, false);
+  list = ok(updatePrompt(list, "b", { scope: "all" })).list;
+  assert.equal(list[1].scope, "all");
   assert.equal(editPromptText(list, "b", "").ok, false);
   assert.equal(renamePrompt(list, "zzz", "x").ok, false);
   assert.deepEqual(list.map((c) => c.id), ["a", "b", "c"]);
@@ -94,7 +95,7 @@ test("starters: 3-5 Chinese prompts, valid entries with unique ids", () => {
   const s = starterPrompts();
   assert.equal(new Set(s.map((c) => c.id)).size, s.length);
   assert.ok(s.some((c) => c.text === "把{场景}按句子拆成几幕，每幕一句，用同一张图"));
-  for (const c of s) assert.equal(needsScene(c.text), c.useScene);
+  for (const c of s) assert.equal(needsScene(c.text), c.scope === "one");
 });
 
 test("storage: nothing saved = null; round trip; broken data and throwing storage are survived", () => {
@@ -107,8 +108,8 @@ test("storage: nothing saved = null; round trip; broken data and throwing storag
   assert.deepEqual(loadPrompts(st), []); // all deleted stays empty (no starters coming back)
   st.setItem(STORAGE_KEY, "{not json");
   assert.equal(loadPrompts(st), null);
-  st.setItem(STORAGE_KEY, JSON.stringify([{ id: "a", name: "A", text: "ok", useScene: false }, { id: "b", text: 5 }, "x"]));
-  assert.deepEqual(loadPrompts(st), [{ id: "a", name: "A", text: "ok", useScene: false }]);
+  st.setItem(STORAGE_KEY, JSON.stringify([{ id: "a", name: "A", text: "ok", scope: "all" }, { id: "b", text: 5 }, "x"]));
+  assert.deepEqual(loadPrompts(st), [{ id: "a", name: "A", text: "ok", scope: "all" }]);
   const throwing = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("quota"); } };
   assert.equal(loadPrompts(throwing), null);
   assert.equal(savePrompts(throwing, three()), false);
@@ -119,9 +120,9 @@ test("storage: nothing saved = null; round trip; broken data and throwing storag
 test("storage: duplicate or odd ids get fresh ones", () => {
   const st = memoryStorage();
   st.setItem(STORAGE_KEY, JSON.stringify([
-    { id: "a", name: "A", text: "1", useScene: false },
-    { id: "a", name: "B", text: "2", useScene: false },
-    { id: "<img>", name: "C", text: "3", useScene: false },
+    { id: "a", name: "A", text: "1", scope: "all" },
+    { id: "a", name: "B", text: "2", scope: "all" },
+    { id: "<img>", name: "C", text: "3", scope: "all" },
   ]));
   const list = loadPrompts(st)!;
   assert.equal(list.length, 3);
@@ -137,12 +138,12 @@ test("export / import round trip (ids not exported)", () => {
   assert.equal(data.version, 1);
   assert.equal("id" in data.prompts[0], false);
   const parsed = ok(parseImport(json));
-  assert.deepEqual(parsed.prompts, three().map(({ name, text, useScene }) => ({ name, text, useScene })));
+  assert.deepEqual(parsed.prompts, three().map(({ name, text, scope }) => ({ name, text, scope })));
 });
 
 test("import is strict: wrong format, version, types, lengths or count refuse the whole file", () => {
   const file = (commands: unknown, extra: object = {}) => JSON.stringify({ format: EXPORT_FORMAT, version: 1, prompts: commands, ...extra });
-  const good = { name: "n", text: "t", useScene: false };
+  const good = { name: "n", text: "t", scope: "all" };
   assert.equal(parseImport("nope").ok, false);
   assert.equal(parseImport("[]").ok, false);
   assert.equal(parseImport(JSON.stringify({ format: "other", version: 1, prompts: [] })).ok, false);
@@ -163,11 +164,11 @@ test("import is strict: wrong format, version, types, lengths or count refuse th
 test("merge import: appends, skips same text, stops at the maximum", () => {
   let n = 0;
   const id = () => `new${++n}`;
-  const r = mergeImport(three(), [{ name: "X", text: "two", useScene: false }, { name: "Y", text: "four", useScene: true }], id);
+  const r = mergeImport(three(), [{ name: "X", text: "two", scope: "all" }, { name: "Y", text: "four", scope: "one" }], id);
   assert.equal(r.added, 1);
   assert.equal(r.skipped, 1);
   assert.deepEqual(r.list.map((c) => c.id), ["a", "b", "c", "new1"]);
-  const many = Array.from({ length: MAX_PROMPTS }, (_, i) => ({ name: "n", text: `m${i}`, useScene: false }));
+  const many = Array.from({ length: MAX_PROMPTS }, (_, i) => ({ name: "n", text: `m${i}`, scope: "all" }));
   const capped = mergeImport(three(), many, id);
   assert.equal(capped.list.length, MAX_PROMPTS);
   assert.equal(capped.added, MAX_PROMPTS - 3);
@@ -178,12 +179,13 @@ test("saving a sent message can turn its scene label back into {场景}", () => 
   assert.ok(sent.ok);
   assert.equal(generalizeScene(sent.text), "把{场景}按句子拆成几幕");
   assert.equal(generalizeScene("第 3 幕也这样"), "第 3 幕也这样"); // the user's own words are left alone
+  assert.equal(generalizeScene("把第 2 幕 (scene-02)、第 5 幕 (scene-05)放慢"), "把{场景}放慢"); // a list is one placeholder
 });
 
 test("category is optional: set, trimmed, capped, removed by empty; old entries without it stay valid", () => {
-  let list = ok(addPrompt([], { text: "节奏快一点", useScene: false, category: "  节奏 " }, "p1")).list;
+  let list = ok(addPrompt([], { text: "节奏快一点", scope: "all", category: "  节奏 " }, "p1")).list;
   assert.equal(list[0].category, "节奏");
-  list = ok(addPrompt(list, { text: "无分类", useScene: false, category: "   " }, "p2")).list;
+  list = ok(addPrompt(list, { text: "无分类", scope: "all", category: "   " }, "p2")).list;
   assert.equal("category" in list[1], false);
   list = ok(updatePrompt(list, "p1", { category: "x".repeat(50) })).list;
   assert.equal(list[0].category!.length, MAX_CATEGORY);
@@ -194,27 +196,27 @@ test("category is optional: set, trimmed, capped, removed by empty; old entries 
   assert.equal(list[0].category, "调色");
   // Stored items from before categories existed still load.
   const st = memoryStorage();
-  st.setItem(STORAGE_KEY, JSON.stringify([{ id: "old", name: "O", text: "old one", useScene: false }, { id: "n", name: "N", text: "x", useScene: false, category: "拆分" }]));
-  assert.deepEqual(loadPrompts(st), [{ id: "old", name: "O", text: "old one", useScene: false }, { id: "n", name: "N", text: "x", useScene: false, category: "拆分" }]);
-  st.setItem(STORAGE_KEY, JSON.stringify([{ id: "bad", name: "B", text: "x", useScene: false, category: 3 }]));
+  st.setItem(STORAGE_KEY, JSON.stringify([{ id: "old", name: "O", text: "old one", scope: "all" }, { id: "n", name: "N", text: "x", scope: "all", category: "拆分" }]));
+  assert.deepEqual(loadPrompts(st), [{ id: "old", name: "O", text: "old one", scope: "all" }, { id: "n", name: "N", text: "x", scope: "all", category: "拆分" }]);
+  st.setItem(STORAGE_KEY, JSON.stringify([{ id: "bad", name: "B", text: "x", scope: "all", category: 3 }]));
   assert.deepEqual(loadPrompts(st), []);
 });
 
 test("export / import keep the category; wrong category type or length refuses the file", () => {
-  const list: SavedPrompt[] = [{ id: "a", name: "A", text: "one", useScene: false, category: "拆分" }, { id: "b", name: "B", text: "two", useScene: true }];
+  const list: SavedPrompt[] = [{ id: "a", name: "A", text: "one", scope: "all", category: "拆分" }, { id: "b", name: "B", text: "two", scope: "one" }];
   const parsed = ok(parseImport(exportJson(list)));
-  assert.deepEqual(parsed.prompts, [{ name: "A", text: "one", useScene: false, category: "拆分" }, { name: "B", text: "two", useScene: true }]);
+  assert.deepEqual(parsed.prompts, [{ name: "A", text: "one", scope: "all", category: "拆分" }, { name: "B", text: "two", scope: "one" }]);
   const file = (p: unknown) => JSON.stringify({ format: EXPORT_FORMAT, version: 1, prompts: [p] });
-  assert.equal(parseImport(file({ name: "n", text: "t", useScene: false, category: 1 })).ok, false);
-  assert.equal(parseImport(file({ name: "n", text: "t", useScene: false, category: "x".repeat(MAX_CATEGORY + 1) })).ok, false);
+  assert.equal(parseImport(file({ name: "n", text: "t", scope: "all", category: 1 })).ok, false);
+  assert.equal(parseImport(file({ name: "n", text: "t", scope: "all", category: "x".repeat(MAX_CATEGORY + 1) })).ok, false);
 });
 
 test("search by name / text / category, every word must match; filter by category", () => {
   const list: SavedPrompt[] = [
-    { id: "a", name: "按句子拆幕", text: "把{场景}按句子拆成几幕", useScene: true, category: "拆分" },
-    { id: "b", name: "Faster", text: "{场景}节奏快一点", useScene: true, category: "节奏" },
-    { id: "c", name: "温暖色调", text: "整体调成温暖色调", useScene: false, category: "调色" },
-    { id: "d", name: "其他", text: "加字幕", useScene: false },
+    { id: "a", name: "按句子拆幕", text: "把{场景}按句子拆成几幕", scope: "one", category: "拆分" },
+    { id: "b", name: "Faster", text: "{场景}节奏快一点", scope: "one", category: "节奏" },
+    { id: "c", name: "温暖色调", text: "整体调成温暖色调", scope: "all", category: "调色" },
+    { id: "d", name: "其他", text: "加字幕", scope: "all" },
   ];
   const ids = (l: SavedPrompt[]) => l.map((p) => p.id);
   assert.deepEqual(ids(filterPrompts(list, "")), ["a", "b", "c", "d"]);
@@ -226,5 +228,31 @@ test("search by name / text / category, every word must match; filter by categor
   assert.deepEqual(ids(filterPrompts(list, "", "拆分")), ["a"]);
   assert.deepEqual(ids(filterPrompts(list, "节奏", "拆分")), []);
   assert.deepEqual(ids(filterPrompts(list, "", NO_CATEGORY)), ["d"]);
-  assert.deepEqual(categoriesOf([...list, { id: "e", name: "e", text: "e", useScene: false, category: "拆分" }]), ["拆分", "节奏", "调色"]);
+  assert.deepEqual(categoriesOf([...list, { id: "e", name: "e", text: "e", scope: "all", category: "拆分" }]), ["拆分", "节奏", "调色"]);
+});
+
+test("default scope is optional; older entries with useScene become one / all; a wrong scope is refused", () => {
+  let list = ok(addPrompt([], { text: "无范围" }, "p1")).list;
+  assert.equal("scope" in list[0], false);
+  list = ok(updatePrompt(list, "p1", { scope: "selected" })).list;
+  assert.equal(list[0].scope, "selected");
+  list = ok(updatePrompt(list, "p1", { name: "n" })).list;
+  assert.equal(list[0].scope, "selected"); // other edits keep it
+  list = ok(updatePrompt(list, "p1", { scope: null })).list;
+  assert.equal("scope" in list[0], false);
+  const st = memoryStorage();
+  st.setItem(STORAGE_KEY, JSON.stringify([
+    { id: "a", name: "A", text: "{场景}慢一点", useScene: true },
+    { id: "b", name: "B", text: "all", useScene: false },
+    { id: "c", name: "C", text: "bad", scope: "some" },
+  ]));
+  assert.deepEqual(loadPrompts(st), [
+    { id: "a", name: "A", text: "{场景}慢一点", scope: "one" },
+    { id: "b", name: "B", text: "all", scope: "all" },
+  ]);
+  const file = (p: unknown) => JSON.stringify({ format: EXPORT_FORMAT, version: 1, prompts: [p] });
+  assert.equal(parseImport(file({ name: "n", text: "t", scope: "everything" })).ok, false);
+  assert.deepEqual(ok(parseImport(file({ name: "n", text: "t", scope: "selected" }))).prompts, [{ name: "n", text: "t", scope: "selected" }]);
+  // useScene is not written any more.
+  assert.equal(exportJson([{ id: "x", name: "n", text: "t", scope: "one" }]).includes("useScene"), false);
 });

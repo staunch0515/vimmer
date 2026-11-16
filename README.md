@@ -920,7 +920,7 @@ failing op and the reason, and goes back to Claude for a correction, at most twi
   missing.
 
 **In the editor.** The Studio has an **Assistant** tab: a chat with Claude. Type a message,
-optionally keep the selected scene as context, and press **Send 发送** (⌘↵). Each answer shows
+choose its **范围 scope** (below), and press **Send 发送** (⌘↵). Each answer shows
 the explanation (or Claude's question), the change summary, warnings, which model answered and
 the cost. The model is picked under **模型 Model** at the top of the panel (default Claude Opus
 5.5) and is used for your next message; you can switch it mid-chat (each message is a separate
@@ -940,15 +940,27 @@ panel says when older ones are no longer sent. **新对话 New chat** starts ove
 kept in memory only and is cleared when you open another file or project. Editing the
 timeline by hand between messages is fine: the next message uses the timeline as it is.
 
+**范围 Scope.** Above the message box: **全部** (all scenes: sent as typed), **当前这一幕** (the
+scene selected on the timeline is sent as the request's scene, as the old "about the selected
+scene" checkbox did; greyed out with no scene selected, and then the message goes to all scenes)
+or **选几幕** (tick several scenes in a small list: number, id, first words; it starts with the
+scene selected on the timeline). For 选几幕 no scene is sent; instead one line goes before your
+text, 「只修改这些场景：第 2 幕 (scene-02)、第 3 幕 (scene-03)。其它场景不要改。」, shown dimmed in
+your chat bubble; your words are otherwise unchanged. If a proposal changes or removes scenes
+outside the scope (by the scene ids in its change summary; new scenes, e.g. from a split, do not
+count), the card warns 「这个方案改动了范围以外的场景：…」 before you decide; Accept still works.
+
 **提示词 Prompts (提示词管理).** Prompts you repeat can be saved: **☆ 收藏 Save** on any of your
 messages in the chat, or **☆ 保存为提示词** under the message box (saves the text in the box).
 You can give it a short name (default: its first 12 characters), an optional category (free
-text, e.g. 拆分 / 节奏 / 调色), and it remembers whether "about the selected scene" was ticked.
+text, e.g. 拆分 / 节奏 / 调色) and an optional default scope (全部 / 选几幕 / 当前这一幕).
 **提示词 ▾** above the message box lists them: click one to put it in the box (edit, then Send as
-usual), or **▶** (or Shift+click) to send it at once. Write **{场景}** (or `{scene}`) where the
-scene goes: it becomes the selected scene, e.g. 「把{场景}按句子拆成几幕」 → 「把第 3 幕
-(scene-03)按句子拆成几幕」; with no scene selected, nothing is sent and a hint asks you to select
-one. When saving a sent message, one click turns its 「第 3 幕 (scene-03)」 back into {场景}.
+usual), or **▶** (or Shift+click) to send it at once; a prompt with a default scope sets the
+scope. Write **{场景}** (or `{scene}`) where the scene goes; on Send it becomes the scope: the
+selected scene (「把{场景}按句子拆成几幕」 → 「把第 3 幕 (scene-03)按句子拆成几幕」), the ticked
+scenes joined by 「、」, or 「所有场景」 for 全部. With 当前这一幕 and no scene selected, or 选几幕
+with nothing ticked, nothing is sent and a hint says what to do. Saving a sent message saves
+what you typed ({场景} kept) and the scope it was sent with.
 **提示词管理** (the manager, inside the Assistant tab) has search (name, text and category; every
 word must match), a category filter (or 未分类 for prompts without one), **＋ 新建 New**, rename /
 edit (✎), delete (✕, with 撤销 Undo), move (↑ ↓; clear the search and filter to reorder),
