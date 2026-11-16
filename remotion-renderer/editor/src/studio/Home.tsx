@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorText, useStudioApi } from "./api";
-import { cardHue, filterProjects, formatDuration, formatWhen } from "./format";
+import { cardHue, filterProjects, formatDuration, formatWhen, importSummary } from "./format";
 import { GenerateDialog } from "./GenerateDialog";
 import { Modal } from "./Modal";
 import type { Lang, OpenedProject, Orientation, ProjectSummary, StudioSettings } from "./types";
@@ -208,9 +208,10 @@ export const Home = ({ onOpen, onOpenFile, onBack, currentDir }: Props) => {
       const path = await api.pickTimelineFile();
       if (!path) return;
       const got = await api.importTimeline(path);
-      const parts = [`Imported “${got.project.name}” with ${got.copied.length} file${got.copied.length === 1 ? "" : "s"}.`];
-      if (got.missing.length) parts.push(`Not found: ${got.missing.join(", ")}.`);
-      setNotice(parts.join(" "));
+      const said = importSummary(got);
+      // Missing files are shown as a problem (red), one per line: the render fails without them.
+      if (said.problem) setError(said.text);
+      else setNotice(said.text);
     });
   const rename = (dir: string, name: string) =>
     act(dir, async () => {
@@ -279,7 +280,7 @@ export const Home = ({ onOpen, onOpenFile, onBack, currentDir }: Props) => {
       <main className="st-home-body">
         {error && (
           <div className="st-banner bad" role="alert">
-            <span>{error}</span>
+            <span style={{ whiteSpace: "pre-line" }}>{error}</span>
             <button className="btn ghost small" onClick={() => setError(null)}>
               Dismiss
             </button>
@@ -287,7 +288,7 @@ export const Home = ({ onOpen, onOpenFile, onBack, currentDir }: Props) => {
         )}
         {notice && (
           <div className="st-banner" role="status">
-            <span>{notice}</span>
+            <span style={{ whiteSpace: "pre-line" }}>{notice}</span>
             <button className="btn ghost small" onClick={() => setNotice(null)}>
               Dismiss
             </button>

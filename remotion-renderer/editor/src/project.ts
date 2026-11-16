@@ -83,6 +83,10 @@ export const saveTimeline = async (
   return { path: target };
 };
 
+/** Asks where to save a copy of the timeline (desktop only). Resolves to null when cancelled. */
+export const pickSavePath = async (defaultPath: string): Promise<string | null> =>
+  (await save({ defaultPath, filters: FILTERS })) ?? null;
+
 /** Confirms before discarding unsaved changes. Uses the native dialog in the desktop app. */
 export const confirmDiscard = async (message: string): Promise<boolean> => {
   if (inTauri()) return ask(message, { title: "Vimmer Studio", kind: "warning" });

@@ -117,8 +117,65 @@ pub struct ImportedProject {
     pub project: ProjectSummary,
     /// Files copied into the project.
     pub copied: Vec<String>,
-    /// Paths the timeline names that were found neither next to it nor in the public folder.
+    /// Paths the timeline names that were found nowhere: not next to it (nor in its `-files`
+    /// folder), not in the public folder, not in another project.
     pub missing: Vec<String>,
+    /// Files that were not next to the timeline but were found in another project (an export made
+    /// before exports carried their files): `{ path, project }`, also listed in `copied`.
+    pub borrowed: Vec<BorrowedFile>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BorrowedFile {
+    pub path: String,
+    /// The name of the project it was copied from.
+    pub project: String,
+}
+
+/// What "Save as" from a project wrote: the timeline, and the project files it names copied into
+/// the `-files` folder next to it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedTimeline {
+    pub path: String,
+    /// The folder the files went to (null when the timeline names no project file).
+    pub files_dir: Option<String>,
+    pub copied: Vec<String>,
+    /// Paths the timeline names that are not in the project (nor the public folder).
+    pub missing: Vec<String>,
+}
+
+/// The folder next to an exported timeline that holds the project files it names:
+/// `v04.json` → `v04-files/` (inside, the files keep their project paths, e.g.
+/// `v04-files/assets/recordings/voiceover-1.wav`).
+pub fn export_files_dir(json: &Path) -> PathBuf {
+    let name = json.file_name().and_then(|n| n.to_str()).unwrap_or("timeline.json");
+    let stem = name.strip_suffix(".json").unwrap_or(name);
+    json.with_file_name(format!("{stem}-files"))
+}
+
+/// A relative path that stays inside the folder it is joined to (no `..`, no root).
+fn stays_inside(rel: &str) -> bool {
+    Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+/// The local relative asset paths a timeline names, in order, each once.
+fn local_assets(value: &mut Value) -> Vec<String> {
+    let mut wanted: Vec<String> = Vec::new();
+    for_each_asset(value, &mut |p, _| {
+        if is_local_relative(p) && !wanted.contains(p) {
+            wanted.push(p.clone());
+        }
+    });
+    wanted
+}
+
+fn same_file_bytes(a: &Path, b: &Path) -> bool {
+    match (fs::metadata(a), fs::metadata(b)) {
+        (Ok(x), Ok(y)) if x.len() == y.len() => fs::read(a).ok() == fs::read(b).ok(),
+        _ => false,
+    }
 }
 
 /// `studio.json` in the app's config folder.
@@ -527,24 +584,28 @@ impl Studio {
             .and_then(|s| serde_json::from_str::<ProjectMeta>(&s).ok())
             .and_then(|m| m.lang);
 
-        let mut wanted: Vec<String> = Vec::new();
-        for_each_asset(&mut value, &mut |p, _| {
-            if is_local_relative(p) && !wanted.contains(p) {
-                wanted.push(p.clone());
-            }
-        });
+        let wanted = local_assets(&mut value);
+        let others = self.list();
         let dir = self.create_with(&name, &raw, lang.as_deref(), "imported", Some(path))?;
+        let files_dir = export_files_dir(file);
         let mut copied = Vec::new();
         let mut missing = Vec::new();
+        let mut borrowed = Vec::new();
         for rel in wanted {
-            let inside = Path::new(&rel).components().all(|c| matches!(c, std::path::Component::Normal(_)));
+            let inside = stays_inside(&rel);
             let local = folder.join(&rel);
+            let exported = files_dir.join(&rel);
             let source = if local.is_file() {
                 local
+            } else if inside && exported.is_file() {
+                exported
             } else if rel.starts_with(MUSIC_LIBRARY_PREFIX) {
                 continue;
             } else if self.public_dir.join(&rel).is_file() {
                 self.public_dir.join(&rel)
+            } else if let Some((from, project)) = inside.then(|| find_in_projects(&others, &rel)).flatten() {
+                borrowed.push(BorrowedFile { path: rel.clone(), project });
+                from
             } else {
                 missing.push(rel);
                 continue;
@@ -562,7 +623,47 @@ impl Studio {
             copied.push(rel);
         }
         let project = self.touch_thumbnail(&dir)?;
-        Ok(ImportedProject { project, copied, missing })
+        Ok(ImportedProject { project, copied, missing, borrowed })
+    }
+
+    /// "Save as" from a project: writes the timeline to `path` and copies the project files it
+    /// names (recordings, voice-over, images, …) into the `-files` folder next to it, so the
+    /// export can be imported again, on this Mac or another, with its files.
+    pub fn export_timeline(&self, dir: &str, path: &str, contents: &str) -> Result<ExportedTimeline, String> {
+        let dir = self.project(dir)?;
+        let target = Path::new(path);
+        let mut value: Value = serde_json::from_str(contents).map_err(|e| format!("The timeline is not JSON: {e}"))?;
+        write_atomic(target, contents.as_bytes())?;
+        let files_dir = export_files_dir(target);
+        let mut copied = Vec::new();
+        let mut missing = Vec::new();
+        for rel in local_assets(&mut value) {
+            let source = dir.join(&rel);
+            if !stays_inside(&rel) || !source.is_file() {
+                // Library music and other public files stay where the app finds them on import.
+                if !rel.starts_with(MUSIC_LIBRARY_PREFIX) && !self.public_dir.join(&rel).is_file() {
+                    missing.push(rel);
+                }
+                continue;
+            }
+            let to = files_dir.join(&rel);
+            if to.canonicalize().ok() == source.canonicalize().ok() {
+                continue; // saved over the project itself
+            }
+            if !same_file_bytes(&source, &to) {
+                if let Some(parent) = to.parent() {
+                    fs::create_dir_all(parent).map_err(|e| format!("Could not create {}: {e}", parent.display()))?;
+                }
+                fs::copy(&source, &to).map_err(|e| format!("Could not copy {}: {e}", source.display()))?;
+            }
+            copied.push(rel);
+        }
+        Ok(ExportedTimeline {
+            path: path.to_string(),
+            files_dir: (!copied.is_empty()).then(|| files_dir.display().to_string()),
+            copied,
+            missing,
+        })
     }
 
     /// Refreshes the thumbnail when what it should show has changed, and returns the summary.
@@ -573,6 +674,30 @@ impl Studio {
         }
         Ok(summary(dir, &meta))
     }
+}
+
+/// A file an imported timeline names but that did not come with it, looked up in the other
+/// projects: those whose own timeline names the same path and have the file. Used only when every
+/// such project has the same bytes (recordings are numbered per project, so `voiceover-1.wav` may
+/// be a different take elsewhere); returns the file and the project's name.
+fn find_in_projects(projects: &[ProjectSummary], rel: &str) -> Option<(PathBuf, String)> {
+    let mut found: Vec<(PathBuf, String)> = Vec::new();
+    for p in projects {
+        let dir = Path::new(&p.dir);
+        let file = dir.join(rel);
+        if !file.is_file() {
+            continue;
+        }
+        let names = fs::read_to_string(dir.join(TIMELINE_FILE))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .is_some_and(|mut v| local_assets(&mut v).iter().any(|r| r == rel));
+        if names {
+            found.push((file, p.name.clone()));
+        }
+    }
+    let (first, rest) = found.split_first()?;
+    rest.iter().all(|(f, _)| same_file_bytes(&first.0, f)).then(|| first.clone())
 }
 
 /// Moves a file or folder to the Trash: `/usr/bin/trash` (macOS 15 and later), else Finder.
@@ -689,6 +814,12 @@ pub async fn rename_project(app: AppHandle, dir: String, name: String) -> Result
 pub async fn duplicate_project(app: AppHandle, dir: String) -> Result<ProjectSummary, String> {
     let studio = studio(&app)?;
     blocking(move || studio.duplicate(&dir)).await
+}
+
+#[tauri::command]
+pub async fn export_timeline(app: AppHandle, dir: String, path: String, contents: String) -> Result<ExportedTimeline, String> {
+    let studio = studio(&app)?;
+    blocking(move || studio.export_timeline(&dir, &path, &contents)).await
 }
 
 #[tauri::command]
@@ -980,5 +1111,87 @@ pub(crate) mod tests {
         let err = fx.studio.import_timeline(&old.join("notes.json").display().to_string()).unwrap_err();
         assert!(err.contains("not a timeline"), "{err}");
         assert_eq!(fx.studio.list().len(), 1, "a failed import leaves no project");
+    }
+
+    const VO_TIMELINE: &str = r#"{ "fps": 30, "resolution": {"width": 1920, "height": 1080},
+  "scenes": [
+    {"id": "intro", "duration_ms": 2000, "image": "assets/pic.png", "audio": {"source": "assets/recordings/intro-1.wav", "offset_ms": 0}}
+  ],
+  "voiceover": [{"id": "vo1", "source": "assets/recordings/voiceover-1.wav", "start_ms": 0}],
+  "music": {"source": "assets/music/library/calm.mp3"} }"#;
+
+    /// A project with the files VO_TIMELINE names (voice-over, a scene recording, a picture).
+    fn project_with_voiceover(fx: &Fixture, name: &str, take: &[u8]) -> PathBuf {
+        let dir = fx.studio.create_with(name, VO_TIMELINE, None, "new", None).unwrap();
+        fs::create_dir_all(dir.join("assets/recordings")).unwrap();
+        fs::write(dir.join("assets/recordings/voiceover-1.wav"), take).unwrap();
+        fs::write(dir.join("assets/recordings/intro-1.wav"), b"intro take").unwrap();
+        fs::write(dir.join("assets/pic.png"), b"picture").unwrap();
+        dir
+    }
+
+    #[test]
+    fn save_as_from_a_project_carries_its_files_and_imports_with_them() {
+        let fx = Fixture::new("export");
+        fs::create_dir_all(fx.studio.public_dir.join("assets/music/library")).unwrap();
+        fs::write(fx.studio.public_dir.join("assets/music/library/calm.mp3"), b"music").unwrap();
+        let v04 = project_with_voiceover(&fx, "V04", b"the voice-over");
+        let downloads = fx.root.join("Downloads");
+        fs::create_dir_all(&downloads).unwrap();
+        let json = downloads.join("v04timeline.json");
+
+        let out = fx.studio.export_timeline(&v04.display().to_string(), &json.display().to_string(), VO_TIMELINE).unwrap();
+        assert_eq!(out.copied, ["assets/pic.png", "assets/recordings/intro-1.wav", "assets/recordings/voiceover-1.wav"]);
+        assert!(out.missing.is_empty(), "{:?}", out.missing);
+        let files = downloads.join("v04timeline-files");
+        assert_eq!(out.files_dir.as_deref(), Some(files.display().to_string().as_str()));
+        assert_eq!(fs::read_to_string(&json).unwrap(), VO_TIMELINE);
+        assert_eq!(fs::read(files.join("assets/recordings/voiceover-1.wav")).unwrap(), b"the voice-over");
+        assert!(!files.join("assets/music").exists(), "library music stays in the app");
+        assert!(!downloads.join("assets").exists(), "nothing is written loose next to the JSON");
+        // Saving again over the same export is fine.
+        fx.studio.export_timeline(&v04.display().to_string(), &json.display().to_string(), VO_TIMELINE).unwrap();
+
+        // The project goes away: the export alone brings everything.
+        fs::remove_dir_all(&v04).unwrap();
+        let got = fx.studio.import_timeline(&json.display().to_string()).unwrap();
+        assert_eq!(got.copied, ["assets/pic.png", "assets/recordings/intro-1.wav", "assets/recordings/voiceover-1.wav"]);
+        assert!(got.missing.is_empty() && got.borrowed.is_empty(), "{got:?}");
+        let dir = Path::new(&got.project.dir);
+        assert_eq!(fs::read(dir.join("assets/recordings/voiceover-1.wav")).unwrap(), b"the voice-over");
+    }
+
+    #[test]
+    fn importing_an_old_export_finds_its_files_in_the_project_it_came_from() {
+        let fx = Fixture::new("borrow");
+        project_with_voiceover(&fx, "V04", b"the voice-over");
+        let downloads = fx.root.join("Downloads");
+        fs::create_dir_all(&downloads).unwrap();
+        // Written by the old "Save as": the JSON only.
+        let json = downloads.join("v04timeline.json");
+        fs::write(&json, VO_TIMELINE).unwrap();
+
+        let got = fx.studio.import_timeline(&json.display().to_string()).unwrap();
+        assert!(got.missing.is_empty(), "{:?}", got.missing);
+        assert_eq!(got.borrowed.len(), 3);
+        assert!(got.borrowed.contains(&BorrowedFile { path: "assets/recordings/voiceover-1.wav".into(), project: "V04".into() }));
+        assert_eq!(fs::read(Path::new(&got.project.dir).join("assets/recordings/voiceover-1.wav")).unwrap(), b"the voice-over");
+
+        // Two projects with a different voiceover-1.wav: which one is meant is unknown, so it is
+        // reported missing rather than guessed. The files they share are still found.
+        project_with_voiceover(&fx, "V05", b"another take");
+        let got = fx.studio.import_timeline(&json.display().to_string()).unwrap();
+        assert_eq!(got.missing, ["assets/recordings/voiceover-1.wav"]);
+        assert_eq!(got.borrowed.len(), 2);
+
+        // A project that only has a file of that name, without naming it, does not count.
+        let fx = Fixture::new("borrow-unnamed");
+        let other = fx.studio.create_with("Other", r#"{"fps":30,"resolution":{"width":1920,"height":1080},"scenes":[]}"#, None, "new", None).unwrap();
+        fs::create_dir_all(other.join("assets/recordings")).unwrap();
+        fs::write(other.join("assets/recordings/voiceover-1.wav"), b"unrelated").unwrap();
+        let json = fx.root.join("v.json");
+        fs::write(&json, VO_TIMELINE).unwrap();
+        let got = fx.studio.import_timeline(&json.display().to_string()).unwrap();
+        assert!(got.missing.contains(&"assets/recordings/voiceover-1.wav".to_string()), "{got:?}");
     }
 }

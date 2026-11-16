@@ -37,6 +37,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   duplicate_project: (a) => fake.duplicateProject(a.dir),
   trash_project: (a) => fake.trashProject(a.dir),
   import_timeline: (a) => fake.importTimeline(a.path),
+  export_timeline: (a) => fake.exportTimeline(a.dir, a.path, a.contents),
   reveal_path: () => null,
   list_assets: (a) => fake.listAssets(a.dir, a.timelineJson),
   import_assets: (a) => fake.importAssets(a.dir, a.sources),

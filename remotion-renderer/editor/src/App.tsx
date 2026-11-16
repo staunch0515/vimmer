@@ -6,7 +6,8 @@ import { checkTimeline, emptyScene, frameCount, frameToMs, timecode, totalMs, AL
 import { reducer, type Action, type EditorState } from "./state";
 import { mergeKey, mergesInput } from "./history";
 import { boxOf, nudgeBox } from "./subtitleBox";
-import { baseName, confirmDiscard, guardClose, parseTimeline, pickToOpen, saveTimeline, serialize, setWindowTitle } from "./project";
+import { baseName, confirmDiscard, guardClose, parseTimeline, pickSavePath, pickToOpen, saveTimeline, serialize, setWindowTitle } from "./project";
+import { exportSummary } from "./studio/format";
 import { Toolbar } from "./components/Toolbar";
 import { Preview } from "./components/Preview";
 import { Inspector, type InspectorTab } from "./components/Inspector";
@@ -129,6 +130,7 @@ export const App = () => {
   // A recovered draft starts as "different", so it reads as unsaved until the user saves it.
   const [saved, setSaved] = useState<string>(draft ? "" : serialize(startTimeline));
   const [error, setError] = useState<string | null>(null);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
   const [render, setRender] = useState<RenderView>({ status: "idle" });
   const [renderOptions, setRenderOptions] = useState<RenderOptions>(() => loadOptions(storage(), null));
   const [renderDefaults, setRenderDefaults] = useState<RenderDefaults>(FALLBACK_DEFAULTS);
@@ -402,7 +404,17 @@ export const App = () => {
         setError(null);
         return true;
       }
-      // In a project, "Save as" writes a copy of the timeline elsewhere; the project stays open.
+      // In a project, "Save as" writes a copy of the timeline elsewhere, with the project files it
+      // names (recordings, voice-over, pictures) in a "-files" folder next to it, so the copy can
+      // be imported again with them. The project stays open.
+      if (project && inTauri()) {
+        const target = await pickSavePath(`${project.name}.json`);
+        if (!target) return false;
+        const said = exportSummary(await tauriApi.exportTimeline(project.dir, target, text));
+        setError(said.problem ? said.text : null);
+        setSaveNote(said.problem ? null : said.text);
+        return true;
+      }
       const result = await saveTimeline(text, { path: project ? null : path }, { saveAs });
       if (!result) return false;
       if (project) return true;
@@ -723,8 +735,14 @@ export const App = () => {
       />
       {error && (
         <div className="problems error" role="alert">
-          <strong>{error}</strong>
+          <strong style={{ whiteSpace: "pre-line" }}>{error}</strong>
           <button className="btn ghost small" onClick={() => setError(null)}>Dismiss</button>
+        </div>
+      )}
+      {saveNote && (
+        <div className="problems" role="status" data-save-note>
+          <span style={{ whiteSpace: "pre-line" }}>{saveNote}</span>
+          <button className="btn ghost small" onClick={() => setSaveNote(null)}>Dismiss</button>
         </div>
       )}
       {problems.length > 0 && (

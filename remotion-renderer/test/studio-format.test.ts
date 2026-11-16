@@ -11,6 +11,8 @@ import {
   formatDuration,
   formatUsd,
   formatWhen,
+  exportSummary,
+  importSummary,
   kindOfFile,
   usedByLabel,
 } from "../editor/src/studio/format.ts";
@@ -99,4 +101,31 @@ test("file kinds follow the extensions the project accepts", () => {
 test("a title card's colour is stable for its name", () => {
   assert.equal(cardHue("Demo"), cardHue("Demo"));
   assert.ok(cardHue("Demo") >= 0 && cardHue("Demo") < 360);
+});
+
+test("an import lists each missing file as a problem, and says which files came from another project", () => {
+  const p = { ...project("v04timeline"), dir: "/p/v04timeline" };
+  const ok = importSummary({ project: p, copied: ["assets/a.png"], missing: [], borrowed: [] });
+  assert.deepEqual(ok, { text: "Imported “v04timeline” with 1 file.", problem: false });
+  const got = importSummary({
+    project: p,
+    copied: ["assets/a.png", "assets/recordings/intro-1.wav"],
+    missing: ["assets/recordings/voiceover-1.wav", "assets/b.png"],
+    borrowed: [{ path: "assets/recordings/intro-1.wav", project: "V04" }],
+  });
+  assert.equal(got.problem, true);
+  const lines = got.text.split("\n");
+  assert.equal(lines[0], "Imported “v04timeline” with 2 files.");
+  assert.match(lines[1], /copied from project “V04”: 1 file\./);
+  assert.match(lines[2], /缺少 2 个文件/);
+  assert.deepEqual(lines.slice(3, 5), ["  • assets/recordings/voiceover-1.wav", "  • assets/b.png"]);
+  assert.match(lines[5], /\/p\/v04timeline/);
+});
+
+test("save as from a project says where its files went", () => {
+  const out = exportSummary({ path: "/d/v.json", filesDir: "/d/v-files", copied: ["a", "b"], missing: [] });
+  assert.deepEqual(out, { text: "Saved a copy with its 2 files in /d/v-files. Keep the folder next to the JSON.", problem: false });
+  const none = exportSummary({ path: "/d/v.json", filesDir: null, copied: [], missing: ["assets/x.png"] });
+  assert.equal(none.problem, true);
+  assert.equal(none.text, "Saved a copy of the timeline.\nThese files are not in the project and were not copied:\n  • assets/x.png");
 });

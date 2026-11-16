@@ -1,5 +1,42 @@
 // Pure helpers for the Studio screens (no React, no Tauri): tested in test/studio-format.test.ts.
-import type { AssetInfo, AssetKind, Cost, ProjectSummary } from "./types";
+import type { AssetInfo, AssetKind, Cost, ExportedTimeline, ImportedProject, ProjectSummary } from "./types";
+
+const files = (n: number) => `${n} file${n === 1 ? "" : "s"}`;
+const list = (paths: string[]) => paths.map((p) => `  • ${p}`).join("\n");
+
+/**
+ * What an import says: how many files came along, which were found in another project, and,
+ * as a problem, each file that was not found (the render fails without it).
+ */
+export const importSummary = (got: ImportedProject): { text: string; problem: boolean } => {
+  const lines = [`Imported “${got.project.name}” with ${files(got.copied.length)}.`];
+  const borrowed = got.borrowed ?? [];
+  if (borrowed.length) {
+    const from = [...new Set(borrowed.map((b) => b.project))].map((p) => `“${p}”`).join(", ");
+    lines.push(`Not next to the timeline, so copied from project ${from}: ${files(borrowed.length)}.`);
+  }
+  if (got.missing.length) {
+    lines.push(
+      `缺少 ${got.missing.length} 个文件，渲染会失败。Missing ${files(got.missing.length)} (the render will fail without them):`,
+      list(got.missing),
+      `把它们放进新项目文件夹的同一路径下，或在素材里重新导入。Put them at the same path inside ${got.project.dir}, or import them again.`,
+    );
+  }
+  return { text: lines.join("\n"), problem: got.missing.length > 0 };
+};
+
+/** What "Save as" from a project says: where the files went, and any it could not find. */
+export const exportSummary = (out: ExportedTimeline): { text: string; problem: boolean } => {
+  const lines = [
+    out.filesDir
+      ? `Saved a copy with its ${files(out.copied.length)} in ${out.filesDir}. Keep the folder next to the JSON.`
+      : "Saved a copy of the timeline.",
+  ];
+  if (out.missing.length) {
+    lines.push(`These files are not in the project and were not copied:`, list(out.missing));
+  }
+  return { text: lines.join("\n"), problem: out.missing.length > 0 };
+};
 
 /** `0:07`, `1:05`, `1:02:03`. */
 export const formatDuration = (ms: number): string => {
