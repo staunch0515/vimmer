@@ -8,7 +8,7 @@ export type AutoSubtitlesMode = "off" | "on" | "all";
 
 /** What the panel remembers per project. `null` means "the default". */
 export type RenderOptions = {
-  /** `null`: the render's default engine ($VIMMER_TTS, else say). */
+  /** `null`: the render's default engine ($VIMMER_TTS, else Kokoro). */
   tts: TtsName | null;
   autoSubtitles: AutoSubtitlesMode;
   wordSubtitles: boolean;
@@ -29,7 +29,7 @@ export type RenderDefaults = {
 };
 
 /** Used until the desktop shell answers (and in the browser). Same values as the CLI. */
-export const FALLBACK_DEFAULTS: RenderDefaults = { tts: "say", ttsFromEnv: false, chunkMs: 30_000, preprocessJobs: 4, renderJobs: 2 };
+export const FALLBACK_DEFAULTS: RenderDefaults = { tts: "kokoro", ttsFromEnv: false, chunkMs: 30_000, preprocessJobs: 4, renderJobs: 2 };
 
 /** The CLI without flags. */
 export const DEFAULT_OPTIONS: RenderOptions = {
@@ -49,8 +49,8 @@ export const AUTO_SUBTITLE_MODES: { value: AutoSubtitlesMode; label: string; hel
 ];
 
 export const TTS_ENGINES: { value: TtsName; label: string }[] = [
-  { value: "say", label: "say (macOS)" },
-  { value: "kokoro", label: "Kokoro (local neural)" },
+  { value: "kokoro", label: "Kokoro（本机神经网络，默认）" },
+  { value: "say", label: "say（macOS 旧声音，所有场景都用它）" },
 ];
 
 /** What `start_render` receives as `options`; mirrors `PanelOptions` in render.rs. */

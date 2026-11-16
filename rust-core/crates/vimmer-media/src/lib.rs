@@ -23,8 +23,9 @@ pub use estimate::{
 };
 pub use image_norm::{letterbox, normalize_image};
 pub use kokoro::{
-    batch_timeout, looks_like_kokoro_voice, resolve_kokoro_voice, KokoroItem, KokoroLang,
-    KokoroSpeech, TtsEngine, ENV_KOKORO_MODELS, ENV_KOKORO_PYTHON, ENV_TTS,
+    batch_timeout, engine_for_voice, is_say_voice, looks_like_kokoro_voice, resolve_kokoro_voice,
+    KokoroItem, KokoroLang, KokoroSpeech, TtsEngine, ENV_KOKORO_MODELS, ENV_KOKORO_PYTHON,
+    ENV_TTS, KOKORO_INSTALL_HINT,
 };
 pub use process::{run_limited, Limits};
 pub use speech::{default_voice_for, SaySpeech, Speech};

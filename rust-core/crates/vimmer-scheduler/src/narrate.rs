@@ -1,8 +1,11 @@
 //! Narration step: synthesizes each scene's spoken text (its spoken line, else its text), attaches it as audio and stretches the scene to fit.
 //!
-//! Two engines: macOS `say` (the default) and Kokoro, a local neural TTS run through a Python
-//! helper in one batch per render. When Kokoro is chosen but cannot run, all narration falls back
-//! to `say` with one warning, so a render never fails because of it.
+//! Two engines: Kokoro (the default), a local neural TTS run through a Python helper in one batch
+//! per render, and macOS `say`. With Kokoro, a scene that names a `say` voice (an old project:
+//! Samantha, Tingting, Kyoko …) is still spoken by `say`, exactly as before; automatic and Kokoro
+//! voices are Kokoro. When Kokoro is needed but cannot run, the render stops with an error that
+//! says how to install it: it never switches to `say` on its own. `say` is used for every scene
+//! only when chosen (`--tts say`, `$VIMMER_TTS=say`, the render panel).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -11,7 +14,8 @@ use std::time::Duration;
 
 use vimmer_dsl::{AudioMapping, VideoTimeline};
 use vimmer_media::{
-    batch_timeout, default_voice_for, looks_like_kokoro_voice, resolve_kokoro_voice, AudioProbe,
+    batch_timeout, default_voice_for, engine_for_voice, looks_like_kokoro_voice,
+    resolve_kokoro_voice, AudioProbe,
     KokoroItem, KokoroLang, KokoroSpeech, Limits, MediaError, Speech, TtsEngine, ENV_TTS,
 };
 
@@ -24,7 +28,7 @@ pub(crate) const TAIL_MS: u64 = 300;
 /// Which narration engine to use, and where Kokoro lives.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TtsConfig {
-    /// `None`: `$VIMMER_TTS` (`say` or `kokoro`), else `say`.
+    /// `None`: `$VIMMER_TTS` (`say` or `kokoro`), else Kokoro.
     pub engine: Option<TtsEngine>,
     /// Kokoro interpreter. `None`: `$VIMMER_KOKORO_PYTHON`, else the default venv.
     pub kokoro_python: Option<PathBuf>,
@@ -35,8 +39,8 @@ pub struct TtsConfig {
 }
 
 impl TtsConfig {
-    /// The engine to use: the explicit choice, else `$VIMMER_TTS`, else `say`. An unknown
-    /// `$VIMMER_TTS` value adds a warning and means `say`.
+    /// The engine to use: the explicit choice, else `$VIMMER_TTS`, else Kokoro. An unknown
+    /// `$VIMMER_TTS` value adds a warning and means Kokoro.
     pub fn resolve_engine(&self, warnings: &mut Vec<String>) -> TtsEngine {
         if let Some(engine) = self.engine {
             return engine;
@@ -45,20 +49,21 @@ impl TtsConfig {
     }
 }
 
-/// The engine named by a `$VIMMER_TTS` value; unset or empty means `say`.
+/// The engine named by a `$VIMMER_TTS` value; unset or empty means Kokoro (the default).
 fn engine_from_env(value: Option<&str>, warnings: &mut Vec<String>) -> TtsEngine {
     match value {
         Some(v) if !v.trim().is_empty() => TtsEngine::parse(v).unwrap_or_else(|| {
             warnings.push(format!(
-                "{ENV_TTS}=`{v}` is not a narration engine (say or kokoro), using say"
+                "{ENV_TTS}=`{v}` is not a narration engine (say or kokoro), using kokoro"
             ));
-            TtsEngine::Say
+            TtsEngine::Kokoro
         }),
-        _ => TtsEngine::Say,
+        _ => TtsEngine::Kokoro,
     }
 }
 
 /// A scene to narrate.
+#[derive(Clone)]
 struct Job {
     index: usize,
     text: String,
@@ -144,8 +149,10 @@ fn collect_jobs(timeline: &VideoTimeline, only: Option<&[String]>) -> Vec<Job> {
     jobs
 }
 
-/// The narration files for `jobs`, synthesizing the ones not in the cache, with the engine
-/// that made them: Kokoro when chosen and it works, else `say` (with one warning).
+/// The narration files for `jobs` (in job order), synthesizing the ones not in the cache, and
+/// the engine that spoke: Kokoro when any scene used it, else `say`. With Kokoro (the default),
+/// scenes that name a `say` voice keep `say`; when the others need Kokoro and it cannot run, this
+/// fails with a message that says how to install it.
 async fn synthesize(
     timeline: &VideoTimeline,
     jobs: &[Job],
@@ -155,22 +162,56 @@ async fn synthesize(
     ctx: &RenderContext,
     warnings: &mut Vec<String>,
 ) -> Result<(Vec<Narrated>, TtsEngine), SchedulerError> {
-    if cfg.tts.resolve_engine(warnings) == TtsEngine::Kokoro {
-        match narrate_kokoro(timeline, jobs, cfg, tts_dir, ctx).await {
+    if cfg.tts.resolve_engine(warnings) == TtsEngine::Say {
+        let files = narrate_say(timeline, jobs, speech, tts_dir, ctx, warnings).await?;
+        return Ok((files, TtsEngine::Say));
+    }
+    let (say_jobs, kokoro_jobs): (Vec<Job>, Vec<Job>) = jobs
+        .iter()
+        .cloned()
+        .partition(|j| engine_for_voice(TtsEngine::Kokoro, j.voice.as_deref()) == TtsEngine::Say);
+    let mut files = Vec::with_capacity(jobs.len());
+    if !kokoro_jobs.is_empty() {
+        match narrate_kokoro(timeline, &kokoro_jobs, cfg, tts_dir, ctx).await {
             Ok((narrated, notes)) => {
                 warnings.extend(notes);
-                return Ok((narrated, TtsEngine::Kokoro));
+                files.extend(narrated);
             }
             Err(SchedulerError::Cancelled | SchedulerError::Media(MediaError::Cancelled)) => {
                 return Err(SchedulerError::Cancelled)
             }
-            Err(e) => warnings.push(format!(
-                "Kokoro narration failed, all narration uses `say` instead: {e}"
-            )),
+            Err(e) => {
+                let text = match &e {
+                    SchedulerError::Media(MediaError::Speech(m)) => m.clone(),
+                    other => other.to_string(),
+                };
+                let message = if text.contains("Kokoro is not installed") {
+                    text
+                } else {
+                    format!("Kokoro narration failed: {text}")
+                };
+                return Err(SchedulerError::Narration(format!(
+                    "{message} (scenes: {}; scenes that name a `say` voice, or a render with the `say` engine, do not need Kokoro)",
+                    kokoro_jobs
+                        .iter()
+                        .map(|j| timeline.scenes[j.index].id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
         }
     }
-    let files = narrate_say(timeline, jobs, speech, tts_dir, ctx, warnings).await?;
-    Ok((files, TtsEngine::Say))
+    if !say_jobs.is_empty() {
+        files.extend(narrate_say(timeline, &say_jobs, speech, tts_dir, ctx, warnings).await?);
+    }
+    // Back in job (scene) order: previews pair files with jobs.
+    files.sort_by_key(|f| f.index);
+    let engine = if kokoro_jobs.is_empty() {
+        TtsEngine::Say
+    } else {
+        TtsEngine::Kokoro
+    };
+    Ok((files, engine))
 }
 
 /// How many narration previews may synthesize at the same time (per process). More wait their
@@ -207,10 +248,10 @@ pub struct PreviewClip {
 /// What [`preview_narration`] made.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct NarrationPreview {
-    /// The engine that spoke: Kokoro, or `say` when Kokoro was not chosen or could not run.
+    /// The engine that spoke: Kokoro when any scene used it, else `say`.
     pub engine: &'static str,
     pub clips: Vec<PreviewClip>,
-    /// The render's warnings for these scenes (a Kokoro fallback, a voice replaced).
+    /// The render's warnings for these scenes (a voice replaced).
     pub warnings: Vec<String>,
 }
 
@@ -284,6 +325,9 @@ pub fn preview_error(e: &SchedulerError) -> String {
     let lower = text.to_lowercase();
     if matches!(e, SchedulerError::Cancelled) {
         "The preview was stopped.".into()
+    } else if matches!(e, SchedulerError::Narration(_)) {
+        // Already says what is wrong and how to fix it (Kokoro missing or failing).
+        text
     } else if lower.contains("voice") && lower.contains("not found")
         || lower.contains("invalid voice")
     {
@@ -728,21 +772,21 @@ cp "$in" "$out"
         let (n, warnings) = narrate(&mut t, &cfg, &speech, &ctx).await;
         assert_eq!(n.unwrap(), 3);
         assert_eq!(runs(&dir), 1, "one helper run for the whole timeline");
-        assert_eq!(speech.0.load(Ordering::SeqCst), 0, "say is not used");
+        // `zh` names the `say` voice Tingting (an old project): it keeps `say`, as before.
+        assert_eq!(speech.0.load(Ordering::SeqCst), 1, "say speaks only the say voice");
         for scene in &t.scenes {
             let source = &scene.audio.as_ref().unwrap().source;
-            assert!(
+            let kokoro = scene.id != "zh";
+            assert_eq!(
                 source.starts_with(&format!("generated/tts/{}-kokoro-", scene.id)),
+                kokoro,
                 "{source}"
             );
             assert!(dir.join(source).is_file());
             assert_eq!(scene.duration_ms, 2_300);
         }
         let batch = std::fs::read_to_string(dir.join("bin/batch-seen.json")).unwrap();
-        assert!(
-            batch.contains(r#""lang": "zh", "voice": "zf_001""#),
-            "{batch}"
-        );
+        assert!(!batch.contains(r#""lang": "zh""#), "{batch}");
         assert!(
             batch.contains(r#""lang": "ja", "voice": "jm_kumo""#),
             "{batch}"
@@ -752,10 +796,8 @@ cp "$in" "$out"
             "{batch}"
         );
         assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("scene `zh`") && w.contains("`Tingting` is a `say` voice")),
-            "{warnings:?}"
+            !warnings.iter().any(|w| w.contains("is a `say` voice")),
+            "a say voice is no longer replaced: {warnings:?}"
         );
         assert!(
             !warnings.iter().any(|w| w.contains("instead: ")),
@@ -782,7 +824,7 @@ cp "$in" "$out"
     }
 
     #[tokio::test]
-    async fn kokoro_falls_back_to_say_for_all_scenes_with_one_warning() {
+    async fn kokoro_missing_or_failing_is_an_error_never_a_switch_to_say() {
         let cases: [(&str, &str, Option<Duration>); 4] = [
             ("no-python", "", None),
             (
@@ -809,28 +851,31 @@ cp "$in" "$out"
             }
             let speech = Arc::new(FakeSpeech(AtomicUsize::new(0)));
             let mut t = three_languages();
-            let (n, warnings) = narrate(&mut t, &cfg, &speech, &RenderContext::silent()).await;
-            assert_eq!(n.unwrap(), 3, "{name}");
-            assert_eq!(
-                speech.0.load(Ordering::SeqCst),
-                3,
-                "{name}: every scene uses say"
-            );
-            let fallbacks: Vec<_> = warnings
-                .iter()
-                .filter(|w| w.contains("uses `say` instead"))
-                .collect();
-            assert_eq!(fallbacks.len(), 1, "{name}: {warnings:?}");
-            assert!(
-                !warnings.iter().any(|w| w.contains("is a `say` voice")),
-                "{name}: Kokoro voice notes are dropped on fallback: {warnings:?}"
-            );
-            for scene in &t.scenes {
-                let source = &scene.audio.as_ref().unwrap().source;
-                assert!(!source.contains("-kokoro-"), "{name}: {source}");
+            let (n, _) = narrate(&mut t, &cfg, &speech, &RenderContext::silent()).await;
+            let err = n.unwrap_err();
+            assert!(matches!(err, SchedulerError::Narration(_)), "{name}: {err:?}");
+            let text = err.to_string();
+            assert!(text.contains("(scenes: ja, en;"), "{name}: {text}");
+            if matches!(name, "no-python" | "missing-model") {
+                assert!(text.contains("install_kokoro.sh"), "{name}: {text}");
+                assert!(!text.contains("speech synthesis failed: speech"), "{name}: {text}");
             }
+            assert_eq!(speech.0.load(Ordering::SeqCst), 0, "{name}: no switch to say");
+            assert!(t.scenes.iter().all(|s| s.audio.is_none()), "{name}");
             let _ = std::fs::remove_dir_all(dir);
         }
+        // Scenes that all name `say` voices need no Kokoro: an old project renders as before.
+        let (dir, mut cfg) = kokoro_setup("say-only", "");
+        cfg.tts.kokoro_python = Some(PathBuf::from("/nonexistent"));
+        let speech = Arc::new(FakeSpeech(AtomicUsize::new(0)));
+        let mut t = three_languages();
+        for s in &mut t.scenes {
+            s.narration = Some(Narration { voice: Some("Samantha".into()), text: None });
+        }
+        let (n, warnings) = narrate(&mut t, &cfg, &speech, &RenderContext::silent()).await;
+        assert_eq!(n.unwrap(), 3, "{warnings:?}");
+        assert_eq!(speech.0.load(Ordering::SeqCst), 3);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -1204,7 +1249,8 @@ cp "$in" "$out"
             "a failed synthesis leaves nothing in the cache"
         );
 
-        // Kokoro chosen but not installed: like a render, `say` speaks, with a visible note.
+        // Kokoro needed but not installed: like a render, a clear error that says how to
+        // install it; `say` does not stand in.
         let mut kokoro = cfg.clone();
         kokoro.tts = TtsConfig {
             engine: Some(TtsEngine::Kokoro),
@@ -1212,17 +1258,12 @@ cp "$in" "$out"
             ..TtsConfig::default()
         };
         let speech = Arc::new(FakeSpeech(AtomicUsize::new(0)));
-        let p = preview_narration(&t, None, &kokoro, speech, probe, &ctx)
+        let err = preview_narration(&t, None, &kokoro, speech.clone(), probe, &ctx)
             .await
-            .unwrap();
-        assert_eq!(p.engine, "say");
-        assert!(
-            p.warnings
-                .iter()
-                .any(|w| w.contains("Kokoro narration failed, all narration uses `say` instead")),
-            "{:?}",
-            p.warnings
-        );
+            .unwrap_err();
+        assert!(err.starts_with("Kokoro is not installed"), "{err}");
+        assert!(err.contains("install_kokoro.sh"), "{err}");
+        assert_eq!(speech.0.load(Ordering::SeqCst), 0);
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1251,19 +1292,21 @@ cp "$in" "$out"
     }
 
     #[test]
-    fn engine_comes_from_config_then_env_then_say() {
+    fn engine_comes_from_config_then_env_then_kokoro() {
         let mut w = Vec::new();
         let explicit = TtsConfig {
-            engine: Some(TtsEngine::Kokoro),
+            engine: Some(TtsEngine::Say),
             ..TtsConfig::default()
         };
-        assert_eq!(explicit.resolve_engine(&mut w), TtsEngine::Kokoro);
-        assert_eq!(engine_from_env(None, &mut w), TtsEngine::Say);
-        assert_eq!(engine_from_env(Some(""), &mut w), TtsEngine::Say);
+        assert_eq!(explicit.resolve_engine(&mut w), TtsEngine::Say);
+        assert_eq!(engine_from_env(None, &mut w), TtsEngine::Kokoro);
+        assert_eq!(engine_from_env(Some(""), &mut w), TtsEngine::Kokoro);
+        assert_eq!(engine_from_env(Some("say"), &mut w), TtsEngine::Say);
         assert_eq!(engine_from_env(Some("KOKORO"), &mut w), TtsEngine::Kokoro);
         assert!(w.is_empty());
-        assert_eq!(engine_from_env(Some("espeak"), &mut w), TtsEngine::Say);
+        assert_eq!(engine_from_env(Some("espeak"), &mut w), TtsEngine::Kokoro);
         assert_eq!(w.len(), 1);
+        assert!(w[0].ends_with("using kokoro"), "{w:?}");
     }
 
     #[test]

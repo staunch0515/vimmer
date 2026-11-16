@@ -295,6 +295,11 @@ fn narrated(timeline: &VideoTimeline) -> impl Iterator<Item = (usize, &vimmer_ds
     })
 }
 
+/// The voice a narrated scene names, if any.
+fn voice_of(scene: &vimmer_dsl::Scene) -> Option<&str> {
+    scene.narration.as_ref().and_then(|n| n.voice.as_deref())
+}
+
 /// Narration longer than its scene. `measured[i]` is the synthesized length of scene `i`, when
 /// known.
 pub fn narration(
@@ -333,6 +338,8 @@ pub fn narration(
             }
             continue;
         }
+        // The engine that will speak this scene: a `say` voice keeps `say` under Kokoro.
+        let engine = vimmer_media::engine_for_voice(engine, voice_of(scene));
         let speech = estimate_speech_ms(text, engine);
         let nominal = speech + TAIL_MS;
         let optimistic = (speech as f64 * NARRATION_MARGIN) as u64 + TAIL_MS;
@@ -375,7 +382,9 @@ pub fn synthesize_narration(
     let Some(public) = &opts.public_dir else {
         return (measured, notes);
     };
-    if opts.tts == TtsEngine::Kokoro {
+    let uses_kokoro = narrated(timeline)
+        .any(|(_, s, _)| vimmer_media::engine_for_voice(opts.tts, voice_of(s)) == TtsEngine::Kokoro);
+    if uses_kokoro {
         notes.push(Finding::new(
             Severity::Info,
             "narration.engine",
@@ -451,6 +460,24 @@ pub fn say_cache_path(tts_dir: &Path, scene_id: &str, voice: &str, text: &str) -
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn each_scene_is_estimated_with_the_engine_that_speaks_it() {
+        let t: VideoTimeline = serde_json::from_value(serde_json::json!({
+            "fps": 30, "resolution": {"width": 1920, "height": 1080},
+            "scenes": [
+                {"id": "auto", "duration_ms": 500, "text": "This sentence is far too long for half a second.", "narration": {"voice": null}},
+                {"id": "old", "duration_ms": 500, "text": "This sentence is far too long for half a second.", "narration": {"voice": "Samantha"}}
+            ]
+        }))
+        .unwrap();
+        let f = narration(&t, None, TtsEngine::Kokoro);
+        assert_eq!(f.len(), 2);
+        assert!(f[0].message.contains(", kokoro)"), "{}", f[0].message);
+        assert!(f[1].message.contains(", say)"), "an old say voice keeps say: {}", f[1].message);
+        let f = narration(&t, None, TtsEngine::Say);
+        assert!(f.iter().all(|x| x.message.contains(", say)")));
+    }
+
     use super::*;
 
     #[test]

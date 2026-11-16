@@ -224,9 +224,10 @@ struct RenderArgs {
     /// it (default: guessed from each scene's text).
     #[arg(long)]
     whisper_language: Option<String>,
-    /// Narration engine: `say` (macOS, the default) or `kokoro` (local neural TTS, see README).
-    /// Without this flag, $VIMMER_TTS decides, else `say`. When Kokoro cannot run, narration
-    /// falls back to `say` with a warning.
+    /// Narration engine: `kokoro` (local neural TTS, the default; see README) or `say` (macOS).
+    /// Without this flag, $VIMMER_TTS decides, else Kokoro. With Kokoro, scenes that name a
+    /// `say` voice (Samantha, Tingting …) still use `say`. When Kokoro is needed but cannot run,
+    /// the render stops with an error that says how to install it (or pass --tts say).
     #[arg(long, value_enum)]
     tts: Option<Tts>,
     /// Python interpreter with Kokoro installed (default: $VIMMER_KOKORO_PYTHON, then
@@ -252,7 +253,7 @@ fn engine_of(t: Tts) -> TtsEngine {
     }
 }
 
-/// The engine the render will narrate with: `--tts`, else `$VIMMER_TTS`, else `say`. Scenes
+/// The engine the render will narrate with: `--tts`, else `$VIMMER_TTS`, else Kokoro. Scenes
 /// without a duration are sized for it.
 fn render_engine(args: &RenderArgs) -> TtsEngine {
     args.tts.map_or_else(TtsEngine::from_env, engine_of)

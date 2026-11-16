@@ -17,6 +17,8 @@ use crate::MediaError;
 
 /// Selects the narration engine (`say` or `kokoro`) when no explicit choice is made.
 pub const ENV_TTS: &str = "VIMMER_TTS";
+/// How to get Kokoro, for every message about it missing.
+pub const KOKORO_INSTALL_HINT: &str = "install it with `rust-core/crates/vimmer-media/scripts/install_kokoro.sh` (needs Python 3.10–3.12; it fills ~/.local/share/vimmer/kokoro-venv and ~/.local/share/vimmer/models/kokoro), or choose the `say` engine for this render";
 /// Python interpreter that has kokoro-onnx and misaki installed.
 pub const ENV_KOKORO_PYTHON: &str = "VIMMER_KOKORO_PYTHON";
 /// Directory holding the Kokoro model and voice files.
@@ -41,9 +43,9 @@ const CONVERT_TIMEOUT: Duration = Duration::from_secs(60);
 /// A narration engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TtsEngine {
-    /// macOS `say` (the default).
+    /// macOS `say`: only when chosen, and for scenes that name a `say` voice.
     Say,
-    /// Kokoro through the Python helper.
+    /// Kokoro through the Python helper (the default).
     Kokoro,
 }
 
@@ -138,6 +140,25 @@ pub fn looks_like_kokoro_voice(voice: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
 }
 
+/// True for a voice name that is a macOS `say` voice (Samantha, Tingting, Kyoko …): set and not
+/// shaped like a Kokoro voice. Old projects name these.
+pub fn is_say_voice(voice: Option<&str>) -> bool {
+    voice
+        .map(str::trim)
+        .is_some_and(|v| !v.is_empty() && !looks_like_kokoro_voice(v))
+}
+
+/// The engine that speaks a scene whose voice is `voice`, when the render's engine is `engine`:
+/// with Kokoro (the default), a scene that names a `say` voice keeps `say`, so an old project
+/// sounds as it did; every other scene (automatic voice, a Kokoro voice) is Kokoro. With `say`
+/// chosen, every scene is `say`.
+pub fn engine_for_voice(engine: TtsEngine, voice: Option<&str>) -> TtsEngine {
+    match engine {
+        TtsEngine::Kokoro if is_say_voice(voice) => TtsEngine::Say,
+        e => e,
+    }
+}
+
 /// The Kokoro voice for a scene, and a warning when the requested one cannot be used.
 pub fn resolve_kokoro_voice(requested: Option<&str>, lang: KokoroLang) -> (String, Option<String>) {
     let default = lang.default_voice();
@@ -218,7 +239,7 @@ impl KokoroSpeech {
             .unwrap_or_else(|| "python3".to_string());
         let python = find_executable(&python_name, path_var).ok_or_else(|| {
             MediaError::Speech(format!(
-                "Kokoro python `{python_name}` was not found (run scripts/install_kokoro.sh, or pass --kokoro-python / set {ENV_KOKORO_PYTHON})"
+                "Kokoro is not installed: python `{python_name}` was not found ({KOKORO_INSTALL_HINT}; or pass --kokoro-python / set {ENV_KOKORO_PYTHON})"
             ))
         })?;
         let models = models
@@ -228,7 +249,7 @@ impl KokoroSpeech {
             .ok_or_else(|| MediaError::Speech("no Kokoro model directory configured".into()))?;
         if !models.is_dir() {
             return Err(MediaError::Speech(format!(
-                "Kokoro model directory `{}` does not exist (run scripts/install_kokoro.sh, or set {ENV_KOKORO_MODELS})",
+                "Kokoro is not installed: the model directory `{}` does not exist ({KOKORO_INSTALL_HINT}; or set {ENV_KOKORO_MODELS})",
                 models.display()
             )));
         }
@@ -247,7 +268,7 @@ impl KokoroSpeech {
             for file in lang.model_files() {
                 if !self.models.join(file).is_file() {
                     return Err(MediaError::Speech(format!(
-                        "Kokoro model file `{}` is missing (needed for {}; run scripts/install_kokoro.sh)",
+                        "Kokoro model file `{}` is missing (needed for {}; {KOKORO_INSTALL_HINT})",
                         self.models.join(file).display(),
                         lang.code()
                     )));
@@ -474,6 +495,21 @@ fn fnv1a(s: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn say_voices_keep_say_under_the_kokoro_default() {
+        assert!(is_say_voice(Some("Samantha")));
+        assert!(is_say_voice(Some(" Tingting ")));
+        assert!(!is_say_voice(Some("zf_001")));
+        assert!(!is_say_voice(Some("  ")));
+        assert!(!is_say_voice(None));
+        use TtsEngine::*;
+        assert_eq!(engine_for_voice(Kokoro, Some("Kyoko")), Say);
+        assert_eq!(engine_for_voice(Kokoro, None), Kokoro);
+        assert_eq!(engine_for_voice(Kokoro, Some("af_heart")), Kokoro);
+        assert_eq!(engine_for_voice(Say, Some("af_heart")), Say);
+        assert_eq!(engine_for_voice(Say, None), Say);
+    }
+
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;

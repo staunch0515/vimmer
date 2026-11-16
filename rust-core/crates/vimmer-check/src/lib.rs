@@ -162,7 +162,7 @@ pub struct CheckOptions {
     pub synth: bool,
     pub ffmpeg: PathBuf,
     /// Narration engine the render will use, for the length estimate (the CLI: `--tts`, else
-    /// `$VIMMER_TTS`, else `say`).
+    /// `$VIMMER_TTS`, else Kokoro). Scenes that name a `say` voice are estimated as `say`.
     pub tts: vimmer_media::TtsEngine,
 }
 
@@ -173,7 +173,7 @@ impl Default for CheckOptions {
             rendered: None,
             synth: false,
             ffmpeg: PathBuf::from("ffmpeg"),
-            tts: vimmer_media::TtsEngine::Say,
+            tts: vimmer_media::TtsEngine::Kokoro,
         }
     }
 }

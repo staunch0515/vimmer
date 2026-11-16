@@ -43,7 +43,8 @@ struct CheckCli {
     #[arg(long)]
     synth: bool,
     /// Narration engine the render will use, for the narration-length estimate: `say` or
-    /// `kokoro` (default: $VIMMER_TTS, else `say`, as in the render).
+    /// `kokoro` (default: $VIMMER_TTS, else Kokoro, as in the render; scenes that name a `say`
+    /// voice are estimated as `say`).
     #[arg(long, value_enum)]
     tts: Option<Tts>,
     /// Directory that image and audio paths are relative to (default: <remotion-dir>/public,

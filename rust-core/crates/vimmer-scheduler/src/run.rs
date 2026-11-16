@@ -37,6 +37,9 @@ pub enum SchedulerError {
     Mix(String),
     #[error("{what}: {message}")]
     Video { what: String, message: String },
+    /// Narration cannot be made (Kokoro is needed but missing or failing).
+    #[error("{0}")]
+    Narration(String),
     #[error("voice-over clip `{clip}`: file not found: {path}")]
     VoiceoverMissing { clip: String, path: String },
     #[error("brand {what}: file not found: {path}")]

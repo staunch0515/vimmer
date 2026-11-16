@@ -677,3 +677,9 @@ textarea { resize: vertical; width: 100%; }
 .align-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .align-table th, .align-table td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--border); }
 .align-table th { color: var(--text-3); font-weight: 500; }
+
+/* Voice picker */
+.voice-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.voice-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.voice-row select { flex: 1; min-width: 0; }
+.voice-old { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 6px; background: rgba(251, 191, 36, 0.08); border: 1px solid rgba(251, 191, 36, 0.35); font-size: 12px; }

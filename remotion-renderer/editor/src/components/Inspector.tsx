@@ -18,7 +18,7 @@ import { BeatSyncFields, SfxList, type BeatStatus } from "./SoundPanel";
 import type { DetectedBeats } from "../beats";
 import { MoodMusicFields, MusicModeSwitch } from "./MusicPanel";
 import type { MusicLibrary, PickedTrack } from "../music";
-import { clipFor, spokenText, withSpokenLine, withVoice } from "../narration";
+import { clipFor, spokenText, withSpokenLine } from "../narration";
 import { PageList, TextLayoutFields } from "./TextLayoutFields";
 import { insertPageBreak, withLayoutPart } from "../textLayout";
 import { pagePreview, resolveTextLayout } from "../../../src/textPages";
@@ -26,6 +26,7 @@ import { LookFields } from "./LookFields";
 import { ListenButton, type ListenProps } from "./ListenButton";
 import { autoPreset } from "../../../src/motion/look";
 import { VoiceoverPanel, type VoicePanelProps } from "./VoiceoverPanel";
+import { VoicePicker } from "./VoicePicker";
 
 export type InspectorTab = "scene" | "subtitles" | "music" | "voice" | "brand" | "assistant";
 
@@ -309,15 +310,13 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, list
         <span>Narrate the text (speech generated at render time)</span>
       </label>
       {scene.narration && (
-        <Field label="Voice" hint={scene.audio ? "Manual audio is used instead" : ""}>
-          <select
-            value={scene.narration.voice ?? ""}
-            onChange={(e) => patch({ narration: withVoice(scene.narration!, e.target.value || null) })}
-          >
-            <option value="">Auto (by language)</option>
-            <option value="Samantha">Samantha (English)</option>
-            <option value="Tingting">Tingting (Chinese)</option>
-          </select>
+        <Field label="声音 Voice" hint={scene.audio ? "Manual audio is used instead" : ""}>
+          <VoicePicker
+            narration={scene.narration}
+            spoken={spokenText(scene)}
+            onChange={(n) => patch({ narration: n })}
+            audioUrl={listen?.audioUrl}
+          />
         </Field>
       )}
       {/* Keyed by scene: switching scenes unmounts it, which stops the sound. */}
