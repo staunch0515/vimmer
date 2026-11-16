@@ -581,8 +581,14 @@ pub fn illustrate_with_key_check(
             report.cancelled = true;
             return report;
         }
+        // Timeouts and cancellation come from the DevTools capture; it falls back to
+        // --screenshot only when DevTools cannot be used at all, and then names both.
+        let how = match e {
+            SvgError::TimedOut { .. } => " (DevTools capture)",
+            _ => "",
+        };
         report.unavailable = Some(format!(
-            "headless Chrome at {} cannot rasterize SVG: {e}",
+            "headless Chrome at {} cannot rasterize SVG{how}: {e}",
             opts.chrome.display()
         ));
         return report;

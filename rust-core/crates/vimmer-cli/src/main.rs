@@ -11,11 +11,12 @@ use std::{
 
 mod align_cmd;
 mod beats_cmd;
-mod tts_cmd;
 mod check_cmd;
 mod edit_cmd;
 mod expand_cmd;
 mod music_cmd;
+mod rasterize_cmd;
+mod tts_cmd;
 
 use clap::{Args, Parser, ValueEnum};
 use serde_json::json;
@@ -309,6 +310,8 @@ async fn main() -> ExitCode {
         return expand_cmd::main(args);
     } else if args.get(1).is_some_and(|a| a == "beats") {
         return beats_cmd::main(args);
+    } else if args.get(1).is_some_and(|a| a == "rasterize") {
+        return rasterize_cmd::main(args);
     } else if args.get(1).is_some_and(|a| a == "music") {
         return music_cmd::main(args);
     } else if args.get(1).is_some_and(|a| a == "tts") {

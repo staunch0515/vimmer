@@ -4,6 +4,7 @@
 pub mod align;
 pub mod audio;
 pub mod beats;
+mod cdp;
 pub mod estimate;
 pub mod image_norm;
 pub mod kokoro;
@@ -30,8 +31,8 @@ pub use kokoro::{
 pub use process::{run_limited, Limits};
 pub use speech::{default_voice_for, SaySpeech, Speech};
 pub use svg::{
-    check_png, find_chrome, preflight_chrome, rasterize_svg, sanitize_svg, SanitizedSvg, SvgError,
-    ENV_CHROME, MAX_SVG_BYTES,
+    check_png, find_chrome, preflight_chrome, rasterize_svg, rasterize_svg_with, sanitize_svg,
+    RasterMethod, SanitizedSvg, SvgError, ENV_CHROME, MAX_SVG_BYTES,
 };
 pub use transcribe::{
     guess_language, TranscribeRequest, Transcriber, WhisperCli, DEFAULT_MODEL_IN_HOME,

@@ -929,7 +929,13 @@ How it works:
 4. **Rasterize** with the headless Chrome Remotion already downloads
    (`remotion-renderer/node_modules/.remotion/`, fetched with `remotion browser ensure` when
    missing), network sent to a closed proxy port, into a PNG of the frame size; a PNG that is
-   one flat colour counts as a failed picture. The PNG then takes the normal image path
+   one flat colour counts as a failed picture. Chrome is driven over the DevTools protocol
+   (`--remote-debugging-pipe`, as Remotion does): its `--screenshot` command-line mode never
+   finishes on some Macs (seen on an Apple Silicon iMac with macOS 26), and is only tried as a
+   fallback when DevTools cannot be used at all; both give identical pixels. Before any API call
+   a tiny probe picture checks that Chrome works. To check a machine without Claude:
+   `vimmer rasterize --preflight some.svg` (`--method devtools|screenshot`, `--size 1080x1920`)
+   sanitizes and rasterizes SVG files and prints the method and time. The PNG then takes the normal image path
    (normalization, Ken Burns motion). Scenes on a picture get a soft dark gradient under the
    text; text-only scenes look exactly as before.
 5. **Cache**: `remotion-renderer/public/generated/illustrations/` (git-ignored) holds
