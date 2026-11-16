@@ -156,6 +156,10 @@ pub enum ValidationError {
     },
     #[error("scene `{scene}` has {count} sound effects; the limit is {MAX_SFX_PER_SCENE}")]
     TooManySfx { scene: String, count: usize },
+    #[error("voiceover clip `{clip}`: {message}")]
+    BadVoiceover { clip: String, message: String },
+    #[error("voiceover: {0}")]
+    VoiceoverTrack(String),
     #[error("music beats: {0}")]
     BadBeatGrid(String),
     #[error("music beat_sync: {0}")]
@@ -842,6 +846,7 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
     if let Some(look) = &timeline.look {
         errors.extend(look.problems().into_iter().map(ValidationError::BadLook));
     }
+    errors.extend(voiceover_problems(timeline));
     let result = if timeline.scenes.iter().any(|s| s.template.is_some()) {
         let mut expanded = timeline.clone();
         match crate::template::expand_templates(&mut expanded) {
@@ -865,6 +870,39 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
     } else {
         Err(errors)
     }
+}
+
+/// Rules of the voice-over track that need no file: ids, sources, gains, clips starting past the
+/// end, and how many clips there are. Overlaps need the files' lengths (`vimmer check`, render).
+pub fn voiceover_problems(timeline: &VideoTimeline) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    let clips = &timeline.voiceover;
+    if clips.len() > crate::voiceover::MAX_VOICEOVER_CLIPS {
+        errors.push(ValidationError::VoiceoverTrack(format!(
+            "{} clips; the limit is {}",
+            clips.len(),
+            crate::voiceover::MAX_VOICEOVER_CLIPS
+        )));
+    }
+    let total = timeline.total_duration_ms();
+    let mut seen = std::collections::HashSet::new();
+    for clip in clips {
+        if !clip.id.trim().is_empty() && !seen.insert(clip.id.as_str()) {
+            errors.push(ValidationError::VoiceoverTrack(format!(
+                "duplicate clip id `{}`",
+                clip.id
+            )));
+        }
+        errors.extend(
+            clip.problems(total)
+                .into_iter()
+                .map(|message| ValidationError::BadVoiceover {
+                    clip: clip.id.clone(),
+                    message,
+                }),
+        );
+    }
+    errors
 }
 
 /// [`validate`] of a timeline without template scenes and without the brand.
@@ -1103,6 +1141,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         }
     }
 
@@ -1175,6 +1214,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let errs = validate(&t).unwrap_err();
         assert!(errs.contains(&ValidationError::UnsupportedFps(24)));

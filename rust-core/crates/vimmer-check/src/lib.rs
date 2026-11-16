@@ -27,6 +27,7 @@ pub mod text;
 pub mod textbox;
 pub mod timing;
 pub mod video;
+pub mod voiceover;
 
 use std::path::{Path, PathBuf};
 
@@ -296,6 +297,7 @@ fn check_expanded(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding>
             findings.extend(assets::check(timeline, dir));
             findings.extend(layers::check_assets(timeline, dir));
             findings.extend(audio::check_sources(timeline, dir, &opts.ffmpeg));
+            findings.extend(voiceover::check(timeline, dir, &opts.ffmpeg));
             findings.extend(video::check(timeline, dir, &opts.ffmpeg));
             findings.extend(sfx::check(timeline, dir, &opts.ffmpeg));
             findings.extend(sfx::check_beats(

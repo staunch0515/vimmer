@@ -26,7 +26,8 @@ use crate::run::{SchedulerConfig, SchedulerError};
 pub const STAGE_DIR: &str = "generated/project";
 
 /// Calls `f` on every asset path of the timeline: scene images, audio, video clips, layer
-/// images, icons and clips, sound effects, the music file, brand fonts and the logo.
+/// images, icons and clips, sound effects, the music file, voice-over clips, brand fonts and the
+/// logo.
 pub fn for_each_asset_path(timeline: &mut VideoTimeline, f: &mut dyn FnMut(&mut String)) {
     for scene in &mut timeline.scenes {
         if let Some(image) = &mut scene.image {
@@ -52,6 +53,9 @@ pub fn for_each_asset_path(timeline: &mut VideoTimeline, f: &mut dyn FnMut(&mut 
     }
     if let Some(source) = timeline.music.as_mut().and_then(|m| m.source.as_mut()) {
         f(source);
+    }
+    for clip in &mut timeline.voiceover {
+        f(&mut clip.source);
     }
     if let Some(brand) = &mut timeline.brand {
         for font in [&mut brand.fonts.heading, &mut brand.fonts.body] {
@@ -201,6 +205,7 @@ mod tests {
            "sfx":[{"src":"assets/sfx/pop.wav","at_ms":0}]},
           {"id":"b","duration_ms":1000,"image":"https://example.com/x.png","video":{"src":"assets/clips/c.mp4"}}],
         "music":{"source":"assets/music/m.mp3"},
+        "voiceover":[{"id":"v1","source":"assets/recordings/vo-1.wav","start_ms":0}],
         "brand":{"fonts":{"heading":{"family":"D","src":"assets/fonts/d.woff2"}},"logo":{"src":"assets/logo.png"}}}"##;
 
     fn timeline() -> VideoTimeline {
@@ -226,6 +231,7 @@ mod tests {
                 "https://example.com/x.png",
                 "assets/clips/c.mp4",
                 "assets/music/m.mp3",
+                "assets/recordings/vo-1.wav",
                 "assets/fonts/d.woff2",
                 "assets/logo.png"
             ]

@@ -7,9 +7,10 @@ use serde_json::Value;
 /// Who uses a path: a scene (by id), the music or the brand.
 pub const USER_MUSIC: &str = "Music";
 pub const USER_BRAND: &str = "Brand";
+pub const USER_VOICEOVER: &str = "Voice-over";
 
 /// Calls `f(path, user)` on every asset path: scene images, audio, video clips, layer images,
-/// icons and clips, sound effects, the music file, brand fonts and the logo.
+/// icons and clips, sound effects, the music file, voice-over clips, brand fonts and the logo.
 pub fn for_each_asset(timeline: &mut Value, f: &mut dyn FnMut(&mut String, &str)) {
     if let Some(scenes) = timeline.get_mut("scenes").and_then(Value::as_array_mut) {
         for (index, scene) in scenes.iter_mut().enumerate() {
@@ -37,6 +38,11 @@ pub fn for_each_asset(timeline: &mut Value, f: &mut dyn FnMut(&mut String, &str)
         }
     }
     visit(timeline.get_mut("music").and_then(|m| m.get_mut("source")), USER_MUSIC, f);
+    if let Some(clips) = timeline.get_mut("voiceover").and_then(Value::as_array_mut) {
+        for clip in clips {
+            visit(clip.get_mut("source"), USER_VOICEOVER, f);
+        }
+    }
     if let Some(brand) = timeline.get_mut("brand") {
         if let Some(fonts) = brand.get_mut("fonts") {
             for role in ["heading", "body"] {
@@ -92,6 +98,7 @@ mod tests {
                  "layers":[{"kind":"text","src":"not-an-asset"},{"kind":"icon","src":"assets/i.svg"}]},
                 {"image":null,"sfx":[{"src":"assets/pop.wav"}]}],
                 "music":{"source":"assets/m.mp3","volume":0.5},
+                "voiceover":[{"id":"v","source":"assets/recordings/vo.wav","start_ms":0}],
                 "brand":{"fonts":{"body":{"family":"B","src":"assets/f.woff2"}},"logo":{"src":"assets/logo.png"}}}"#,
         )
         .unwrap();
@@ -107,6 +114,7 @@ mod tests {
                 "intro:assets/i.svg",
                 "scene 2:assets/pop.wav",
                 "Music:assets/m.mp3",
+                "Voice-over:assets/recordings/vo.wav",
                 "Brand:assets/f.woff2",
                 "Brand:assets/logo.png"
             ]

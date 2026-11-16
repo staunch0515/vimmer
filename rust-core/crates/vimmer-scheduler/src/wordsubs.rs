@@ -1393,6 +1393,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         t.scenes[0].audio = None; // not narrated by us: ignored
         let cfg = SchedulerConfig::new(
@@ -1453,6 +1454,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         // Words from an earlier text, and times that no longer fit the edited cue.
         t.subtitles[0].words = ["再", "见", "。"]
@@ -1515,6 +1517,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -1576,6 +1579,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -1647,6 +1651,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let mut clips = narration_clips(
             &t,
@@ -1731,6 +1736,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -1856,6 +1862,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -1909,6 +1916,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         }
     }
 
@@ -2159,6 +2167,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         }
     }
 

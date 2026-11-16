@@ -37,6 +37,8 @@ pub enum SchedulerError {
     Mix(String),
     #[error("{what}: {message}")]
     Video { what: String, message: String },
+    #[error("voice-over clip `{clip}`: file not found: {path}")]
+    VoiceoverMissing { clip: String, path: String },
     #[error("brand {what}: file not found: {path}")]
     BrandAssetMissing { what: String, path: String },
     #[error("scene `{scene}` sound effect {index}: file not found: {path}")]
@@ -251,6 +253,7 @@ pub async fn render_timeline_with(
 
     crate::video::check_scene_videos(&timeline, &cfg)?;
     check_sfx_files(&timeline, &cfg.public_dir)?;
+    check_voiceover_files(&timeline, &cfg.public_dir)?;
 
     // Narration can stretch scenes, so the timeline is validated again afterwards.
     let narrated = narrate_scenes(
@@ -330,6 +333,11 @@ pub async fn render_timeline_with(
     let (sound_placements, sound_ms) = crate::audio::place_clip_sounds(&timeline, &clip_sounds);
     placements.extend(sound_placements);
     clip_ms.extend(sound_ms);
+    // The voice-over track next: it ducks the music like narration. Without one, nothing changes.
+    let voiceover_ms = probe_voiceover(&timeline, &cfg, probe.clone(), &mut warnings, &ctx).await?;
+    let (voiceover, voiceover_audible) = crate::audio::place_voiceover(&timeline, &voiceover_ms);
+    placements.extend(voiceover);
+    clip_ms.extend(voiceover_audible);
     // Sound effects last; only those with `duck_music` count toward ducking.
     let sfx = crate::audio::place_sfx(&timeline);
     let has_sfx = !sfx.is_empty();
@@ -517,6 +525,70 @@ async fn preprocess_images(
     Ok(outputs.len())
 }
 
+/// Every voice-over clip's file must exist (the mix would otherwise fail inside ffmpeg).
+pub(crate) fn check_voiceover_files(
+    timeline: &VideoTimeline,
+    public_dir: &std::path::Path,
+) -> Result<(), SchedulerError> {
+    for clip in &timeline.voiceover {
+        let path = public_dir.join(&clip.source);
+        if !path.is_file() {
+            return Err(SchedulerError::VoiceoverMissing {
+                clip: clip.id.clone(),
+                path: path.display().to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Probes every voice-over file (lengths in clip order) and warns about clips that overlap or
+/// run past the end of the video (they are cut there).
+pub(crate) async fn probe_voiceover(
+    timeline: &VideoTimeline,
+    cfg: &SchedulerConfig,
+    probe: Arc<dyn AudioProbe>,
+    warnings: &mut Vec<String>,
+    ctx: &RenderContext,
+) -> Result<Vec<u64>, SchedulerError> {
+    let mut lengths = Vec::with_capacity(timeline.voiceover.len());
+    for clip in &timeline.voiceover {
+        let path = cfg.public_dir.join(&clip.source);
+        let probe = probe.clone();
+        let ms = tokio::task::spawn_blocking(move || probe.duration_ms(&path))
+            .await
+            .map_err(|e| SchedulerError::Join(e.to_string()))??;
+        lengths.push(ms);
+        ctx.check()?;
+    }
+    warnings.extend(voiceover_warnings(timeline, &lengths));
+    Ok(lengths)
+}
+
+/// Render warnings for the voice-over track, given each clip's file length.
+pub(crate) fn voiceover_warnings(timeline: &VideoTimeline, lengths: &[u64]) -> Vec<String> {
+    let clips = &timeline.voiceover;
+    let total = timeline.total_duration_ms();
+    let mut out = Vec::new();
+    for (a, b) in vimmer_dsl::overlapping_clips(clips, lengths) {
+        out.push(format!(
+            "voice-over clips `{}` and `{}` overlap; both play at once",
+            clips[a].id, clips[b].id
+        ));
+    }
+    for (clip, &ms) in clips.iter().zip(lengths) {
+        let end = clip.end_ms(ms);
+        if clip.start_ms < total && end > total {
+            out.push(format!(
+                "voice-over clip `{}` runs to {end} ms, past the end of the video ({total} ms); the last {} ms are cut",
+                clip.id,
+                end - total
+            ));
+        }
+    }
+    out
+}
+
 /// Probes the length of every placed clip and warns when one runs past the end of its scene.
 /// Returns the lengths in the order of `placements`.
 async fn check_audio(
@@ -686,6 +758,29 @@ fn sanitize(rel: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voiceover_files_and_warnings() {
+        let dir = std::env::temp_dir().join(format!("vimmer-vo-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("rec")).unwrap();
+        std::fs::write(dir.join("rec/a.wav"), b"wav").unwrap();
+        let t: VideoTimeline = serde_json::from_str(
+            r#"{"fps":30,"resolution":{"width":1920,"height":1080},"scenes":[{"id":"a","duration_ms":3000,"text":"a"}],
+            "voiceover":[{"id":"one","source":"rec/a.wav","start_ms":0},{"id":"two","source":"rec/b.wav","start_ms":1500}]}"#,
+        )
+        .unwrap();
+        let err = check_voiceover_files(&t, &dir).unwrap_err().to_string();
+        assert!(err.starts_with("voice-over clip `two`: file not found:"), "{err}");
+        assert_eq!(
+            voiceover_warnings(&t, &[2000, 2000]),
+            vec![
+                "voice-over clips `one` and `two` overlap; both play at once".to_string(),
+                "voice-over clip `two` runs to 3500 ms, past the end of the video (3000 ms); the last 500 ms are cut".to_string(),
+            ]
+        );
+        assert!(voiceover_warnings(&t, &[1500, 1500]).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn missing_brand_files_are_named() {

@@ -25,8 +25,9 @@ import { pagePreview, resolveTextLayout } from "../../../src/textPages";
 import { LookFields } from "./LookFields";
 import { ListenButton, type ListenProps } from "./ListenButton";
 import { autoPreset } from "../../../src/motion/look";
+import { VoiceoverPanel, type VoicePanelProps } from "./VoiceoverPanel";
 
-export type InspectorTab = "scene" | "subtitles" | "music" | "brand" | "assistant";
+export type InspectorTab = "scene" | "subtitles" | "music" | "voice" | "brand" | "assistant";
 
 type Props = {
   timeline: VideoTimeline;
@@ -52,6 +53,8 @@ type Props = {
   docKey: number;
   /** 试听: hearing a scene's narration before a render. Missing: no Listen button. */
   listen?: ListenProps;
+  /** The voice-over track (旁白音轨). Missing: no 旁白 tab. */
+  voice?: VoicePanelProps;
 };
 
 const MOTIONS: Scene["motion"][] = ["static", "zoom_in", "zoom_out", "pan_left", "pan_right"];
@@ -70,6 +73,11 @@ export const Inspector = (props: Props) => {
         <button role="tab" aria-selected={tab === "music"} className={tab === "music" ? "tab active" : "tab"} onClick={() => setTab("music")}>
           Music
         </button>
+        {props.voice && (
+          <button role="tab" aria-selected={tab === "voice"} className={tab === "voice" ? "tab active" : "tab"} onClick={() => setTab("voice")} data-tab="voice">
+            旁白 <span className="count">{props.timeline.voiceover?.length ?? 0}</span>
+          </button>
+        )}
         <button role="tab" aria-selected={tab === "brand"} className={tab === "brand" ? "tab active" : "tab"} onClick={() => setTab("brand")} data-tab="brand">
           Brand
         </button>
@@ -81,6 +89,7 @@ export const Inspector = (props: Props) => {
         {tab === "scene" && <SceneEditor {...props} />}
         {tab === "subtitles" && <SubtitleEditor {...props} />}
         {tab === "music" && <MusicEditor {...props} />}
+        {tab === "voice" && props.voice && <VoiceoverPanel {...props} voice={props.voice} />}
         {tab === "brand" && <BrandEditor timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} />}
         {/* Stays mounted so the chat and a pending proposal survive switching tabs. */}
         <div hidden={tab !== "assistant"}>
@@ -91,7 +100,7 @@ export const Inspector = (props: Props) => {
   );
 };
 
-const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, listen }: Props) => {
+const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, listen, voice }: Props) => {
   if (selection.kind !== "scene" && selection.kind !== "keyframe" && selection.kind !== "layer") {
     return <Empty title="No scene selected" hint="Click a scene block on the timeline to edit it." />;
   }
@@ -290,7 +299,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, list
         playheadMs={playheadMs}
         dispatch={dispatch}
       />
-      <div className="section-title">Audio</div>
+      <div className="section-title">朗读 Narration</div>
       <label className="check">
         <input
           type="checkbox"
@@ -313,6 +322,11 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, list
       )}
       {/* Keyed by scene: switching scenes unmounts it, which stops the sound. */}
       {scene.narration && listen && <ListenButton key={`${index}:${scene.id}`} scene={scene} listen={listen} />}
+      <div className="section-title">本幕音频（跟着场景走）</div>
+      <p className="dim small-text">
+        只在这一幕里播放，到这一幕结束就停。整段的旁白请放到「旁白」音轨，它不会被场景切换截断。
+      </p>
+      {voice?.sceneRecorder?.(index)}
       {scene.audio ? (
         <>
           <Field label="Source" hint="Path relative to public/">
@@ -332,7 +346,12 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, list
               onChange={(e) => patch({ audio: { ...scene.audio!, offset_ms: Math.max(0, Number(e.target.value) || 0) } })}
             />
           </Field>
-          <button className="btn ghost small" onClick={() => patch({ audio: null })}>Remove audio</button>
+          <div className="button-row">
+            <button className="btn ghost small" onClick={() => patch({ audio: null })}>Remove audio</button>
+            {voice && (
+              <MoveToTrackButton onMove={() => voice.onMoveSceneAudio(index)} disabled={!scene.audio.source.trim()} />
+            )}
+          </div>
         </>
       ) : (
         <button className="btn ghost small" onClick={() => patch({ audio: { source: "", offset_ms: 0 } })}>Add audio</button>
@@ -428,6 +447,25 @@ const SubtitlePosition = ({ timeline, dispatch }: { timeline: VideoTimeline; dis
         Reset to the built-in place
       </button>
     </div>
+  );
+};
+
+// 「移到旁白音轨」: one undo step; an error (a clip already playing there) is shown under it.
+const MoveToTrackButton = ({ onMove, disabled }: { onMove: () => string | null; disabled: boolean }) => {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <button
+        className="btn ghost small"
+        disabled={disabled}
+        title="The file plays at the same time on the voice-over track, and is no longer cut at the scene end"
+        onClick={() => setError(onMove())}
+        data-move-to-track
+      >
+        移到旁白音轨
+      </button>
+      {error && <span className="field-error" role="alert">{error}</span>}
+    </>
   );
 };
 

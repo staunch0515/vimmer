@@ -5,6 +5,7 @@ import { Subtitles } from "../components/Subtitles";
 import { KenBurnsImage, KenBurnsVideo } from "../components/KenBurnsImage";
 import { LayerStack } from "../components/LayerStack";
 import { AssetUrlContext, resolveAsset } from "../assets";
+import { AudioLengthsContext, clipFrames, clipGain } from "../voiceover";
 import { BUILTIN, brandColor } from "../brand";
 import { BrandContext, BrandOverlay, useBrand } from "../components/Brand";
 import { scenePages } from "../textPages";
@@ -138,6 +139,7 @@ type ChunkSubtitles = { start_frame: number; subtitles: SubtitleCue[] };
 // Renders every scene of the Rust-generated timeline at its frame offset.
 export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null }> = (timeline) => {
   const assetUrl = useContext(AssetUrlContext);
+  const lengths = useContext(AudioLengthsContext);
   const layouts = layoutScenes(timeline);
   const brand = timeline.brand ?? null;
   const chunkStart = timeline.chunk?.start_frame ?? 0;
@@ -199,6 +201,22 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
           );
         }),
       )}
+      {/* The voice-over track (旁白音轨), for the preview; the render mixes it after joining. */}
+      {(timeline.voiceover ?? []).map((clip) => {
+        const f = clipFrames(clip, timeline.fps, lengths?.[clip.source]);
+        if (f.durationInFrames === 0) return null;
+        return (
+          <Sequence
+            key={`voiceover-${clip.id}`}
+            from={f.from}
+            durationInFrames={f.durationInFrames ?? undefined}
+            name={`voice-over ${clip.id}`}
+            layout="none"
+          >
+            <Audio src={resolveAsset(clip.source, assetUrl)} trimBefore={f.trimBefore || undefined} volume={clipGain(clip)} />
+          </Sequence>
+        );
+      })}
       {timeline.music?.source ? (
         // Looped and faded in the preview. The render mixes music in after joining, so chunks omit it.
         <Audio src={resolveAsset(timeline.music.source, assetUrl)} loop volume={musicVolume(timeline.music, timeline)} />

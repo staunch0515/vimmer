@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -343,3 +344,21 @@ class EditHelperTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VoiceoverListing(unittest.TestCase):
+    def test_voiceover_clips_are_listed_only_when_present(self):
+        t = {"fps": 30, "resolution": {"width": 1920, "height": 1080},
+             "scenes": [{"id": "a", "duration_ms": 3000, "text": "Hi"}], "subtitles": []}
+        msg = et.build_user_message({"timeline": t, "instruction": "x"})
+        self.assertNotIn("Voice-over track", msg)
+        t["voiceover"] = [{"id": "vo-1", "source": "assets/recordings/vo-1.wav", "start_ms": 500,
+                           "trim_start_ms": 120, "gain": 1.5}]
+        msg = et.build_user_message({"timeline": t, "instruction": "x"})
+        self.assertIn("- 0: vo-1 at 500 ms, file assets/recordings/vo-1.wav, trimmed 120/0 ms, gain 1.5", msg)
+
+    def test_prompt_documents_the_voiceover_track(self):
+        prompt = (Path(__file__).resolve().parents[2] / "prompts" / "edit.md").read_text()
+        self.assertIn("`voiceover`", prompt)
+        self.assertIn("旁白音轨", prompt)
+

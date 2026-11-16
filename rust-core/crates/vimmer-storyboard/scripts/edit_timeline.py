@@ -189,6 +189,17 @@ def build_user_message(req):
         *lines,
         "",
     ]
+    clips = timeline.get("voiceover") or []
+    if clips:
+        out.append("Voice-over track (旁白音轨, on the global clock; JSON indices start at 0):")
+        for i, c in enumerate(clips):
+            line = f"- {i}: {c.get('id')} at {c.get('start_ms', 0)} ms, file {c.get('source')}"
+            if c.get("trim_start_ms") or c.get("trim_end_ms"):
+                line += f", trimmed {c.get('trim_start_ms', 0)}/{c.get('trim_end_ms', 0)} ms"
+            if c.get("gain", 1) != 1:
+                line += f", gain {c.get('gain')}"
+            out.append(line)
+        out.append("")
     scene_id = req.get("scene_id")
     if scene_id:
         out.append(f"Selected scene: {scene_id} (\"this scene\" means this one).")

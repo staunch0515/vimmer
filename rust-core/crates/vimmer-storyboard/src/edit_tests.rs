@@ -1936,3 +1936,54 @@ fn look_fields_and_values_are_checked() {
         assert!(text(&e).contains(want), "{want}: {e}");
     }
 }
+
+// --- voice-over track ----------------------------------------------------------------------------
+
+fn with_voiceover() -> Value {
+    let mut doc = small();
+    doc["voiceover"] = json!([{"id": "vo-1", "source": "assets/recordings/vo-1.wav", "start_ms": 0}]);
+    doc
+}
+
+#[test]
+fn voiceover_clips_can_be_moved_trimmed_added_and_removed() {
+    let out = ok(
+        &with_voiceover(),
+        json!([{"op": "replace", "path": "/voiceover/0/start_ms", "value": 1000},
+               {"op": "add", "path": "/voiceover/0/gain", "value": 1.4}]),
+    );
+    assert!(
+        out.summary
+            .iter()
+            .any(|l| l.contains("voice-over `vo-1`") && l.contains("at 1.00 s gain 1.4")),
+        "{:?}",
+        out.summary
+    );
+    let out = ok(&with_voiceover(), json!([{"op": "remove", "path": "/voiceover"}]));
+    assert!(out.summary.iter().any(|l| l == "voice-over: removed `vo-1`"), "{:?}", out.summary);
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/voiceover",
+                "value": [{"id": "a", "source": "assets/recordings/a.wav", "start_ms": 500, "trim_start_ms": 120}]}]),
+    );
+    assert!(out.summary.iter().any(|l| l.starts_with("voice-over: added `a`")), "{:?}", out.summary);
+}
+
+#[test]
+fn voiceover_unknown_keys_bad_values_and_hostile_paths_are_rejected() {
+    let e = err(
+        &with_voiceover(),
+        json!([{"op": "add", "path": "/voiceover/0/cmd", "value": "rm"}]),
+    );
+    assert_eq!(e.stage, Stage::Guard, "{e}");
+    let e = err(
+        &with_voiceover(),
+        json!([{"op": "add", "path": "/voiceover/0/gain", "value": 9.0}]),
+    );
+    assert_eq!(e.stage, Stage::Validation, "{e}");
+    let e = err(
+        &with_voiceover(),
+        json!([{"op": "replace", "path": "/voiceover/0/source", "value": "../../secret.wav"}]),
+    );
+    assert_ne!(e.stage, Stage::Model, "{e}");
+}

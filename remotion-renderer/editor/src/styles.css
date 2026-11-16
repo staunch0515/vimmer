@@ -622,3 +622,20 @@ textarea { resize: vertical; width: 100%; }
   padding: 2px 4px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
 }
 .page-list .page-item:hover { background: var(--bg-3, rgba(255, 255, 255, 0.06)); color: var(--text-1, inherit); }
+
+/* Voice-over track (旁白音轨) */
+.vo-drop { position: absolute; inset: 0; }
+.block.voiceover { top: 8px; bottom: 8px; background: linear-gradient(180deg, #2d2350, #1f1838); border-color: rgba(167, 139, 250, 0.3); cursor: grab; touch-action: none; }
+.block.voiceover.active { border-color: #a78bfa; box-shadow: 0 0 16px rgba(167, 139, 250, 0.3); }
+.block.voiceover.unknown { border-style: dashed; }
+.block.voiceover:active { cursor: grabbing; }
+.trim-handle { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 1; }
+.trim-handle.left { left: 0; }
+.trim-handle.right { right: 0; }
+.trim-handle:hover { background: rgba(167, 139, 250, 0.45); }
+.vo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.vo-row { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; background: transparent; border: 1px solid var(--line, #27272a); border-radius: 6px; padding: 5px 8px; color: inherit; cursor: pointer; }
+.vo-row.active { border-color: #a78bfa; background: rgba(167, 139, 250, 0.08); }
+.vo-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hint-block { font-size: 12px; line-height: 1.5; margin: 0 0 8px; }
+.small-text { font-size: 12px; }

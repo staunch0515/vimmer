@@ -264,7 +264,8 @@ pub fn check_sources(timeline: &VideoTimeline, public_dir: &Path, ffmpeg: &Path)
     let has_speech = timeline
         .scenes
         .iter()
-        .any(|s| s.audio.is_some() || s.narration.is_some());
+        .any(|s| s.audio.is_some() || s.narration.is_some())
+        || !timeline.voiceover.is_empty();
     for (i, scene) in timeline.scenes.iter().enumerate() {
         let Some(audio) = &scene.audio else { continue };
         if audio.source.trim().is_empty() || is_url(&audio.source) {
@@ -318,11 +319,11 @@ pub fn check_sources(timeline: &VideoTimeline, public_dir: &Path, ffmpeg: &Path)
                         if cut > CUT_ERROR_MS { Severity::Error } else { Severity::Warning },
                         "audio.cut_off",
                         format!(
-                            "audio `{}` is {dur} ms but only {available} ms fit before the scene ends: the last {cut} ms are cut",
+                            "audio `{}` is {dur} ms but only {available} ms fit before the scene ends: the last {cut} ms are cut (scene audio follows its scene and stops at the cut; a voice-over that runs on belongs on the voice-over track, 移到旁白音轨)",
                             audio.source
                         ),
                         Suggestion::set(
-                            format!("lengthen the scene to {needed} ms"),
+                            format!("lengthen the scene to {needed} ms, or move the audio to the voice-over track (移到旁白音轨) so it plays past the cut"),
                             scene_path(i, "duration_ms"),
                             json!(needed),
                         ),

@@ -6,6 +6,8 @@ import type { BeatMark } from "../beats";
 import { keyframeRange, layerSpan } from "../layerKeyframes";
 import { ResizeHandle, usePersistedSize } from "./layout/Split";
 import { clamp, restore } from "./layout/layout";
+import * as vo from "../voiceover";
+import { ASSET_DRAG_TYPE } from "../studio/AssetPanel";
 
 // The track-label column: resizable, remembered like the studio's dividers.
 const LABEL_W = 116;
@@ -24,6 +26,10 @@ type Props = {
   dispatch: Dispatch<Action>;
   // Beats of the music in video time (after "Detect beats", or from a hand-set tempo).
   beatMarks?: BeatMark[];
+  // Measured lengths of the voice-over files (audioLengths.ts).
+  lengths?: vo.Lengths;
+  // An audio asset dropped on the voice-over lane, at a time in ms.
+  onDropVoiceover?: (path: string, atMs: number) => void;
 };
 
 type Drag =
@@ -31,7 +37,10 @@ type Drag =
   | { kind: "keyframe"; sceneIndex: number; index: number; atMs: number; moved: boolean }
   // A keyframe of layer `index`: `keyframe` is its index in the layer's list.
   | { kind: "layerKeyframe"; sceneIndex: number; index: number; keyframe: number; atMs: number; moved: boolean }
-  | { kind: "resize"; index: number; sceneStartMs: number; startX: number; startDuration: number; duration: number };
+  | { kind: "resize"; index: number; sceneStartMs: number; startX: number; startDuration: number; duration: number }
+  // A voice-over clip: moved by its body, trimmed by its edges. Committed once, when the drag ends.
+  | { kind: "voMove"; index: number; startX: number; startMs: number; atMs: number }
+  | { kind: "voTrim"; index: number; edge: "start" | "end"; startX: number; startTrim: number; trim: number };
 
 // Magnetic snapping: a point within SNAP_PX of a boundary pulls onto it and shows a guide.
 const snapTo = (ms: number, points: number[], pps: number): { ms: number; guide: number | null } => {
@@ -44,7 +53,9 @@ const snapTo = (ms: number, points: number[], pps: number): { ms: number; guide:
   return best === null ? { ms, guide: null } : { ms: best, guide: best };
 };
 
-export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, dispatch, beatMarks = [] }: Props) => {
+const NO_LENGTHS: vo.Lengths = {};
+
+export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, dispatch, beatMarks = [], lengths = NO_LENGTHS, onDropVoiceover }: Props) => {
   const [pps, setPps] = useState(60);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [guide, setGuide] = useState<number | null>(null);
@@ -126,6 +137,20 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
       setDrag({ ...drag, atMs: Math.max(lo, Math.min(raw, hi)), moved: true });
       return;
     }
+    if (drag.kind === "voMove") {
+      const dx = ((e.clientX - drag.startX) / pps) * 1000;
+      const snapped = snapTo(drag.startMs + dx, snapPoints, pps);
+      setGuide(snapped.guide);
+      setDrag({ ...drag, atMs: Math.max(0, Math.round(snapped.ms)) });
+      return;
+    }
+    if (drag.kind === "voTrim") {
+      const dx = ((e.clientX - drag.startX) / pps) * 1000;
+      // Dragging the left edge right trims more; dragging the right edge left trims more.
+      const trim = Math.max(0, Math.round(drag.startTrim + (drag.edge === "start" ? dx : -dx)));
+      setDrag({ ...drag, trim });
+      return;
+    }
     const dxMs = ((e.clientX - drag.startX) / pps) * 1000;
     const wanted = drag.sceneStartMs + drag.startDuration + dxMs;
     const snapped = snapTo(wanted, snapPoints, pps);
@@ -142,6 +167,12 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
       // One dispatch when the drag ends: a drag is one undo step.
       dispatch({ type: "moveLayerKeyframe", sceneIndex: drag.sceneIndex, index: drag.index, keyframe: drag.keyframe, atMs: drag.atMs });
     }
+    if (drag?.kind === "voMove" && drag.atMs !== drag.startMs) {
+      dispatch({ type: "moveVoiceover", index: drag.index, startMs: drag.atMs, lengths });
+    }
+    if (drag?.kind === "voTrim" && drag.trim !== drag.startTrim) {
+      dispatch({ type: "trimVoiceover", index: drag.index, edge: drag.edge, trimMs: drag.trim, lengths });
+    }
     if (drag?.kind === "keyframe" && drag.moved) {
       dispatch({ type: "moveKeyframe", sceneIndex: drag.sceneIndex, index: drag.index, atMs: drag.atMs });
     }
@@ -151,6 +182,13 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
 
   const ticks = Array.from({ length: Math.ceil(contentW / pps) + 1 }, (_, s) => s);
   const playheadPx = (frame / fps) * pps;
+  // While a clip is dragged, the lane shows where it would land (the same rules as the commit).
+  const shownTrack =
+    drag?.kind === "voMove"
+      ? vo.moveClip(timeline, drag.index, drag.atMs, lengths)
+      : drag?.kind === "voTrim"
+        ? vo.trimClip(timeline, drag.index, drag.edge, drag.trim, lengths)
+        : timeline;
   const sceneDuration = (i: number) =>
     drag?.kind === "resize" && drag.index === i ? drag.duration : timeline.scenes[i].duration_ms;
 
@@ -294,7 +332,82 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
             )}
           </Track>
 
-          <Track label="Audio" height={TRACK_H}>
+          <Track label="旁白 Voice-over" height={TRACK_H} title="旁白音轨: recorded speech on the video's clock, not cut at scene ends">
+            <div
+              className="vo-drop"
+              data-voiceover-lane
+              onDragOver={(e) => {
+                if (!onDropVoiceover || !e.dataTransfer.types.includes(ASSET_DRAG_TYPE)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = "copy";
+              }}
+              onDrop={(e) => {
+                const raw = e.dataTransfer.getData(ASSET_DRAG_TYPE);
+                if (!raw || !onDropVoiceover) return;
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                  const asset = JSON.parse(raw) as { path: string; kind: string };
+                  if (asset.kind === "audio") onDropVoiceover(asset.path, Math.round(msFromClientX(e.clientX)));
+                } catch {
+                  /* not one of ours */
+                }
+              }}
+            />
+            {vo.clipsOf(shownTrack).map((clip, i) => {
+              const active = selection.kind === "voiceover" && selection.index === i;
+              const played = vo.playedMs(clip, lengths);
+              const known = lengths[clip.source] !== undefined;
+              return (
+                <div
+                  key={`vo-${clip.id}`}
+                  role="button"
+                  tabIndex={0}
+                  data-voiceover-clip={clip.id}
+                  className={`block voiceover${active ? " active" : ""}${known ? "" : " unknown"}`}
+                  style={{ left: (clip.start_ms / 1000) * pps, width: Math.max(6, (played / 1000) * pps - 2) }}
+                  title={`${clip.id} · ${clip.source} · ${(clip.start_ms / 1000).toFixed(2)} s, ${(played / 1000).toFixed(2)} s`}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    onSelect({ kind: "voiceover", index: i });
+                    setDrag({ kind: "voMove", index: i, startX: e.clientX, startMs: clip.start_ms, atMs: clip.start_ms });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Delete" || e.key === "Backspace") dispatch({ type: "deleteVoiceover", index: i });
+                  }}
+                >
+                  <div
+                    className="trim-handle left"
+                    aria-label={`Trim the start of ${clip.id}`}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      onSelect({ kind: "voiceover", index: i });
+                      const t0 = clip.trim_start_ms ?? 0;
+                      setDrag({ kind: "voTrim", index: i, edge: "start", startX: e.clientX, startTrim: t0, trim: t0 });
+                    }}
+                  />
+                  <span className="block-title">🎙 {clip.source.split("/").pop()}</span>
+                  <span className="block-sub mono">{(played / 1000).toFixed(2)} s{clip.gain !== undefined && clip.gain !== 1 ? ` · ×${clip.gain}` : ""}</span>
+                  <div
+                    className="trim-handle right"
+                    aria-label={`Trim the end of ${clip.id}`}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      onSelect({ kind: "voiceover", index: i });
+                      const t0 = clip.trim_end_ms ?? 0;
+                      setDrag({ kind: "voTrim", index: i, edge: "end", startX: e.clientX, startTrim: t0, trim: t0 });
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </Track>
+
+          <Track label="本幕音频 Scene audio" height={TRACK_H} title="Audio that follows its scene and stops at the scene's end">
             {timeline.scenes.map((scene, i) =>
               scene.audio ? (
                 <div

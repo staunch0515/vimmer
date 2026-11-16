@@ -111,6 +111,8 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
         music: None,
         // The default look of every scene, as in the full render.
         look: timeline.look.clone(),
+        // The voice-over is mixed once, over the joined video, like the music.
+        voiceover: vec![],
     };
     // Without the music, an `auto` grade could not see the mood: settle it from the full timeline.
     vimmer_dsl::replace_auto_grades(&mut out, vimmer_dsl::auto_preset(timeline));
@@ -225,6 +227,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         }
     }
 
