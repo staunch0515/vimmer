@@ -538,3 +538,24 @@ textarea { resize: vertical; width: 100%; }
 .look-fields { display: flex; flex-direction: column; gap: 6px; }
 .look-overlay { border: 1px solid var(--border, #2a2a30); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
 .look-overlay input[type="color"] { width: 36px; height: 24px; padding: 0; border: none; background: none; }
+
+/* 试听 Listen: a scene's narration before a render, and "listen to all" under the preview. */
+.listen { display: flex; flex-direction: column; gap: 6px; }
+.listen .button-row { align-items: center; }
+.listen-hint { font-size: 12px; color: var(--text-2); line-height: 1.4; }
+.listen-hint.stretched { color: var(--amber); }
+.listen-hint.error { color: var(--danger); }
+.listen-hint.note { color: var(--text-2); font-style: italic; }
+.spinner {
+  display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px;
+  border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  animation: listen-spin 0.8s linear infinite;
+}
+@keyframes listen-spin { to { transform: rotate(360deg); } }
+.narration-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; color: var(--text-2);
+}
+.narration-bar.on { border-color: var(--amber); }
+.narration-bar .warn { color: var(--amber); }
+.narration-bar .error { color: var(--danger); }

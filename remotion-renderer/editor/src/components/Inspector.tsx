@@ -20,6 +20,7 @@ import { MoodMusicFields, MusicModeSwitch } from "./MusicPanel";
 import type { MusicLibrary, PickedTrack } from "../music";
 import { withSpokenLine, withVoice } from "../narration";
 import { LookFields } from "./LookFields";
+import { ListenButton, type ListenProps } from "./ListenButton";
 import { autoPreset } from "../../../src/motion/look";
 
 export type InspectorTab = "scene" | "subtitles" | "music" | "brand" | "assistant";
@@ -46,6 +47,8 @@ type Props = {
   onSeekMs?: (ms: number) => void;
   /** Changes when another document is opened (the assistant's chat starts over). */
   docKey: number;
+  /** 试听: hearing a scene's narration before a render. Missing: no Listen button. */
+  listen?: ListenProps;
 };
 
 const MOTIONS: Scene["motion"][] = ["static", "zoom_in", "zoom_out", "pan_left", "pan_right"];
@@ -85,7 +88,7 @@ export const Inspector = (props: Props) => {
   );
 };
 
-const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs }: Props) => {
+const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, listen }: Props) => {
   if (selection.kind !== "scene" && selection.kind !== "keyframe" && selection.kind !== "layer") {
     return <Empty title="No scene selected" hint="Click a scene block on the timeline to edit it." />;
   }
@@ -277,6 +280,8 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs }: Pr
           </select>
         </Field>
       )}
+      {/* Keyed by scene: switching scenes unmounts it, which stops the sound. */}
+      {scene.narration && listen && <ListenButton key={`${index}:${scene.id}`} scene={scene} listen={listen} />}
       {scene.audio ? (
         <>
           <Field label="Source" hint="Path relative to public/">

@@ -5,6 +5,7 @@
 //! to `say` with one warning, so a render never fails because of it.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -70,6 +71,8 @@ struct Narrated {
     index: usize,
     public_rel: String,
     path: PathBuf,
+    /// The file was already there: nothing was synthesized for it.
+    cached: bool,
 }
 
 /// Synthesizes narration for every scene that asks for it and has no audio of its own.
@@ -87,46 +90,11 @@ pub async fn narrate_scenes(
     let tts_dir = cfg.public_dir.join("generated").join("tts");
     tokio::fs::create_dir_all(&tts_dir).await?;
 
-    let mut jobs = Vec::new();
-    for (index, scene) in timeline.scenes.iter().enumerate() {
-        let Some(narration) = &scene.narration else {
-            continue;
-        };
-        if scene.audio.is_some() {
-            continue;
-        }
-        let Some(text) = scene.spoken_text().map(String::from) else {
-            continue;
-        };
-        jobs.push(Job {
-            index,
-            text,
-            voice: narration.voice.clone().filter(|v| !v.trim().is_empty()),
-        });
-    }
+    let jobs = collect_jobs(timeline, None);
     if jobs.is_empty() {
         return Ok(0);
     }
-
-    let mut files = None;
-    if cfg.tts.resolve_engine(warnings) == TtsEngine::Kokoro {
-        match narrate_kokoro(timeline, &jobs, cfg, &tts_dir, ctx).await {
-            Ok((narrated, notes)) => {
-                warnings.extend(notes);
-                files = Some(narrated);
-            }
-            Err(SchedulerError::Cancelled | SchedulerError::Media(MediaError::Cancelled)) => {
-                return Err(SchedulerError::Cancelled)
-            }
-            Err(e) => warnings.push(format!(
-                "Kokoro narration failed, all narration uses `say` instead: {e}"
-            )),
-        }
-    }
-    let files = match files {
-        Some(files) => files,
-        None => narrate_say(timeline, &jobs, speech, &tts_dir, ctx, warnings).await?,
-    };
+    let (files, _) = synthesize(timeline, &jobs, cfg, speech, &tts_dir, ctx, warnings).await?;
 
     let mut narrated = 0;
     for file in files {
@@ -148,6 +116,186 @@ pub async fn narrate_scenes(
         narrated += 1;
     }
     Ok(narrated)
+}
+
+/// The scenes a render narrates: narration on, no audio of their own, something to say.
+/// `only`: just the scenes with these ids (a preview of some scenes).
+fn collect_jobs(timeline: &VideoTimeline, only: Option<&[String]>) -> Vec<Job> {
+    let mut jobs = Vec::new();
+    for (index, scene) in timeline.scenes.iter().enumerate() {
+        if only.is_some_and(|ids| !ids.contains(&scene.id)) {
+            continue;
+        }
+        let Some(narration) = &scene.narration else {
+            continue;
+        };
+        if scene.audio.is_some() {
+            continue;
+        }
+        let Some(text) = scene.spoken_text().map(String::from) else {
+            continue;
+        };
+        jobs.push(Job {
+            index,
+            text,
+            voice: narration.voice.clone().filter(|v| !v.trim().is_empty()),
+        });
+    }
+    jobs
+}
+
+/// The narration files for `jobs`, synthesizing the ones not in the cache, with the engine
+/// that made them: Kokoro when chosen and it works, else `say` (with one warning).
+async fn synthesize(
+    timeline: &VideoTimeline,
+    jobs: &[Job],
+    cfg: &SchedulerConfig,
+    speech: Arc<dyn Speech>,
+    tts_dir: &Path,
+    ctx: &RenderContext,
+    warnings: &mut Vec<String>,
+) -> Result<(Vec<Narrated>, TtsEngine), SchedulerError> {
+    if cfg.tts.resolve_engine(warnings) == TtsEngine::Kokoro {
+        match narrate_kokoro(timeline, jobs, cfg, tts_dir, ctx).await {
+            Ok((narrated, notes)) => {
+                warnings.extend(notes);
+                return Ok((narrated, TtsEngine::Kokoro));
+            }
+            Err(SchedulerError::Cancelled | SchedulerError::Media(MediaError::Cancelled)) => {
+                return Err(SchedulerError::Cancelled)
+            }
+            Err(e) => warnings.push(format!(
+                "Kokoro narration failed, all narration uses `say` instead: {e}"
+            )),
+        }
+    }
+    let files = narrate_say(timeline, jobs, speech, tts_dir, ctx, warnings).await?;
+    Ok((files, TtsEngine::Say))
+}
+
+/// How many narration previews may synthesize at the same time (per process). More wait their
+/// turn, so clicking "listen" on many scenes cannot start dozens of `say` or Kokoro processes.
+pub const PREVIEW_SLOTS: usize = 2;
+
+fn preview_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(PREVIEW_SLOTS))
+}
+
+/// One scene's narration, exactly as a render would make it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PreviewClip {
+    pub scene_id: String,
+    /// Position of the scene in the timeline.
+    pub index: usize,
+    /// What is spoken (the spoken line, else the scene text).
+    pub text: String,
+    /// The voice the scene asks for (`None`: by language).
+    pub voice: Option<String>,
+    /// The cached file, relative to the public dir: the same file a render attaches.
+    pub source: String,
+    /// Length of the speech.
+    pub speech_ms: u64,
+    /// The scene's length in the timeline.
+    pub scene_ms: u64,
+    /// The scene's length in a render: stretched to the speech plus a short pause when longer.
+    pub render_ms: u64,
+    /// The file came from the cache (nothing was synthesized).
+    pub cached: bool,
+}
+
+/// What [`preview_narration`] made.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct NarrationPreview {
+    /// The engine that spoke: Kokoro, or `say` when Kokoro was not chosen or could not run.
+    pub engine: &'static str,
+    pub clips: Vec<PreviewClip>,
+    /// The render's warnings for these scenes (a Kokoro fallback, a voice replaced).
+    pub warnings: Vec<String>,
+}
+
+/// Synthesizes the narration of `timeline` (only the scenes `only` names, when given) with the
+/// same engine choice, voices, file names and cache as a render, without changing the
+/// timeline: a clip made here is reused by the render, and one a render made is reused here.
+/// At most [`PREVIEW_SLOTS`] previews synthesize at once; the others wait.
+pub async fn preview_narration(
+    timeline: &VideoTimeline,
+    only: Option<&[String]>,
+    cfg: &SchedulerConfig,
+    speech: Arc<dyn Speech>,
+    probe: Arc<dyn AudioProbe>,
+    ctx: &RenderContext,
+) -> Result<NarrationPreview, String> {
+    let jobs = collect_jobs(timeline, only);
+    if jobs.is_empty() {
+        return Err(match only {
+            Some([id]) => format!(
+                "Scene `{id}` has nothing to narrate (narration is off, it has its own audio, or it has no text)."
+            ),
+            _ => "No scene has narration to listen to.".to_string(),
+        });
+    }
+    let _slot = preview_slots().acquire().await.map_err(|e| e.to_string())?;
+    preview_jobs(timeline, &jobs, cfg, speech, probe, ctx)
+        .await
+        .map_err(|e| preview_error(&e))
+}
+
+async fn preview_jobs(
+    timeline: &VideoTimeline,
+    jobs: &[Job],
+    cfg: &SchedulerConfig,
+    speech: Arc<dyn Speech>,
+    probe: Arc<dyn AudioProbe>,
+    ctx: &RenderContext,
+) -> Result<NarrationPreview, SchedulerError> {
+    ctx.check()?;
+    let tts_dir = cfg.public_dir.join("generated").join("tts");
+    tokio::fs::create_dir_all(&tts_dir).await?;
+    let mut warnings = Vec::new();
+    let (files, engine) =
+        synthesize(timeline, jobs, cfg, speech, &tts_dir, ctx, &mut warnings).await?;
+    let mut clips = Vec::with_capacity(files.len());
+    for (file, job) in files.into_iter().zip(jobs) {
+        let speech_ms = measure(&probe, file.path).await?;
+        let scene = &timeline.scenes[file.index];
+        clips.push(PreviewClip {
+            scene_id: scene.id.clone(),
+            index: file.index,
+            text: job.text.clone(),
+            voice: job.voice.clone(),
+            source: file.public_rel,
+            speech_ms,
+            scene_ms: scene.duration_ms,
+            render_ms: scene.duration_ms.max(speech_ms + TAIL_MS),
+            cached: file.cached,
+        });
+    }
+    Ok(NarrationPreview {
+        engine: engine.as_str(),
+        clips,
+        warnings,
+    })
+}
+
+/// A preview failure in words for the editor: what went wrong and what to do.
+pub fn preview_error(e: &SchedulerError) -> String {
+    let text = e.to_string();
+    let lower = text.to_lowercase();
+    if matches!(e, SchedulerError::Cancelled) {
+        "The preview was stopped.".into()
+    } else if lower.contains("voice") && lower.contains("not found")
+        || lower.contains("invalid voice")
+    {
+        format!("This voice is not installed for macOS `say` (System Settings → Accessibility → Spoken Content → System voice → Manage Voices), or pick another voice. ({text})")
+    } else if matches!(e, SchedulerError::Media(MediaError::Io(io)) if io.kind() == std::io::ErrorKind::NotFound)
+    {
+        format!(
+            "A speech tool was not found: macOS `say` and `ffmpeg` must be on this Mac. ({text})"
+        )
+    } else {
+        format!("Narration could not be made: {text}")
+    }
 }
 
 /// `say`, one scene at a time, cached by voice and text exactly as before Kokoro existed.
@@ -185,9 +333,10 @@ async fn narrate_say(
         ctx.emit(Progress::Stage {
             name: format!("Narrating {}", scene.id),
         });
-        if !dst.exists() {
+        let cached = dst.exists();
+        if !cached {
             let (speech, text, dst) = (speech.clone(), job.text.clone(), dst.clone());
-            tokio::task::spawn_blocking(move || speech.synthesize(&text, &voice, &dst))
+            tokio::task::spawn_blocking(move || synthesize_whole(&*speech, &text, &voice, &dst))
                 .await
                 .map_err(|e| SchedulerError::Join(e.to_string()))??;
         }
@@ -195,6 +344,7 @@ async fn narrate_say(
             index: job.index,
             public_rel: format!("generated/tts/{file}"),
             path: dst,
+            cached,
         });
     }
     Ok(files)
@@ -236,7 +386,8 @@ async fn narrate_kokoro(
             engine.cache_key(&job.text, lang, &voice)
         );
         let dst = tts_dir.join(&file);
-        if !dst.exists() {
+        let cached = dst.exists();
+        if !cached {
             missing.push(KokoroItem {
                 text: job.text.clone(),
                 lang,
@@ -248,6 +399,7 @@ async fn narrate_kokoro(
             index: job.index,
             public_rel: format!("generated/tts/{file}"),
             path: dst,
+            cached,
         });
     }
     if missing.is_empty() {
@@ -276,6 +428,41 @@ async fn narrate_kokoro(
     ctx.check()?;
     notes.extend(helper_notes.into_iter().map(|n| format!("Kokoro: {n}")));
     Ok((files, notes))
+}
+
+/// `say` into a temporary file renamed into place when complete, so the cache never holds a
+/// half-written clip (a preview and a render may ask for the same clip at the same time; each
+/// writer has its own temporary file).
+fn synthesize_whole(
+    speech: &dyn Speech,
+    text: &str,
+    voice: &str,
+    dst: &Path,
+) -> Result<(), MediaError> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let stem = dst
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let part = dst.with_file_name(format!(
+        "{stem}.part{}-{}.wav",
+        std::process::id(),
+        NEXT.fetch_add(1, AtomicOrdering::Relaxed)
+    ));
+    let made = speech.synthesize(text, voice, &part).and_then(|()| {
+        if part.is_file() {
+            std::fs::rename(&part, dst).map_err(MediaError::from)
+        } else {
+            Err(MediaError::Speech(format!(
+                "no audio was written for `{}`",
+                dst.display()
+            )))
+        }
+    });
+    if made.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    made
 }
 
 async fn measure(
@@ -717,8 +904,7 @@ cp "$in" "$out"
                 std::fs::write(out, b"wav").map_err(MediaError::from)
             }
         }
-        let dir =
-            std::env::temp_dir().join(format!("vimmer-narrate-line-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("vimmer-narrate-line-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let cfg = cfg(dir.clone());
@@ -752,15 +938,312 @@ cp "$in" "$out"
         // A scene without a spoken line keeps the key it had before the field existed
         // (the same name main gives it).
         assert_eq!(src(0), "generated/tts/old-751a583f147ef128.wav");
-        assert_eq!(src(0), format!("generated/tts/old-{:016x}.wav", fnv1a("Samantha\nHello")));
+        assert_eq!(
+            src(0),
+            format!("generated/tts/old-{:016x}.wav", fnv1a("Samantha\nHello"))
+        );
         assert_eq!(
             src(1),
-            format!("generated/tts/line-{:016x}.wav", fnv1a("Samantha\nSaid instead"))
+            format!(
+                "generated/tts/line-{:016x}.wav",
+                fnv1a("Samantha\nSaid instead")
+            )
         );
         assert_eq!(
             src(3),
-            format!("generated/tts/blank-{:016x}.wav", fnv1a("Samantha\nFallback"))
+            format!(
+                "generated/tts/blank-{:016x}.wav",
+                fnv1a("Samantha\nFallback")
+            )
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn fresh_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("vimmer-preview-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn preview_timeline() -> VideoTimeline {
+        let mut t = timeline(vec![
+            scene("intro", 1_000, Some("Hello"), true),
+            scene("body", 5_000, Some("西安钟楼"), true),
+            scene("quiet", 1_000, Some("Shh"), false),
+        ]);
+        t.scenes[1].narration.as_mut().unwrap().text = Some("钟楼在西安".into());
+        t
+    }
+
+    #[tokio::test]
+    async fn a_preview_makes_the_files_the_render_uses_and_the_render_reuses_them() {
+        let dir = fresh_dir("reuse");
+        let cfg = cfg(dir.clone());
+        let speech = Arc::new(FakeSpeech(AtomicUsize::new(0)));
+        let probe: Arc<dyn AudioProbe> = Arc::new(FixedProbe(2_000));
+        let ctx = RenderContext::silent();
+        let t = preview_timeline();
+        let before = t.clone();
+
+        let p = preview_narration(&t, None, &cfg, speech.clone(), probe.clone(), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(t, before, "a preview never changes the timeline");
+        assert_eq!(p.engine, "say");
+        assert_eq!(speech.0.load(Ordering::SeqCst), 2);
+        let ids: Vec<_> = p.clips.iter().map(|c| c.scene_id.as_str()).collect();
+        assert_eq!(ids, ["intro", "body"], "only narrated scenes");
+        let intro = &p.clips[0];
+        assert_eq!(
+            (intro.speech_ms, intro.scene_ms, intro.render_ms),
+            (2_000, 1_000, 2_300)
+        );
+        assert!(!intro.cached);
+        assert_eq!(
+            p.clips[1].render_ms, 5_000,
+            "long enough already: not stretched"
+        );
+        assert_eq!(
+            p.clips[1].text, "钟楼在西安",
+            "the spoken line is what is heard"
+        );
+        assert_eq!(
+            intro.source,
+            format!("generated/tts/intro-{:016x}.wav", fnv1a("Samantha\nHello"))
+        );
+        assert!(dir.join(&intro.source).is_file());
+        let leftovers: Vec<_> = std::fs::read_dir(dir.join("generated/tts"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".part"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "no temporary files left: {leftovers:?}"
+        );
+
+        // The render attaches the very same files and synthesizes nothing.
+        let mut rendered = t.clone();
+        narrate_scenes(
+            &mut rendered,
+            &cfg,
+            speech.clone(),
+            probe.clone(),
+            &ctx,
+            &mut Vec::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            speech.0.load(Ordering::SeqCst),
+            2,
+            "render reused the preview's clips"
+        );
+        for clip in &p.clips {
+            let scene = &rendered.scenes[clip.index];
+            assert_eq!(scene.audio.as_ref().unwrap().source, clip.source);
+            assert_eq!(
+                scene.duration_ms, clip.render_ms,
+                "preview predicts the render's length"
+            );
+        }
+
+        // And a preview after a render (or a second preview) is all cached.
+        let again = preview_narration(
+            &t,
+            Some(&["body".to_string()]),
+            &cfg,
+            speech.clone(),
+            probe,
+            &ctx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(again.clips.len(), 1);
+        assert!(again.clips[0].cached);
+        assert_eq!(speech.0.load(Ordering::SeqCst), 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn changing_the_text_or_the_voice_makes_a_new_clip() {
+        let dir = fresh_dir("invalidate");
+        let cfg = cfg(dir.clone());
+        let speech = Arc::new(FakeSpeech(AtomicUsize::new(0)));
+        let probe: Arc<dyn AudioProbe> = Arc::new(FixedProbe(800));
+        let ctx = RenderContext::silent();
+        let only = ["intro".to_string()];
+        let mut t = preview_timeline();
+        let first = preview_narration(&t, Some(&only), &cfg, speech.clone(), probe.clone(), &ctx)
+            .await
+            .unwrap();
+        t.scenes[0].text = Some("Hello there".into());
+        let text = preview_narration(&t, Some(&only), &cfg, speech.clone(), probe.clone(), &ctx)
+            .await
+            .unwrap();
+        t.scenes[0].narration.as_mut().unwrap().voice = Some("Daniel".into());
+        let voice = preview_narration(&t, Some(&only), &cfg, speech.clone(), probe.clone(), &ctx)
+            .await
+            .unwrap();
+        let sources = [&first, &text, &voice].map(|p| p.clips[0].source.clone());
+        assert_ne!(sources[0], sources[1]);
+        assert_ne!(sources[1], sources[2]);
+        assert_eq!(
+            speech.0.load(Ordering::SeqCst),
+            3,
+            "each change synthesized once"
+        );
+        assert!([&first, &text, &voice].iter().all(|p| !p.clips[0].cached));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn previews_never_synthesize_more_than_the_cap_at_once() {
+        struct Slow {
+            now: AtomicUsize,
+            peak: AtomicUsize,
+        }
+        impl Speech for Slow {
+            fn synthesize(&self, _t: &str, _v: &str, out: &Path) -> Result<(), MediaError> {
+                let n = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+                self.peak.fetch_max(n, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(150));
+                self.now.fetch_sub(1, Ordering::SeqCst);
+                std::fs::write(out, b"wav").map_err(MediaError::from)
+            }
+        }
+        let dir = fresh_dir("cap");
+        let cfg = Arc::new(cfg(dir.clone()));
+        let speech = Arc::new(Slow {
+            now: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+        });
+        let probe: Arc<dyn AudioProbe> = Arc::new(FixedProbe(500));
+        let mut tasks = Vec::new();
+        for i in 0..6 {
+            let (cfg, speech, probe) = (cfg.clone(), speech.clone(), probe.clone());
+            tasks.push(tokio::spawn(async move {
+                let t = timeline(vec![scene(
+                    &format!("s{i}"),
+                    1_000,
+                    Some(&format!("Line {i}")),
+                    true,
+                )]);
+                preview_narration(&t, None, &cfg, speech, probe, &RenderContext::silent()).await
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+        let peak = speech.peak.load(Ordering::SeqCst);
+        assert!((1..=PREVIEW_SLOTS).contains(&peak), "peak {peak}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn preview_errors_say_what_is_wrong() {
+        struct Broken;
+        impl Speech for Broken {
+            fn synthesize(&self, _t: &str, _v: &str, _out: &Path) -> Result<(), MediaError> {
+                Err(MediaError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "say",
+                )))
+            }
+        }
+        let dir = fresh_dir("errors");
+        let cfg = cfg(dir.clone());
+        let probe: Arc<dyn AudioProbe> = Arc::new(FixedProbe(500));
+        let ctx = RenderContext::silent();
+        let t = preview_timeline();
+        let quiet = preview_narration(
+            &t,
+            Some(&["quiet".to_string()]),
+            &cfg,
+            Arc::new(Broken),
+            probe.clone(),
+            &ctx,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            quiet.contains("Scene `quiet` has nothing to narrate"),
+            "{quiet}"
+        );
+        let none = preview_narration(
+            &timeline(vec![]),
+            None,
+            &cfg,
+            Arc::new(Broken),
+            probe.clone(),
+            &ctx,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(none, "No scene has narration to listen to.");
+        let missing = preview_narration(&t, None, &cfg, Arc::new(Broken), probe.clone(), &ctx)
+            .await
+            .unwrap_err();
+        assert!(
+            missing.contains("`say` and `ffmpeg` must be on this Mac"),
+            "{missing}"
+        );
+        let voice = preview_error(&SchedulerError::Media(MediaError::Speech(
+            "Voice `Nobody' not found.".into(),
+        )));
+        assert!(voice.contains("not installed for macOS `say`"), "{voice}");
+        assert!(preview_error(&SchedulerError::Cancelled).contains("stopped"));
+        assert!(
+            !dir.join("generated/tts").read_dir().unwrap().any(|_| true),
+            "a failed synthesis leaves nothing in the cache"
+        );
+
+        // Kokoro chosen but not installed: like a render, `say` speaks, with a visible note.
+        let mut kokoro = cfg.clone();
+        kokoro.tts = TtsConfig {
+            engine: Some(TtsEngine::Kokoro),
+            kokoro_python: Some(PathBuf::from("/nonexistent/python")),
+            ..TtsConfig::default()
+        };
+        let speech = Arc::new(FakeSpeech(AtomicUsize::new(0)));
+        let p = preview_narration(&t, None, &kokoro, speech, probe, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(p.engine, "say");
+        assert!(
+            p.warnings
+                .iter()
+                .any(|w| w.contains("Kokoro narration failed, all narration uses `say` instead")),
+            "{:?}",
+            p.warnings
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn kokoro_previews_use_the_render_cache_names() {
+        let (dir, cfg) = kokoro_setup("preview", FAKE_PYTHON);
+        let speech = Arc::new(FakeSpeech(AtomicUsize::new(0)));
+        let probe: Arc<dyn AudioProbe> = Arc::new(FixedProbe(2_000));
+        let ctx = RenderContext::silent();
+        let t = three_languages();
+        let p = preview_narration(&t, None, &cfg, speech.clone(), probe.clone(), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(p.engine, "kokoro");
+        assert_eq!(runs(&dir), 1);
+        let mut rendered = three_languages();
+        narrate(&mut rendered, &cfg, &speech, &ctx).await.0.unwrap();
+        assert_eq!(runs(&dir), 1, "the render found every clip in the cache");
+        for clip in &p.clips {
+            assert_eq!(
+                rendered.scenes[clip.index].audio.as_ref().unwrap().source,
+                clip.source
+            );
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 

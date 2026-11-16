@@ -14,7 +14,9 @@ pub mod video;
 pub mod wordsubs;
 
 pub use control::{CancelHandle, Progress, ProgressFn, RenderContext};
-pub use narrate::TtsConfig;
+pub use narrate::{
+    preview_error, preview_narration, NarrationPreview, PreviewClip, TtsConfig, PREVIEW_SLOTS,
+};
 pub use options::RenderOptions;
 pub use plan::{plan_chunks, Chunk, DEFAULT_CHUNK_MS};
 pub use run::{
