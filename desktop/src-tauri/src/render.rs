@@ -171,47 +171,47 @@ pub async fn check_before_render(app: AppHandle, args: CheckArgs) -> Result<Repo
 
 /// The check, with the project folder already resolved.
 pub async fn check_timeline_in(args: CheckArgs, project: Option<PathBuf>) -> Result<Report, String> {
-    let timeline: VideoTimeline = match &project {
-        Some(dir) => {
-            let mut value: serde_json::Value = serde_json::from_str(&args.timeline_json)
-                .map_err(|e| format!("The timeline is not valid JSON: {e}"))?;
-            point_at_project_files(&mut value, dir);
-            serde_json::from_value(value).map_err(|e| format!("The timeline is not valid JSON: {e}"))?
-        }
-        None => {
-            serde_json::from_str(&args.timeline_json).map_err(|e| format!("The timeline is not valid JSON: {e}"))?
-        }
-    };
+    let public_dir = Some(default_remotion_dir().join("public")).filter(|p| p.is_dir());
+    check_with_public_dir(args, project, public_dir).await
+}
+
+/// The check against a given public folder. A project's own files are staged into the public
+/// folder the way a project render stages them (a project file wins over a public one), so the
+/// check reads exactly the files the render will, and findings name them by the paths the
+/// timeline uses.
+pub async fn check_with_public_dir(
+    args: CheckArgs,
+    project: Option<PathBuf>,
+    public_dir: Option<PathBuf>,
+) -> Result<Report, String> {
+    let timeline: VideoTimeline =
+        serde_json::from_str(&args.timeline_json).map_err(|e| format!("The timeline is not valid JSON: {e}"))?;
     let tts = match args.tts.as_deref() {
         Some(name) => TtsEngine::parse(name).ok_or_else(|| format!("Unknown voice engine `{name}`."))?,
         None => default_engine(&vimmer_env).0,
     };
-    let remotion_dir = default_remotion_dir();
     let opts = CheckOptions {
-        public_dir: Some(remotion_dir.join("public")).filter(|p| p.is_dir()),
+        public_dir,
         rendered: None,
         synth: false,
         ffmpeg: find_in_path("ffmpeg", &user_path()),
         tts,
     };
-    // Asset checks read image files; keep that off the main thread.
-    tauri::async_runtime::spawn_blocking(move || Report::new(check_timeline(&timeline, &opts), None, None))
-        .await
-        .map_err(|e| format!("The check stopped: {e}"))
-}
-
-/// Replaces every asset path that names a file of the project by that file's absolute path, so
-/// the check (which joins paths onto the public folder; joining an absolute path gives that
-/// path) finds project files. Paths that are not in the project stay as they are.
-pub fn point_at_project_files(timeline: &mut serde_json::Value, project: &Path) {
-    crate::paths::for_each_asset(timeline, &mut |path, _| {
-        if crate::paths::is_local_relative(path) {
-            let file = project.join(path.as_str());
-            if file.is_file() {
-                *path = file.display().to_string();
+    // Staging hashes the files and the asset checks read them; keep that off the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut timeline = timeline;
+        let renamed = match (&project, &opts.public_dir) {
+            (Some(dir), Some(public)) => {
+                vimmer_scheduler::localize::stage_project_for_check(&mut timeline, dir, public)
             }
-        }
-    });
+            _ => Vec::new(),
+        };
+        let mut findings = check_timeline(&timeline, &opts);
+        vimmer_check::restore_paths(&mut findings, &renamed);
+        Report::new(findings, None, None)
+    })
+    .await
+    .map_err(|e| format!("The check stopped: {e}"))
 }
 
 #[derive(Clone, Serialize)]
@@ -585,5 +585,154 @@ mod tests {
         assert_eq!(codes(None), ["/scenes/0/image"]);
         assert!(codes(Some(dir.clone())).is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Copies files of the renderer's public folder into `dir` under new names.
+    fn copy_public(dir: &Path, files: &[(&str, &str)]) {
+        let public = default_remotion_dir().join("public");
+        for (from, to) in files {
+            let target = dir.join(to);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::copy(public.join(from), &target).unwrap();
+        }
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("vimmer-check-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn check_report(timeline: &serde_json::Value, project: Option<PathBuf>, public: Option<PathBuf>) -> serde_json::Value {
+        let args = CheckArgs { timeline_json: timeline.to_string(), tts: Some("say".into()), project_dir: None };
+        serde_json::to_value(tauri::async_runtime::block_on(check_with_public_dir(args, project, public)).unwrap()).unwrap()
+    }
+
+    fn codes_of(report: &serde_json::Value) -> Vec<String> {
+        report["findings"].as_array().unwrap().iter().map(|f| f["code"].as_str().unwrap().to_string()).collect()
+    }
+
+    const MISSING: [&str; 9] = [
+        "assets.missing_font",
+        "assets.missing_icon",
+        "assets.missing_image",
+        "assets.missing_logo",
+        "audio.missing",
+        "sfx.missing",
+        "video.missing",
+        "voiceover.missing",
+        "music.library_file_missing",
+    ];
+
+    /// A project that uses its own files for every kind of asset the DSL validates (brand logo,
+    /// layer image, icon and clip) and the ones it does not (scene video and audio, music, the
+    /// voice-over): the check must not call any of them invalid or missing.
+    fn project_timeline() -> serde_json::Value {
+        serde_json::json!({"fps": 30, "resolution": {"width": 1920, "height": 1080},
+            "brand": {"logo": {"src": "assets/Gemini_Generated_Image_logo.jpeg", "corner": "top_right", "size": 0.1}},
+            "scenes": [
+                {"id": "a", "duration_ms": 3000, "image": "assets/photo.png",
+                 "audio": {"source": "recordings/take-1.wav"},
+                 "layers": [
+                    {"id": "pic", "kind": "image", "src": "assets/photo.png", "x": 0.6, "y": 0.1, "width": 0.3, "height": 0.3},
+                    {"id": "star", "kind": "icon", "src": "assets/star.svg", "color": "#facc15", "x": 0.1, "y": 0.6, "width": 0.09, "height": 0.16},
+                    {"id": "pip", "kind": "video", "src": "assets/pip.webm", "x": 0.1, "y": 0.1, "width": 0.3, "height": 0.3}]},
+                {"id": "b", "duration_ms": 3000, "video": {"src": "assets/clip.mp4"}}],
+            "music": {"source": "assets/song.wav", "volume": 0.3},
+            "voiceover": [{"id": "vo", "source": "recordings/vo-1.wav", "start_ms": 0}]})
+    }
+
+    fn make_project(dir: &Path) {
+        copy_public(dir, &[
+            ("assets/sample.jpeg", "assets/Gemini_Generated_Image_logo.jpeg"),
+            ("assets/sample.png", "assets/photo.png"),
+            ("assets/icons/star.svg", "assets/star.svg"),
+            ("assets/clips/pip-cellauto-2s.webm", "assets/pip.webm"),
+            ("assets/clips/gradients-2s.mp4", "assets/clip.mp4"),
+            ("assets/voiceover-demo.wav", "recordings/take-1.wav"),
+            ("assets/voiceover-demo.wav", "recordings/vo-1.wav"),
+            ("assets/voiceover-demo.wav", "assets/song.wav"),
+        ]);
+    }
+
+    #[test]
+    fn project_files_are_not_invalid_or_missing_and_findings_name_them_as_written() {
+        let root = scratch("project-all");
+        let (project, public) = (root.join("Film"), root.join("public"));
+        std::fs::create_dir_all(&public).unwrap();
+        make_project(&project);
+        let timeline = project_timeline();
+        let report = check_report(&timeline, Some(project.clone()), Some(public.clone()));
+        let codes = codes_of(&report);
+        assert!(!codes.iter().any(|c| c == "dsl.invalid"), "{report:#}");
+        assert!(!codes.iter().any(|c| MISSING.contains(&c.as_str())), "{report:#}");
+        // Messages name the files by the timeline's paths, never by where they were staged.
+        assert!(!report.to_string().contains("generated/project"), "{report:#}");
+        // The files were staged where a render stages them.
+        assert!(public.join(vimmer_scheduler::localize::STAGE_DIR).is_dir());
+
+        // Without the project, every one of them is missing (the check really looked).
+        let without = codes_of(&check_report(&timeline, None, Some(public.clone())));
+        for code in ["assets.missing_logo", "assets.missing_image", "assets.missing_icon", "video.missing", "audio.missing", "voiceover.missing"] {
+            assert!(without.iter().any(|c| c == code), "{code} in {without:?}");
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn real_path_problems_in_a_project_are_still_reported() {
+        let root = scratch("project-bad");
+        let (project, public) = (root.join("Film"), root.join("public"));
+        std::fs::create_dir_all(&public).unwrap();
+        make_project(&project);
+        let mut timeline = project_timeline();
+        // A file that is not in the project.
+        timeline["scenes"][0]["layers"][0]["src"] = "assets/gone.png".into();
+        timeline["voiceover"][0]["source"] = "recordings/gone.wav".into();
+        // Paths typed by hand that a render would not take from the project.
+        let logo = project.join("assets/Gemini_Generated_Image_logo.jpeg").display().to_string();
+        timeline["brand"]["logo"]["src"] = logo.into();
+        timeline["scenes"][0]["layers"][1]["src"] = "../Film/assets/star.svg".into();
+        let report = check_report(&timeline, Some(project.clone()), Some(public));
+        let findings = report["findings"].as_array().unwrap();
+        let has = |code: &str, path: &str| {
+            findings.iter().any(|f| f["code"] == code && f["message"].as_str().unwrap().contains(path))
+        };
+        assert!(has("assets.missing_image", "assets/gone.png"), "{report:#}");
+        assert!(has("voiceover.missing", "recordings/gone.wav"), "{report:#}");
+        let invalid: Vec<&str> =
+            findings.iter().filter(|f| f["code"] == "dsl.invalid").map(|f| f["message"].as_str().unwrap()).collect();
+        assert!(invalid.iter().any(|m| m.contains("leading `/`")), "{invalid:?}");
+        assert!(invalid.iter().any(|m| m.contains("`..`")), "{invalid:?}");
+        assert_eq!(invalid.len(), 2, "{invalid:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_timeline_without_a_project_is_checked_as_before() {
+        // Fixtures with public images, icons, a logo and a voice-over: the report is exactly
+        // what `check_timeline` gives on the public folder (no project: nothing is staged or
+        // renamed). The CLI's reports on every fixture are compared with main by the gates.
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        let public = Some(default_remotion_dir().join("public"));
+        let mut checked = 0;
+        for name in ["sample-timeline.json", "layers-demo.json", "check-logo-overlap.json", "voiceover-demo.json"] {
+            let path = fixtures.join(name);
+            let raw = std::fs::read_to_string(&path).unwrap();
+            let timeline: VideoTimeline = serde_json::from_str(&raw).unwrap();
+            let opts = CheckOptions {
+                public_dir: public.clone(),
+                rendered: None,
+                synth: false,
+                ffmpeg: find_in_path("ffmpeg", &user_path()),
+                tts: TtsEngine::Say,
+            };
+            let expected = serde_json::to_value(Report::new(check_timeline(&timeline, &opts), None, None)).unwrap();
+            let got = check_report(&serde_json::from_str(&raw).unwrap(), None, public.clone());
+            assert_eq!(got, expected, "{}", path.display());
+            checked += 1;
+        }
+        assert_eq!(checked, 4);
     }
 }

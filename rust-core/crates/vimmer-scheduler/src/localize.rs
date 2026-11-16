@@ -136,6 +136,38 @@ pub fn stage_assets(
     }
 }
 
+/// Stages a project's files for `vimmer check` the way a project render does (a project file
+/// wins over the public dir's), so the check reads the same files the render will. Returns each
+/// staged path with the path the timeline named, so findings can name files as the user wrote
+/// them. Only plain relative paths are staged (see `vimmer_dsl::validation::asset_path_problem`):
+/// a path written with `/`, `~`, `..` or a scheme stays as it is and is still reported. A path
+/// whose file is not in the project, or cannot be staged, also stays as it is.
+pub fn stage_project_for_check(
+    timeline: &mut VideoTimeline,
+    project: &Path,
+    public_dir: &Path,
+) -> Vec<(String, String)> {
+    let mut staged: Vec<(String, String)> = Vec::new();
+    for_each_asset_path(timeline, &mut |path| {
+        if let Some((to, _)) = staged.iter().find(|(_, from)| from == path) {
+            *path = to.clone();
+            return;
+        }
+        if vimmer_dsl::validation::asset_path_problem(path).is_some() || !is_local_relative(path) {
+            return;
+        }
+        let file = project.join(path.as_str());
+        if !file.is_file() {
+            return;
+        }
+        if let Ok(public_rel) = stage_file(&file, public_dir) {
+            staged.push((public_rel.clone(), path.clone()));
+            *path = public_rel;
+        }
+    });
+    staged
+}
+
 /// Links or copies `source` into the stage dir and returns its public-relative path.
 pub fn stage_file(source: &Path, public_dir: &Path) -> std::io::Result<String> {
     let size = fs::metadata(source)?.len();
@@ -314,6 +346,39 @@ mod tests {
         let mut edited = timeline();
         stage_assets(&mut edited, &c, &mut Vec::new()).unwrap();
         assert_ne!(edited.scenes[0].image.as_deref(), Some(image.as_str()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_check_stages_plain_project_paths_only_and_says_what_it_renamed() {
+        let root = scratch("check");
+        let c = cfg(&root);
+        let project = root.join("Film");
+        write(&project.join("assets/pic.png"), b"project");
+        write(&project.join("assets/logo.png"), b"logo");
+        write(&project.join("assets/recordings/vo-1.wav"), b"vo");
+        write(&c.public_dir.join("assets/pic.png"), b"public");
+        let mut t = timeline();
+        // Typed by hand: a render may resolve these, but the check must still report them.
+        t.scenes[1].video.as_mut().unwrap().src = "../Film/assets/logo.png".into();
+        let abs = project.join("assets/logo.png").display().to_string();
+        t.brand.as_mut().unwrap().logo.as_mut().unwrap().src = abs.clone();
+        let renamed = stage_project_for_check(&mut t, &project, &c.public_dir);
+        let image = t.scenes[0].image.clone().unwrap();
+        assert!(image.starts_with("generated/project/"), "{image}");
+        assert_eq!(fs::read(c.public_dir.join(&image)).unwrap(), b"project", "the project file wins");
+        let LayerContent::Image(layer) = &t.scenes[0].layers[0].content else { panic!() };
+        assert_eq!(layer.src, image);
+        assert_eq!(t.scenes[1].video.as_ref().unwrap().src, "../Film/assets/logo.png");
+        assert_eq!(t.brand.as_ref().unwrap().logo.as_ref().unwrap().src, abs);
+        assert_eq!(t.scenes[1].image.as_deref(), Some("https://example.com/x.png"));
+        assert_eq!(t.music.as_ref().unwrap().source.as_deref(), Some("assets/music/m.mp3"), "not in the project");
+        let vo = &t.voiceover[0].source;
+        assert!(vo.starts_with("generated/project/"), "{vo}");
+        assert_eq!(
+            renamed,
+            [(image.clone(), "assets/pic.png".to_string()), (vo.clone(), "assets/recordings/vo-1.wav".to_string())]
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

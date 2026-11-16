@@ -1244,6 +1244,9 @@ each edit or engine change. Each finding shows its severity, code, message, fix 
 pointer; clicking one selects the scene, layer, keyframe, cue or music it points at and moves
 the playhead to it. Errors turn **Render…** into **Render anyway**; warnings and info do not
 block. The check does not synthesize narration (`--synth`) and does not check a rendered file.
+For a Studio project the check stages the project's own files into
+`public/generated/project/` exactly as the render does (a project file wins over a public one),
+so it reads the files the render will use; findings still name them by the timeline's paths.
 
 **Render…** asks for the MP4 path. The card then shows the stage and a progress bar, with Cancel
 while it runs and Show in Finder when it finishes. Rendering runs the same pipeline as the CLI, in the app's cache folder.
@@ -1958,6 +1961,11 @@ rust-core/target/debug/vimmer check timeline.json --json --strict
   estimate (default: `$VIMMER_TTS`, else `say`, as in the render).
 - `--public-dir DIR` sets where image and audio paths point (default `<--remotion-dir>/public`,
   else the nearest `remotion-renderer/public` above the timeline or the current directory).
+- `--project DIR` names the Studio project whose own files (`assets/…`, `recordings/…`) the
+  timeline uses. They are staged into `<public-dir>/generated/project/` as the desktop render
+  does, and findings name them by the timeline's paths. Default: the timeline's folder when it
+  holds a `project.json`, so `vimmer check <project>/timeline.json` works as is. Absolute,
+  `~`, `..` and URL paths are not taken from the project; the check reports them as before.
 - Exit code: 0 without errors, 1 with errors (with `--strict` also with warnings), 2 when the
   timeline cannot be read or parsed.
 
