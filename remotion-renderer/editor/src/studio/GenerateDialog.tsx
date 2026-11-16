@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText, useStudioApi } from "./api";
 import { formatCost, formatUsd } from "./format";
 import { Modal } from "./Modal";
-import type { Estimate, GenerateArgs, GenerateFinished, GenerateModel, GenerateProgress, Lang, Orientation } from "./types";
+import type { Estimate, GenerateArgs, GenerateFinished, GenerateModel, GenerateProgress, IllustrationDetail, Lang, Orientation } from "./types";
 
 type Props = {
   onClose: () => void;
@@ -16,6 +16,11 @@ type Step = "form" | "confirm" | "running" | "done" | "failed";
 const MODELS: { value: GenerateModel; label: string; note: string }[] = [
   { value: "claude-opus-5-5", label: "Opus 5.5", note: "best storyboards" },
   { value: "claude-sonnet-5-5", label: "Sonnet 5.5", note: "about half the price" },
+];
+
+const DETAILS: { value: IllustrationDetail; label: string; note: string }[] = [
+  { value: "rich", label: "Rich", note: "Layered, lit pictures with depth, glow and texture." },
+  { value: "simple", label: "Simple", note: "Flat pictures with a few shapes; about a third of the cost." },
 ];
 
 const STAGES: { key: GenerateProgress["stage"]; label: string }[] = [
@@ -42,6 +47,7 @@ export const GenerateDialog = ({ onClose, onOpenProject }: Props) => {
   const [target, setTarget] = useState("");
   const [model, setModel] = useState<GenerateModel>("claude-opus-5-5");
   const [illustrate, setIllustrate] = useState(false);
+  const [detail, setDetail] = useState<IllustrationDetail>("rich");
   const [name, setName] = useState("");
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [estimateError, setEstimateError] = useState<string | null>(null);
@@ -56,8 +62,8 @@ export const GenerateDialog = ({ onClose, onOpenProject }: Props) => {
   const targetBad = targetSeconds !== null && !(Number.isInteger(targetSeconds) && targetSeconds >= 5 && targetSeconds <= 1800);
   const usedLang = lang ?? guessLang(text);
   const args: GenerateArgs = useMemo(
-    () => ({ text, lang: usedLang, orientation, targetSeconds: targetBad ? null : targetSeconds, model, illustrate, name: name.trim() || null }),
-    [text, usedLang, orientation, targetSeconds, targetBad, model, illustrate, name],
+    () => ({ text, lang: usedLang, orientation, targetSeconds: targetBad ? null : targetSeconds, model, illustrate, detail, name: name.trim() || null }),
+    [text, usedLang, orientation, targetSeconds, targetBad, model, illustrate, detail, name],
   );
   const hasText = text.trim().length > 0;
 
@@ -148,7 +154,7 @@ export const GenerateDialog = ({ onClose, onOpenProject }: Props) => {
       <span>{{ zh: "中文", ja: "日本語", en: "English" }[usedLang]}</span>
       <span>{orientation === "portrait" ? "Portrait 9:16" : "Landscape 16:9"}</span>
       <span>{targetSeconds && !targetBad ? `about ${targetSeconds} s` : "length from the text"}</span>
-      <span>{illustrate ? "with illustrations" : "no illustrations"}</span>
+      <span>{illustrate ? `with ${detail} illustrations` : "no illustrations"}</span>
     </div>
   );
 
@@ -237,10 +243,23 @@ export const GenerateDialog = ({ onClose, onOpenProject }: Props) => {
                 {" "}
                 {estimate?.illustrate
                   ? `— adds ${formatCost(estimate.illustrate)} for about ${estimate.scenes} scenes`
-                  : "— costs far more than the storyboard (about $0.10 a scene with Opus)"}
+                  : `— costs far more than the storyboard (about ${detail === "rich" ? "$0.25" : "$0.08"} a scene with Opus)`}
               </span>
             </span>
           </label>
+          {illustrate && (
+            <div className="field">
+              <span className="field-label">Picture detail</span>
+              <div className="segmented">
+                {DETAILS.map((d) => (
+                  <button key={d.value} className={`seg${detail === d.value ? " active" : ""}`} onClick={() => setDetail(d.value)} title={d.note}>
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <span className="dim st-hint">{DETAILS.find((d) => d.value === detail)!.note}</span>
+            </div>
+          )}
 
           <div className={`st-estimate${estimate?.problem || estimateError ? " bad" : ""}`} aria-live="polite">
             {!hasText ? (
