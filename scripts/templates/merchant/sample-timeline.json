@@ -1,0 +1,898 @@
+{
+  "fps": 30,
+  "resolution": {
+    "width": 1080,
+    "height": 1920
+  },
+  "brand": {
+    "colors": {
+      "primary": "#c8102e",
+      "accent": "#ffd23f",
+      "text": "#fffaf2",
+      "muted_text": "#e8d9c8",
+      "background": "#1a1210"
+    },
+    "fonts": {
+      "heading": {
+        "family": "Hiragino Sans"
+      },
+      "body": {
+        "family": "Hiragino Sans"
+      }
+    },
+    "text_style": {
+      "outline": {
+        "color": "#000000",
+        "width": 0
+      },
+      "shadow": "soft"
+    },
+    "logo": {
+      "src": "assets/merchant-demo/logo.png",
+      "corner": "top_left",
+      "size": 0.05,
+      "margin": 0.05,
+      "opacity": 0.95,
+      "hide_on": [
+        "shop"
+      ]
+    }
+  },
+  "music": {
+    "pick": {
+      "mood": "upbeat",
+      "energy": 0.7
+    },
+    "volume": 0.3,
+    "fade_in_ms": 300,
+    "fade_out_ms": 900
+  },
+  "subtitles": [],
+  "scenes": [
+    {
+      "id": "hook",
+      "duration_ms": 3000,
+      "text": null,
+      "layers": [
+        {
+          "id": "hero",
+          "kind": "image",
+          "src": "assets/merchant-demo/ramen.png",
+          "fit": "cover",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "z": -10,
+          "keyframes": [
+            {
+              "at_ms": 0,
+              "scale": 1.0,
+              "ease": "linear"
+            },
+            {
+              "at_ms": 3000,
+              "scale": 1.12
+            }
+          ]
+        },
+        {
+          "id": "scrim-0",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0.34,
+          "width": 1,
+          "height": 0.66,
+          "fill": "#00000022",
+          "z": -4
+        },
+        {
+          "id": "scrim-1",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0.37,
+          "width": 1,
+          "height": 0.63,
+          "fill": "#00000022",
+          "z": -4
+        },
+        {
+          "id": "scrim-2",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0.4,
+          "width": 1,
+          "height": 0.6000000000000001,
+          "fill": "#00000022",
+          "z": -4
+        },
+        {
+          "id": "scrim-3",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0.43000000000000005,
+          "width": 1,
+          "height": 0.5700000000000001,
+          "fill": "#00000022",
+          "z": -4
+        },
+        {
+          "id": "scrim-4",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0.46,
+          "width": 1,
+          "height": 0.54,
+          "fill": "#00000022",
+          "z": -4
+        },
+        {
+          "id": "scrim-5",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0.49,
+          "width": 1,
+          "height": 0.51,
+          "fill": "#00000022",
+          "z": -4
+        },
+        {
+          "id": "shop-chip",
+          "kind": "text",
+          "text": "麺屋さくら",
+          "x": 0.06,
+          "y": 0.53,
+          "width": 0.3142262626262627,
+          "font_size": 0.026,
+          "weight": 800,
+          "align": "center",
+          "start_ms": 0,
+          "color": "#fffaf2",
+          "enter": {
+            "kind": "slide_right",
+            "duration_ms": 350
+          },
+          "background": {
+            "color": "#c8102e",
+            "padding": 0.45,
+            "radius": 0.3
+          }
+        },
+        {
+          "id": "hook",
+          "kind": "text",
+          "text": "渋谷で話題の一杯",
+          "x": 0.06,
+          "y": 0.59,
+          "width": 0.8799999999999999,
+          "font_size": 0.056,
+          "weight": 900,
+          "align": "left",
+          "start_ms": 150,
+          "color": "#fffaf2",
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 450,
+            "ease": "back_out"
+          }
+        }
+      ],
+      "narration": {
+        "voice": "jf_alpha",
+        "text": "渋谷で話題の一杯！"
+      },
+      "sfx": [
+        {
+          "src": "assets/sfx/whoosh.wav",
+          "at_ms": 0,
+          "volume": 0.5
+        }
+      ]
+    },
+    {
+      "id": "product",
+      "duration_ms": 2800,
+      "text": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#1a1210",
+          "z": -10
+        },
+        {
+          "id": "photo",
+          "kind": "image",
+          "src": "assets/merchant-demo/ramen.png",
+          "fit": "cover",
+          "x": 0.06,
+          "y": 0.09,
+          "width": 0.8799999999999999,
+          "height": 0.47,
+          "corner_radius": 0.02,
+          "z": -5,
+          "start_ms": 0,
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          },
+          "keyframes": [
+            {
+              "at_ms": 0,
+              "scale": 1.18,
+              "ease": "linear"
+            },
+            {
+              "at_ms": 2800,
+              "scale": 1.28
+            }
+          ]
+        },
+        {
+          "id": "recommend",
+          "kind": "text",
+          "text": "おすすめ",
+          "x": 0.3737717171717172,
+          "y": 0.6,
+          "width": 0.25245656565656566,
+          "font_size": 0.026,
+          "weight": 800,
+          "align": "center",
+          "start_ms": 0,
+          "color": "#1a1210",
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 350
+          },
+          "background": {
+            "color": "#ffd23f",
+            "padding": 0.35,
+            "radius": 0.5
+          }
+        },
+        {
+          "id": "title",
+          "kind": "text",
+          "text": "特製味玉らーめん",
+          "x": 0.06,
+          "y": 0.645,
+          "width": 0.8799999999999999,
+          "font_size": 0.056,
+          "weight": 900,
+          "align": "center",
+          "start_ms": 200,
+          "color": "#fffaf2",
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 400
+          }
+        },
+        {
+          "id": "title-sub",
+          "kind": "text",
+          "text": "招牌溏心蛋拉面",
+          "x": 0.06,
+          "y": 0.7272,
+          "width": 0.8799999999999999,
+          "font_size": 0.03,
+          "weight": 500,
+          "align": "center",
+          "start_ms": 450,
+          "color": "#e8d9c8",
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          }
+        }
+      ],
+      "transition_in": {
+        "kind": "slide_left",
+        "duration_ms": 350
+      },
+      "narration": {
+        "voice": "jf_alpha",
+        "text": "特製味玉らーめん。"
+      }
+    },
+    {
+      "id": "offer",
+      "duration_ms": 3600,
+      "text": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#c8102e",
+          "z": -10
+        },
+        {
+          "id": "deco",
+          "kind": "shape",
+          "shape": "ellipse",
+          "x": 0.55,
+          "y": -0.08,
+          "width": 0.9,
+          "height": 0.5,
+          "fill": "#ffffff14",
+          "z": -9
+        },
+        {
+          "id": "label",
+          "kind": "text",
+          "text": "期間限定クーポン",
+          "x": 0.19607474747474746,
+          "y": 0.13,
+          "width": 0.6078505050505051,
+          "font_size": 0.034,
+          "weight": 900,
+          "align": "center",
+          "start_ms": 0,
+          "color": "#1a1210",
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 350
+          },
+          "background": {
+            "color": "#ffd23f",
+            "padding": 0.4,
+            "radius": 0.5
+          }
+        },
+        {
+          "id": "thumb",
+          "kind": "image",
+          "src": "assets/merchant-demo/ramen.png",
+          "fit": "cover",
+          "x": 0.22,
+          "y": 0.2,
+          "width": 0.56,
+          "height": 0.28,
+          "corner_radius": 0.02,
+          "z": -5,
+          "start_ms": 0,
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          },
+          "keyframes": [
+            {
+              "at_ms": 0,
+              "scale": 1.0,
+              "ease": "linear"
+            },
+            {
+              "at_ms": 2800,
+              "scale": 1.05
+            }
+          ]
+        },
+        {
+          "id": "regular",
+          "kind": "text",
+          "text": "通常価格",
+          "x": 0.06,
+          "y": 0.51,
+          "width": 0.8799999999999999,
+          "font_size": 0.026,
+          "weight": 600,
+          "align": "center",
+          "start_ms": 0,
+          "color": "#ffffff"
+        },
+        {
+          "id": "orig",
+          "kind": "text",
+          "text": "¥1,200",
+          "x": 0.06,
+          "y": 0.545,
+          "width": 0.8799999999999999,
+          "font_size": 0.05,
+          "weight": 700,
+          "align": "center",
+          "start_ms": 0,
+          "color": "#ffffffcc"
+        },
+        {
+          "id": "strike",
+          "kind": "shape",
+          "shape": "line",
+          "x": 0.3328888888888889,
+          "y": 0.5760000000000001,
+          "width": 0.33422222222222225,
+          "height": 0,
+          "stroke": "#ffd23f",
+          "stroke_width": 0.006,
+          "start_ms": 600,
+          "enter": {
+            "kind": "slide_right",
+            "duration_ms": 250
+          }
+        },
+        {
+          "id": "price",
+          "kind": "counter",
+          "x": 0.06,
+          "y": 0.61,
+          "width": 0.8799999999999999,
+          "from": 1200,
+          "to": 880,
+          "prefix": "¥",
+          "duration_ms": 1300,
+          "start_ms": 700,
+          "ease": "ease_out",
+          "font_size": 0.11,
+          "weight": 900,
+          "color": "#ffd23f",
+          "align": "center"
+        },
+        {
+          "id": "badge",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0.7,
+          "y": 0.4,
+          "width": 0.25,
+          "height": 0.140625,
+          "corner_radius": 0.0703125,
+          "fill": "#ffd23f",
+          "rotation": -12,
+          "z": 1,
+          "start_ms": 1900,
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 450,
+            "ease": "elastic_out"
+          }
+        },
+        {
+          "id": "badge-text",
+          "kind": "text",
+          "text": "27%OFF",
+          "x": 0.7,
+          "y": 0.4,
+          "width": 0.25,
+          "font_size": 0.028,
+          "weight": 900,
+          "align": "center",
+          "start_ms": 1900,
+          "color": "#1a1210",
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 450,
+            "ease": "elastic_out"
+          },
+          "background": {
+            "color": "#ffd23f",
+            "padding": 0.1,
+            "radius": 0.5
+          },
+          "height": 0.140625,
+          "rotation": -12,
+          "z": 2
+        }
+      ],
+      "transition_in": {
+        "kind": "slide_up",
+        "duration_ms": 350
+      },
+      "narration": {
+        "voice": "jf_alpha",
+        "text": "今なら千二百円が、八百八十円！"
+      },
+      "sfx": [
+        {
+          "src": "assets/sfx/ding.wav",
+          "at_ms": 2000,
+          "volume": 0.3
+        },
+        {
+          "src": "assets/sfx/pop.wav",
+          "on": {
+            "layer": "badge",
+            "event": "enter"
+          },
+          "volume": 0.7
+        }
+      ]
+    },
+    {
+      "id": "urgency",
+      "duration_ms": 2800,
+      "text": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#141010",
+          "z": -10
+        },
+        {
+          "id": "stripe",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0.115,
+          "width": 1,
+          "height": 0.006,
+          "fill": "#ffd23f",
+          "z": -9
+        },
+        {
+          "id": "limited",
+          "kind": "text",
+          "text": "期間限定",
+          "x": 0.3429515151515152,
+          "y": 0.17,
+          "width": 0.31409696969696965,
+          "font_size": 0.032,
+          "weight": 800,
+          "align": "center",
+          "start_ms": 0,
+          "color": "#fffaf2",
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 300
+          },
+          "background": {
+            "color": "#c8102e",
+            "padding": 0.4,
+            "radius": 0.4
+          }
+        },
+        {
+          "id": "until",
+          "kind": "text",
+          "text": "11/30(月)まで",
+          "x": 0.06,
+          "y": 0.235,
+          "width": 0.8799999999999999,
+          "font_size": 0.06,
+          "weight": 900,
+          "align": "center",
+          "start_ms": 150,
+          "color": "#fffaf2",
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 350
+          }
+        },
+        {
+          "id": "days",
+          "kind": "counter",
+          "x": 0.06,
+          "y": 0.33,
+          "width": 0.8799999999999999,
+          "from": 22,
+          "to": 13,
+          "prefix": "あと",
+          "suffix": "日",
+          "duration_ms": 1200,
+          "start_ms": 300,
+          "ease": "ease_out",
+          "font_size": 0.1,
+          "weight": 900,
+          "color": "#ffd23f",
+          "align": "center"
+        },
+        {
+          "id": "code-label",
+          "kind": "text",
+          "text": "クーポンコード",
+          "x": 0.06,
+          "y": 0.5,
+          "width": 0.8799999999999999,
+          "font_size": 0.028,
+          "weight": 600,
+          "align": "center",
+          "start_ms": 700,
+          "color": "#e8d9c8",
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          }
+        },
+        {
+          "id": "code",
+          "kind": "text",
+          "text": "SAKURA880",
+          "x": 0.08544444444444438,
+          "y": 0.545,
+          "width": 0.8291111111111112,
+          "font_size": 0.058,
+          "weight": 800,
+          "align": "center",
+          "start_ms": 800,
+          "color": "#fffaf2",
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 350
+          },
+          "background": {
+            "color": "#ffffff14",
+            "padding": 0.5,
+            "radius": 0.25,
+            "border": {
+              "color": "#ffd23f",
+              "width": 4
+            }
+          }
+        }
+      ],
+      "transition_in": {
+        "kind": "slide_left",
+        "duration_ms": 300
+      },
+      "narration": {
+        "voice": "jf_alpha",
+        "text": "あと十三日。"
+      },
+      "sfx": [
+        {
+          "src": "assets/sfx/click.wav",
+          "at_ms": 1500,
+          "volume": 0.5
+        }
+      ]
+    },
+    {
+      "id": "shop",
+      "duration_ms": 2800,
+      "text": null,
+      "layers": [
+        {
+          "id": "bg",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1,
+          "fill": "#1a1210",
+          "z": -10
+        },
+        {
+          "id": "place",
+          "kind": "image",
+          "src": "assets/merchant-demo/shop.png",
+          "fit": "cover",
+          "x": 0.06,
+          "y": 0.07,
+          "width": 0.8799999999999999,
+          "height": 0.27,
+          "corner_radius": 0.02,
+          "z": -5,
+          "start_ms": 0,
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          },
+          "keyframes": [
+            {
+              "at_ms": 0,
+              "scale": 1.0,
+              "ease": "linear"
+            },
+            {
+              "at_ms": 2800,
+              "scale": 1.05
+            }
+          ]
+        },
+        {
+          "id": "logo",
+          "kind": "image",
+          "src": "assets/merchant-demo/logo.png",
+          "fit": "contain",
+          "x": 0.5,
+          "y": 0.36,
+          "width": 0.2,
+          "height": 0.1125,
+          "anchor": "center",
+          "z": 1,
+          "start_ms": 100,
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 400,
+            "ease": "back_out"
+          }
+        },
+        {
+          "id": "name",
+          "kind": "text",
+          "text": "麺屋さくら",
+          "x": 0.06,
+          "y": 0.43,
+          "width": 0.8799999999999999,
+          "font_size": 0.05,
+          "weight": 900,
+          "align": "center",
+          "start_ms": 200,
+          "color": "#fffaf2",
+          "enter": {
+            "kind": "slide_up",
+            "duration_ms": 350
+          }
+        },
+        {
+          "id": "pin",
+          "kind": "icon",
+          "src": "assets/merchant-demo/map-pin.svg",
+          "color": "#ffd23f",
+          "x": 0.2562444444444444,
+          "y": 0.505,
+          "width": 0.060444444444444446,
+          "height": 0.034,
+          "start_ms": 350,
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          }
+        },
+        {
+          "id": "station",
+          "kind": "text",
+          "text": "渋谷駅 徒歩3分",
+          "x": 0.32668888888888886,
+          "y": 0.505,
+          "width": 0.45706666666666673,
+          "font_size": 0.034,
+          "weight": 700,
+          "align": "left",
+          "start_ms": 350,
+          "color": "#fffaf2",
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          }
+        },
+        {
+          "id": "address",
+          "kind": "text",
+          "text": "東京都渋谷区道玄坂1-2-3",
+          "x": 0.06,
+          "y": 0.5558,
+          "width": 0.8799999999999999,
+          "font_size": 0.024,
+          "weight": 500,
+          "align": "center",
+          "start_ms": 450,
+          "color": "#e8d9c8",
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          }
+        },
+        {
+          "id": "qr-mat",
+          "kind": "shape",
+          "shape": "rect",
+          "x": 0.06,
+          "y": 0.6146,
+          "width": 0.3,
+          "height": 0.16875,
+          "fill": "#ffffff",
+          "z": 0,
+          "corner_radius": 0.01,
+          "start_ms": 500,
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          }
+        },
+        {
+          "id": "qr",
+          "kind": "image",
+          "src": "assets/merchant-demo/qr-sample.png",
+          "fit": "contain",
+          "x": 0.075,
+          "y": 0.6230375,
+          "width": 0.27,
+          "height": 0.151875,
+          "z": 1,
+          "start_ms": 500,
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          }
+        },
+        {
+          "id": "cta",
+          "kind": "text",
+          "text": "クーポンを見せてね",
+          "x": 0.4,
+          "y": 0.6346,
+          "width": 0.5399999999999998,
+          "font_size": 0.036,
+          "weight": 900,
+          "align": "center",
+          "start_ms": 300,
+          "color": "#fffaf2",
+          "enter": {
+            "kind": "pop",
+            "duration_ms": 400,
+            "ease": "back_out"
+          },
+          "background": {
+            "color": "#c8102e",
+            "padding": 0.45,
+            "radius": 0.35
+          },
+          "keyframes": [
+            {
+              "at_ms": 1000,
+              "scale": 1.0
+            },
+            {
+              "at_ms": 1450,
+              "scale": 1.06
+            },
+            {
+              "at_ms": 1900,
+              "scale": 1.0
+            },
+            {
+              "at_ms": 2350,
+              "scale": 1.06
+            }
+          ]
+        },
+        {
+          "id": "scan",
+          "kind": "text",
+          "text": "QRを読み取ってね",
+          "x": 0.4,
+          "y": 0.7734000000000001,
+          "width": 0.5399999999999998,
+          "font_size": 0.022,
+          "weight": 500,
+          "align": "center",
+          "start_ms": 400,
+          "color": "#e8d9c8",
+          "enter": {
+            "kind": "fade",
+            "duration_ms": 300
+          }
+        }
+      ],
+      "transition_in": {
+        "kind": "fade",
+        "duration_ms": 300
+      },
+      "narration": {
+        "voice": "jf_alpha",
+        "text": "クーポンを見せてね！"
+      },
+      "sfx": [
+        {
+          "src": "assets/sfx/pop.wav",
+          "on": {
+            "layer": "cta",
+            "event": "enter"
+          },
+          "volume": 0.6
+        }
+      ]
+    }
+  ]
+}

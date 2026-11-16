@@ -1,0 +1,36 @@
+{
+  "template": "merchant_promo_v1",
+  "lang": "ja",
+  "voice": "jf_alpha",
+  "render_date": "2026-11-17",
+  "shop": {
+    "name": "麺屋さくら",
+    "logo": "assets/merchant-demo/logo.png",
+    "station": "渋谷駅 徒歩3分",
+    "address": "東京都渋谷区道玄坂1-2-3"
+  },
+  "media": {
+    "photos": ["assets/merchant-demo/ramen.png", "assets/merchant-demo/shop.png"]
+  },
+  "offer": {
+    "title": "特製味玉らーめん",
+    "title_sub": "招牌溏心蛋拉面",
+    "original_price": 1200,
+    "sale_price": 880,
+    "currency": "JPY",
+    "badge": null,
+    "deadline": "2026-11-30",
+    "coupon_code": "SAKURA880",
+    "qr": "assets/merchant-demo/qr-sample.png"
+  },
+  "hook": "渋谷で話題の一杯",
+  "cta": "クーポンを見せてね",
+  "narration": {
+    "hook": null,
+    "product": null,
+    "offer": null,
+    "urgency": null,
+    "shop": null
+  },
+  "brand": { "primary": "#c8102e", "accent": "#ffd23f" }
+}
