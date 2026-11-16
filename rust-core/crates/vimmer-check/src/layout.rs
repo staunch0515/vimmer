@@ -9,7 +9,9 @@
 //! frame with their own buttons and captions; that is not checked.
 
 use vimmer_dsl::text_layout::top_inset_px;
-use vimmer_dsl::{style_scale, Resolution, SubtitleBox, TextPosition, TextStyle, VideoTimeline};
+use vimmer_dsl::{
+    style_scale, Resolution, SubtitleBox, TextPoint, TextPosition, TextStyle, VideoTimeline,
+};
 
 use crate::fonts::Fonts;
 use crate::text::{cue_lines_with, scene_text_lines_with, shown_text, MAX_CUE_LINES};
@@ -60,6 +62,9 @@ pub struct SceneTextArea {
     pub top_y: f64,
     /// Where the text block sits between `top_y` and `bottom_y`.
     pub position: TextPosition,
+    /// A free point (`text_layout.position: {"y": ..}`): the block's centre, which wins over
+    /// `position`; `top_y` / `bottom_y` are then the frame's 8 % paddings.
+    pub at: Option<TextPoint>,
 }
 
 /// How far a text style reaches beyond the glyphs, px.
@@ -104,7 +109,28 @@ impl SceneTextArea {
         let style = scene.effective_text_style(brand);
         let layout = scene.effective_text_layout(brand);
         let top = top_inset_px(layout.position, brand, &scene.id, t.resolution);
-        Self::styled_at(t.resolution, &style, layout.font_px(t.resolution), layout.position, top)
+        let (mut area, reach) = Self::styled_at(
+            t.resolution,
+            &style,
+            layout.font_px(t.resolution),
+            layout.position,
+            top,
+        );
+        if let Some(p) = layout.at {
+            // A point ignores the bottom inset and the logo: the whole frame inside the paddings.
+            let (w, h) = (
+                f64::from(t.resolution.width),
+                f64::from(t.resolution.height),
+            );
+            let pad = w * SCENE_PADDING_FRAC;
+            area.at = Some(p);
+            area.top_y = pad;
+            area.bottom_y = h - pad;
+            area.max_lines = ((h - 2.0 * pad - 2.0 * reach.total()) / area.line_height_px)
+                .floor()
+                .max(0.0) as u32;
+        }
+        (area, reach)
     }
 
     /// The scene text's area with its style: a box (`AnimatedText.tsx` draws it per line, with
@@ -137,7 +163,10 @@ impl SceneTextArea {
         // With a border every line is its own framed box: the lines move apart by the padding,
         // the border and a small gap (`AnimatedText.tsx` BoxedWords).
         if reach.border > 0.0 {
-            let pad_em = style.background.as_ref().map_or(0.0, |b| f64::from(b.padding));
+            let pad_em = style
+                .background
+                .as_ref()
+                .map_or(0.0, |b| f64::from(b.padding));
             area.line_height_px = area.font_px
                 * (SCENE_LINE_HEIGHT + 2.0 * pad_em + SCENE_BORDER_LINE_GAP_EM)
                 + 2.0 * reach.border;
@@ -170,12 +199,17 @@ impl SceneTextArea {
             bottom_y: h - SCENE_BOTTOM_INSET_PX,
             top_y,
             position,
+            at: None,
         }
     }
 
     /// Top edge of a `lines`-line text block with a style reaching `reach` px past the glyphs.
     pub fn text_top(&self, lines: u32, reach: f64) -> f64 {
         let h = f64::from(lines) * self.line_height_px;
+        if let Some(p) = self.at {
+            let frame_h = self.bottom_y + self.top_y;
+            return f64::from(p.y) * frame_h - h / 2.0 - reach;
+        }
         match self.position {
             TextPosition::Bottom => self.bottom_y - h - reach,
             TextPosition::Top => self.top_y - reach,
@@ -255,6 +289,51 @@ pub fn title_safe(res: Resolution) -> (f64, f64, f64, f64) {
     )
 }
 
+/// Where a scene text at a free point crosses the title-safe bottom, the subtitle band (when the
+/// video has subtitles) or the title-safe sides: `(what, fix)` per problem.
+fn point_findings(
+    t: &VideoTimeline,
+    area: &SceneTextArea,
+    reach: f64,
+    p: TextPoint,
+    text: &str,
+    lines: u32,
+    fonts: &Fonts,
+) -> Vec<(String, &'static str)> {
+    let res = t.resolution;
+    let (safe_l, _, safe_r, safe_b) = title_safe(res);
+    let top = area.text_top(lines, reach);
+    let bottom = top + f64::from(lines) * area.line_height_px + 2.0 * reach;
+    let mut out = Vec::new();
+    if bottom > safe_b + 0.5 {
+        out.push((
+            format!("reaches y={bottom:.0} px, below the title-safe bottom at {safe_b:.0} px"),
+            "move the text up (a smaller position.y)",
+        ));
+    } else if !t.subtitles.is_empty() {
+        let band_top = SubtitleBand::for_timeline(t).top_y(1);
+        if bottom > band_top + 0.5 {
+            out.push((
+                format!("reaches y={bottom:.0} px and covers the subtitles, which start at y={band_top:.0} px"),
+                "move the text up (a smaller position.y)",
+            ));
+        }
+    }
+    let half = crate::text::scene_text_block_width(text, area, fonts, Role::Heading) / 2.0 + reach;
+    let cx = f64::from(p.x_or_centre()) * f64::from(res.width);
+    if cx - half < safe_l - 0.5 || cx + half > safe_r + 0.5 {
+        out.push((
+            format!(
+                "spans x={:.0}..{:.0} px, past the title-safe sides at {safe_l:.0}..{safe_r:.0} px",
+                cx - half,
+                cx + half
+            ),
+            "move the text toward the middle (position.x nearer 0.5)",
+        ));
+    }
+    out
+}
+
 pub fn check(timeline: &VideoTimeline) -> Vec<Finding> {
     check_with(timeline, &Fonts::none())
 }
@@ -294,6 +373,25 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
                     )
                     .scene(&scene.id)
                     .at(starts[i] + page.from_ms),
+                );
+            }
+            if let Some(p) = area.at {
+                out.extend(
+                    point_findings(timeline, &area, reach.total(), p, &page.text, lines, fonts)
+                        .into_iter()
+                        .map(|(what, fix)| {
+                            Finding::new(
+                                Severity::Warning,
+                                "safe_area.text",
+                                format!("{} ({lines} lines) {what}", crate::pages::page_name(k, n)),
+                                Suggestion::field(
+                                    fix,
+                                    crate::scene_path(i, "text_layout/position"),
+                                ),
+                            )
+                            .scene(&scene.id)
+                            .at(starts[i] + page.from_ms)
+                        }),
                 );
             }
         }

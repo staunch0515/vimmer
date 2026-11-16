@@ -117,3 +117,55 @@ test("a size drag is one undo step; a position choice is another", () => {
   assert.equal(s.timeline.text_layout, undefined);
   assert.equal(JSON.stringify(s.timeline), JSON.stringify(scene({})));
 });
+
+// ---- Free position and keywords (cjk-highlight)
+import { DEFAULT_POINT, KEYWORD_YELLOW, addHighlight, removeHighlight, withPointAxis } from "../editor/src/textLayout.ts";
+
+test("free point: axes are rounded and clamped, x 0.5 is left out, problems are named", () => {
+  assert.deepEqual(DEFAULT_POINT, { y: 0.6 });
+  assert.deepEqual(withPointAxis(null, "y", 0.6234), { y: 0.62 });
+  assert.deepEqual(withPointAxis({ y: 0.6 }, "x", 0.3), { y: 0.6, x: 0.3 });
+  assert.deepEqual(withPointAxis({ y: 0.6, x: 0.3 }, "x", 0.5), { y: 0.6 });
+  assert.deepEqual(withPointAxis({ y: 0.6 }, "y", 1.7), { y: 1 });
+  assert.deepEqual(layoutProblems({ position: { y: 0.6, x: 0.2 } }), []);
+  assert.deepEqual(layoutProblems({ position: { y: 1.4 } }), ["text position y 1.4 must be between 0 (top) and 1 (bottom)"]);
+  assert.deepEqual(layoutProblems({ position: { y: 0.5, x: -1 } }), ["text position x -1 must be between 0 (left) and 1 (right)"]);
+});
+
+test("keywords: added once (ignoring case), trimmed, removed", () => {
+  assert.deepEqual(addHighlight([], " 文字 "), ["文字"]);
+  assert.deepEqual(addHighlight(["文字"], "文字"), ["文字"]);
+  assert.deepEqual(addHighlight(["AI"], "ai"), ["AI"]);
+  assert.deepEqual(addHighlight(["AI"], "  "), ["AI"]);
+  assert.deepEqual(removeHighlight(["文字", "视频"], "文字"), ["视频"]);
+  assert.equal(KEYWORD_YELLOW, "#f5c400");
+});
+
+test("a Y drag is one undo step; a keyword from the selection is one; removing it is one", () => {
+  type S = Undoable<Scene>;
+  const same = (a: Scene, b: Scene) => JSON.stringify(a) === JSON.stringify(b);
+  const edit = (st: S, next: Scene, merge: Merge): S => record(st, { ...st, timeline: next }, merge, same);
+  const start = scene({ text: "输入文字就能生成视频" });
+  let s: S = { timeline: start, history: [], future: [], merge: null };
+  // Choosing 自由位置 is one step; dragging the Y slider (one input, coalesced) is one more.
+  s = edit(s, { ...s.timeline, text_layout: withLayoutPart(s.timeline.text_layout, "position", DEFAULT_POINT) ?? undefined }, null);
+  const key = mergeKey(9, { type: "patchScene", index: 0 });
+  for (const [i, y] of [0.61, 0.63, 0.66].entries()) {
+    const p = withPointAxis(s.timeline.text_layout?.position as { y: number }, "y", y);
+    s = edit(s, { ...s.timeline, text_layout: withLayoutPart(s.timeline.text_layout, "position", p) ?? undefined }, { key, at: i * 40 });
+  }
+  assert.equal(s.history.length, 2);
+  assert.deepEqual(s.timeline.text_layout, { position: { y: 0.66 } });
+  // ★ 高亮选中的字 and the × on its chip: a step each.
+  s = edit(s, { ...s.timeline, highlights: addHighlight(s.timeline.highlights, "文字") }, null);
+  s = edit(s, { ...s.timeline, highlights: removeHighlight(s.timeline.highlights, "文字") }, null);
+  assert.equal(s.history.length, 4);
+  s = undo(s)!;
+  assert.deepEqual(s.timeline.highlights, ["文字"]);
+  s = undo(s)!;
+  assert.deepEqual(s.timeline.highlights, []);
+  s = undo(s)!;
+  assert.deepEqual(s.timeline.text_layout, { position: DEFAULT_POINT });
+  s = undo(s)!;
+  assert.equal(JSON.stringify(s.timeline), JSON.stringify(start));
+});

@@ -66,9 +66,12 @@ export type VideoClip = {
 
 // ---- Text layout (文字分页). Mirrors rust-core/crates/vimmer-dsl/src/text_layout.rs.
 export type TextPosition = "top" | "middle" | "bottom";
+// A free position: the centre of the text block at y of the frame height (0 top, 1 bottom) and
+// x of the width (absent: 0.5, centred). text_layout.rs `TextPoint`.
+export type TextPoint = { y: number; x?: number | null };
 export type Paging = "off" | "auto" | "manual";
 // Every part optional: the scene's, else the brand's, else the built-in one.
-export type TextLayout = { size?: number | null /* px at 1080p, 40..160, default 92 */; position?: TextPosition | null; paging?: Paging | null };
+export type TextLayout = { size?: number | null /* px at 1080p, 40..160, default 92 */; position?: TextPosition | TextPoint | null; paging?: Paging | null };
 export type TextPage = { text: string; start_ms: number };
 
 export type Scene = {

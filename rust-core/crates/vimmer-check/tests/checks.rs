@@ -1123,3 +1123,62 @@ fn fixture_json_timeline() -> VideoTimeline {
     }))
     .unwrap()
 }
+
+// ---- Free text position and explicit line breaks (cjk-highlight) ----------------------------
+
+fn portrait_caption(text: &str, position: Value, subtitles: bool) -> VideoTimeline {
+    let subs = if subtitles {
+        serde_json::json!([{"start_ms": 0, "end_ms": 2000, "text": "字幕"}])
+    } else {
+        serde_json::json!([])
+    };
+    serde_json::from_value(serde_json::json!({
+        "fps": 30,
+        "resolution": {"width": 1080, "height": 1920},
+        "scenes": [{"id": "cap", "duration_ms": 4000, "text": text, "highlights": [],
+                    "image": null, "motion": "static", "audio": null,
+                    "text_layout": {"position": position}}],
+        "subtitles": subs
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_caption_at_sixty_percent_is_clean_and_a_low_or_wide_one_is_flagged() {
+    let codes = |t: &VideoTimeline| -> Vec<String> {
+        run(t, None)
+            .iter()
+            .filter(|f| f.code == "safe_area.text" || f.code == "text.overflow")
+            .map(|f| format!("{}: {}", f.code, f.message))
+            .collect()
+    };
+    let ok = portrait_caption("输入文字\n就能生成视频", serde_json::json!({"y": 0.6}), true);
+    assert!(codes(&ok).is_empty(), "{:?}", codes(&ok));
+    // Below the title-safe bottom.
+    let low = codes(&portrait_caption("输入文字就能生成视频", serde_json::json!({"y": 0.99}), false));
+    assert!(
+        low.iter().any(|m| m.contains("below the title-safe bottom")),
+        "{low:?}"
+    );
+    // Over the subtitle band (inside the safe area).
+    let over = codes(&portrait_caption("输入文字", serde_json::json!({"y": 0.92}), true));
+    assert!(over.iter().any(|m| m.contains("covers the subtitles")), "{over:?}");
+    // Pushed off the side.
+    let side = codes(&portrait_caption("输入文字就能生成视频", serde_json::json!({"y": 0.5, "x": 0.05}), false));
+    assert!(side.iter().any(|m| m.contains("past the title-safe sides")), "{side:?}");
+    let f = run(&portrait_caption("输入文字", serde_json::json!({"y": 0.99}), false), None);
+    let f = find(&f, "safe_area.text", Some("cap"), None);
+    assert_eq!(f[0].suggestion.path.as_deref(), Some("/scenes/0/text_layout/position"));
+}
+
+#[test]
+fn an_explicit_line_break_counts_as_a_line() {
+    use vimmer_check::layout::SceneTextArea;
+    use vimmer_check::text::scene_text_lines;
+    let t = portrait_caption("输入文字", serde_json::json!({"y": 0.6}), false);
+    let (area, _) = SceneTextArea::for_scene(&t, 0);
+    assert_eq!(scene_text_lines("输入文字就能", &area, 1.0), 1);
+    assert_eq!(scene_text_lines("输入文字\n就能", &area, 1.0), 2);
+    assert_eq!(scene_text_lines("输入文字\n\n\n就能\n", &area, 1.0), 2, "a run of breaks is one");
+    assert_eq!(scene_text_lines("one two\nthree", &area, 1.0), 2);
+}

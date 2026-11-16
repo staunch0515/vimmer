@@ -98,17 +98,28 @@ pub fn scrim_alpha_at(position: vimmer_dsl::TextPosition, y: f64, h: f64) -> f64
     match position {
         vimmer_dsl::TextPosition::Bottom => scrim_alpha(y, h),
         vimmer_dsl::TextPosition::Top => scrim_alpha(h - y, h),
-        vimmer_dsl::TextPosition::Middle => {
-            let u = (y / h).clamp(0.0, 1.0);
-            let d = (u - 0.5).abs();
-            if d <= 0.15 {
-                0.45
-            } else if d <= 0.35 {
-                0.45 * (0.35 - d) / 0.20
-            } else {
-                0.0
-            }
-        }
+        vimmer_dsl::TextPosition::Middle => scrim_band_alpha(0.5, y, h),
+    }
+}
+
+/// The middle band moved to centre `c` (a fraction of the frame height).
+pub fn scrim_band_alpha(c: f64, y: f64, h: f64) -> f64 {
+    let u = (y / h).clamp(0.0, 1.0);
+    let d = (u - c).abs();
+    if d <= 0.15 {
+        0.45
+    } else if d <= 0.35 {
+        0.45 * (0.35 - d) / 0.20
+    } else {
+        0.0
+    }
+}
+
+/// Scrim opacity at `y` under scene text laid out as `layout` (a free point: the band at its y).
+pub fn scene_scrim_alpha(layout: &vimmer_dsl::ResolvedTextLayout, y: f64, h: f64) -> f64 {
+    match layout.at {
+        Some(p) => scrim_band_alpha(f64::from(p.y), y, h),
+        None => scrim_alpha_at(layout.position, y, h),
     }
 }
 
@@ -442,7 +453,9 @@ pub fn min_readable_outline_px(font_px: f64) -> f64 {
 fn reads_on_outline(style: &TextStyle, font_px: f64, res: Resolution) -> Option<[u8; 4]> {
     let o = style.drawn_outline()?;
     let px = f64::from(o.width) * style_scale(res.width, res.height);
-    (px >= min_readable_outline_px(font_px)).then(|| rgb(&o.color)).flatten()
+    (px >= min_readable_outline_px(font_px))
+        .then(|| rgb(&o.color))
+        .flatten()
 }
 
 /// One text to check.
@@ -480,7 +493,11 @@ fn texts(scene: &Scene, si: usize, t: &VideoTimeline, fonts: &Fonts) -> Vec<Text
         let fix = if outline.is_some() {
             Suggestion::field(
                 "use an outline color that differs more from the text color",
-                if scene.text_style.as_ref().is_some_and(|s| s.outline.is_some()) {
+                if scene
+                    .text_style
+                    .as_ref()
+                    .is_some_and(|s| s.outline.is_some())
+                {
                     format!("/scenes/{si}/text_style/outline/color")
                 } else {
                     "/brand/text_style/outline/color".into()
@@ -710,7 +727,7 @@ fn percentile(mut v: Vec<f64>, p: f64) -> Option<f64> {
 /// Contrast of `text` at one moment, and the median background color under it.
 fn contrast_at(
     text: &Text,
-    scene_text: Option<vimmer_dsl::TextPosition>,
+    scene_text: Option<vimmer_dsl::ResolvedTextLayout>,
     canvas: &Canvas,
     pose: &Pose,
     res: Resolution,
@@ -721,7 +738,7 @@ fn contrast_at(
     let mut lum = Vec::new();
     for (x, y) in grid(text.rect, res) {
         let mut bg = background_at(canvas, pose, res, x, y);
-        let scrim = scene_text.map_or(0.0, |p| scrim_alpha_at(p, y, h));
+        let scrim = scene_text.map_or(0.0, |l| scene_scrim_alpha(&l, y, h));
         for u in text.underlays.iter().filter(|u| u.under_scrim) {
             if u.contains(x, y) {
                 bg = over(u.color, bg);
@@ -775,7 +792,7 @@ pub fn check(t: &VideoTimeline, public_dir: &Path, ffmpeg: &Path, fonts: &Fonts)
             .text
             .as_deref()
             .is_some_and(|s| !s.trim().is_empty())
-            .then(|| scene.effective_text_layout(t.brand.as_ref()).position);
+            .then(|| scene.effective_text_layout(t.brand.as_ref()));
         let moving = moves(scene) || scene.video.is_some();
         for text in &items {
             let min = if text.large {
@@ -898,8 +915,14 @@ mod tests {
         let low = (200.0, 900.0, 600.0, 100.0);
         let (plain, _) =
             contrast_at(&text("#fafafa", low, true), None, &pale, &still(), RES).unwrap();
-        let (scrimmed, _) =
-            contrast_at(&text("#fafafa", low, true), Some(vimmer_dsl::TextPosition::Bottom), &pale, &still(), RES).unwrap();
+        let (scrimmed, _) = contrast_at(
+            &text("#fafafa", low, true),
+            Some(vimmer_dsl::TextLayout::default().resolved()),
+            &pale,
+            &still(),
+            RES,
+        )
+        .unwrap();
         assert!(plain < 1.2 && scrimmed > 2.0, "{plain} {scrimmed}");
         let mut boxed = text("#fafafa", (200.0, 100.0, 600.0, 100.0), false);
         boxed.box_color = rgb("#09090bcc");
@@ -919,9 +942,11 @@ mod tests {
         let (ratio, _) = contrast_at(&t, None, &white, &still(), RES).unwrap();
         assert!(ratio < 1.5, "{ratio}");
         // Too thin to count: 1 px at 1080p on 92 px text.
-        let thin: TextStyle = serde_json::from_str(r##"{"outline":{"color":"#000","width":1}}"##).unwrap();
+        let thin: TextStyle =
+            serde_json::from_str(r##"{"outline":{"color":"#000","width":1}}"##).unwrap();
         assert_eq!(reads_on_outline(&thin, 92.0, RES), None);
-        let ok: TextStyle = serde_json::from_str(r##"{"outline":{"color":"#000","width":2}}"##).unwrap();
+        let ok: TextStyle =
+            serde_json::from_str(r##"{"outline":{"color":"#000","width":2}}"##).unwrap();
         assert_eq!(reads_on_outline(&ok, 92.0, RES), Some([0, 0, 0, 255]));
         assert!((min_readable_outline_px(200.0) - 4.0).abs() < 1e-9);
     }

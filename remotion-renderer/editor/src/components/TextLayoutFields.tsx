@@ -1,7 +1,8 @@
-import type { Paging, TextLayout, TextPosition } from "../../../src/types/timeline";
+import type { Paging, TextLayout, TextPoint, TextPosition } from "../../../src/types/timeline";
 import { DEFAULT_TEXT_PX, MAX_TEXT_PX, MIN_TEXT_PX, type PagePreview } from "../../../src/textPages";
 import { Field } from "./Inspector";
-import type { LayoutPart } from "../textLayout";
+import { DEFAULT_POINT, withPointAxis, type LayoutPart } from "../textLayout";
+import { isTextPoint } from "../../../src/textPages";
 
 // 文字 Text: size, position and paging of the scene text (src/textPages.ts), in the Scene tab
 // (with the page list) and the Brand tab (the default for every scene). Each part is optional:
@@ -19,6 +20,8 @@ const PAGINGS: { value: Paging; label: string }[] = [
   { value: "manual", label: "手动分页（空一行换页）Manual" },
 ];
 const label = <T extends string>(list: { value: T; label: string }[], v: T) => list.find((x) => x.value === v)?.label ?? v;
+const POINT = "point";
+const placeLabel = (p: TextLayout["position"]) => (isTextPoint(p) ? `自由位置 y ${p.y}` : label(POSITIONS, p ?? "bottom"));
 
 type Props = {
   name: "scene" | "brand";
@@ -58,17 +61,48 @@ export const TextLayoutFields = ({ name, layout, inherited, onChange }: Props) =
       <Field label="位置 Position">
         <select
           data-layout-position={name}
-          value={own.position ?? ""}
-          onChange={(e) => onChange("position", (e.target.value || undefined) as TextPosition | undefined)}
+          value={isTextPoint(own.position) ? POINT : (own.position ?? "")}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === POINT) onChange("position", isTextPoint(fallbackPosition) ? fallbackPosition : DEFAULT_POINT);
+            else onChange("position", (v || undefined) as TextPosition | undefined);
+          }}
         >
-          <option value="">{`${from}: ${label(POSITIONS, fallbackPosition)}`}</option>
+          <option value="">{`${from}: ${placeLabel(fallbackPosition)}`}</option>
           {POSITIONS.map((p) => (
             <option key={p.value} value={p.value}>
               {p.label}
             </option>
           ))}
+          <option value={POINT}>自由位置（上下/左右拖动）Custom</option>
         </select>
       </Field>
+      {isTextPoint(own.position) && (
+        <>
+          <Field label="上下 Y" suffix={`${Math.round(own.position.y * 100)}%`} hint="0 = 顶部, 100% = 底部（文字中心）">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              data-layout-y={name}
+              value={own.position.y}
+              onChange={(e) => onChange("position", withPointAxis(own.position as TextPoint, "y", Number(e.target.value)))}
+            />
+          </Field>
+          <Field label="左右 X" suffix={`${Math.round((own.position.x ?? 0.5) * 100)}%`} hint="50% = 居中">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              data-layout-x={name}
+              value={own.position.x ?? 0.5}
+              onChange={(e) => onChange("position", withPointAxis(own.position as TextPoint, "x", Number(e.target.value)))}
+            />
+          </Field>
+        </>
+      )}
       <Field label="文字分页 Paging" hint={name === "scene" ? "长文字分几页显示，背景和镜头不断" : "每一幕的默认"}>
         <select
           data-layout-paging={name}

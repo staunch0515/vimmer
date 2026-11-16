@@ -2214,8 +2214,18 @@ fn show_text_layout(v: &Value) -> String {
     if let Some(size) = m.get("size").and_then(Value::as_f64) {
         parts.push(format!("{size} px"));
     }
-    if let Some(p) = m.get("position").and_then(Value::as_str) {
-        parts.push(p.to_string());
+    match m.get("position") {
+        Some(Value::String(p)) => parts.push(p.clone()),
+        Some(Value::Object(p)) => {
+            // Points are f32 in a saved timeline: show 3 decimals (0.6, not 0.6000000238).
+            let r3 = |v: f64| (v * 1000.0).round() / 1000.0;
+            let y = r3(p.get("y").and_then(Value::as_f64).unwrap_or(0.0));
+            parts.push(match p.get("x").and_then(Value::as_f64).map(r3) {
+                Some(x) => format!("at y {y}, x {x}"),
+                None => format!("at y {y}"),
+            });
+        }
+        _ => {}
     }
     if let Some(p) = m.get("paging").and_then(Value::as_str) {
         parts.push(format!("{p} paging"));

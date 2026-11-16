@@ -8,6 +8,10 @@
 //! * `position`: `"top"`, `"middle"` or `"bottom"` (built-in, where the text always was:
 //!   bottom-aligned above the subtitle band). Every position keeps the 260 px bottom inset that
 //!   leaves the subtitle band free; `top` and `middle` also start below a logo in a top corner.
+//!   `position` may also be a point, `{"y": 0.6}` or `{"y": 0.6, "x": 0.5}`: the centre of the
+//!   text block sits at that fraction of the frame height (0 top, 1 bottom) and width (x, default
+//!   0.5 = centred). A point ignores the bottom inset and the logo; `vimmer check` warns when the
+//!   text then crosses the title-safe area or the subtitle band.
 //! * `paging`: `"off"` (built-in: the whole text at once), `"auto"` (one page per sentence:
 //!   split after 。！？.!? and at line breaks, very short sentences merged with a neighbour, a
 //!   sentence too long for one page split at commas, then between words) or `"manual"` (a page
@@ -73,6 +77,61 @@ pub enum TextPosition {
     Bottom,
 }
 
+/// A free position of the scene text: the centre of the text block at `y` of the frame height
+/// (0 top, 1 bottom) and `x` of the width (absent: 0.5, centred).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextPoint {
+    pub y: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f32>,
+}
+
+impl TextPoint {
+    pub fn x_or_centre(&self) -> f32 {
+        self.x.unwrap_or(0.5)
+    }
+}
+
+/// `text_layout.position`: a named place (`"bottom"`), or a free point (`{"y": 0.6}`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum TextPlace {
+    Named(TextPosition),
+    At(TextPoint),
+}
+
+// By hand, so a wrong name keeps serde's "unknown variant `left`, expected one of ..." message.
+impl<'de> Deserialize<'de> for TextPlace {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = TextPlace;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str(r#""top", "middle", "bottom" or a point {"y": 0..1, "x": 0..1}"#)
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<TextPlace, E> {
+                TextPosition::deserialize(serde::de::value::StrDeserializer::<E>::new(v))
+                    .map(TextPlace::Named)
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<TextPlace, A::Error> {
+                TextPoint::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+                    .map(TextPlace::At)
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
+impl From<TextPosition> for TextPlace {
+    fn from(p: TextPosition) -> Self {
+        TextPlace::Named(p)
+    }
+}
+
 /// How a long scene text is split into pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -90,7 +149,7 @@ pub struct TextLayout {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<TextPosition>,
+    pub position: Option<TextPlace>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paging: Option<Paging>,
 }
@@ -119,6 +178,21 @@ impl TextLayout {
                 ));
             }
         }
+        if let Some(TextPlace::At(p)) = self.position {
+            if !(p.y.is_finite() && (0.0..=1.0).contains(&p.y)) {
+                out.push(format!(
+                    "{prefix}position.y {} must be between 0 (top) and 1 (bottom)",
+                    p.y
+                ));
+            }
+            if let Some(x) = p.x {
+                if !(x.is_finite() && (0.0..=1.0).contains(&x)) {
+                    out.push(format!(
+                        "{prefix}position.x {x} must be between 0 (left) and 1 (right)"
+                    ));
+                }
+            }
+        }
         out
     }
 
@@ -126,7 +200,15 @@ impl TextLayout {
     pub fn resolved(&self) -> ResolvedTextLayout {
         ResolvedTextLayout {
             size: self.size.unwrap_or(DEFAULT_TEXT_PX),
-            position: self.position.unwrap_or_default(),
+            position: match self.position {
+                Some(TextPlace::Named(p)) => p,
+                Some(TextPlace::At(_)) => TextPosition::Middle,
+                None => TextPosition::default(),
+            },
+            at: match self.position {
+                Some(TextPlace::At(p)) => Some(p),
+                _ => None,
+            },
             paging: self.paging.unwrap_or_default(),
         }
     }
@@ -137,7 +219,10 @@ impl TextLayout {
 pub struct ResolvedTextLayout {
     /// px at 1080p.
     pub size: f32,
+    /// The named place; `Middle` for a free point (`at`).
     pub position: TextPosition,
+    /// The free point, when `position` is one: it wins over the named place.
+    pub at: Option<TextPoint>,
     pub paging: Paging,
 }
 
@@ -561,8 +646,12 @@ pub enum PageClock<'a> {
 /// When each page starts (ms from the scene start); see the module docs.
 pub fn page_starts(pages: &[String], clock: &PageClock<'_>) -> Vec<u64> {
     let starts = match clock {
-        PageClock::Scene { duration_ms } => proportional_starts(pages, 0, *duration_ms, MIN_PAGE_MS),
-        PageClock::Clip { offset_ms, clip_ms } => proportional_starts(pages, *offset_ms, *clip_ms, 0),
+        PageClock::Scene { duration_ms } => {
+            proportional_starts(pages, 0, *duration_ms, MIN_PAGE_MS)
+        }
+        PageClock::Clip { offset_ms, clip_ms } => {
+            proportional_starts(pages, *offset_ms, *clip_ms, 0)
+        }
         PageClock::Words {
             words,
             offset_ms,
@@ -624,7 +713,7 @@ mod tests {
         };
         let brand = TextLayout {
             size: Some(60.0),
-            position: Some(TextPosition::Middle),
+            position: Some(TextPosition::Middle.into()),
             paging: None,
         };
         let r = scene.or(Some(&brand)).resolved();
@@ -656,7 +745,10 @@ mod tests {
         let e = serde_json::from_str::<TextLayout>(r#"{"position":"left"}"#)
             .unwrap_err()
             .to_string();
-        assert!(e.contains("unknown variant `left`") && e.contains("`top`, `middle`, `bottom`"), "{e}");
+        assert!(
+            e.contains("unknown variant `left`") && e.contains("`top`, `middle`, `bottom`"),
+            "{e}"
+        );
         let e = serde_json::from_str::<TextLayout>(r#"{"paging":"sentences"}"#)
             .unwrap_err()
             .to_string();
@@ -735,7 +827,10 @@ mod tests {
         assert_eq!(p.concat(), t);
         let words = "word ".repeat(60);
         let p = auto_pages(words.trim(), cap);
-        assert!(p.len() > 1 && p.iter().all(|x| text_em(x) <= cap * PAGE_SLACK), "{p:?}");
+        assert!(
+            p.len() > 1 && p.iter().all(|x| text_em(x) <= cap * PAGE_SLACK),
+            "{p:?}"
+        );
         assert_eq!(p.join(" "), words.trim());
         // A bigger font holds fewer characters per page.
         assert!(page_cap_em(140.0, LAND) < page_cap_em(92.0, LAND));
@@ -751,23 +846,38 @@ mod tests {
         assert_eq!(manual_pages("no breaks here"), s(&["no breaks here"]));
         let one = split_pages("only one\n", Paging::Manual, 92.0, LAND);
         assert_eq!(one, s(&["only one\n"]), "one page is the text as written");
-        assert_eq!(split_pages("a. b.\n\nc", Paging::Off, 92.0, LAND), s(&["a. b.\n\nc"]));
+        assert_eq!(
+            split_pages("a. b.\n\nc", Paging::Off, 92.0, LAND),
+            s(&["a. b.\n\nc"])
+        );
         assert!(split_pages("  ", Paging::Auto, 92.0, LAND).is_empty());
     }
 
     #[test]
     fn proportional_timing_with_a_minimum_per_page() {
         let pages = s(&["aaaa", "aa", "aaaaaa"]);
-        assert_eq!(proportional_starts(&pages, 0, 12_000, 0), vec![0, 4000, 6000]);
+        assert_eq!(
+            proportional_starts(&pages, 0, 12_000, 0),
+            vec![0, 4000, 6000]
+        );
         // 1200 each, the remaining 6400 by characters.
         assert_eq!(
             proportional_starts(&pages, 0, 10_000, 1_200),
             vec![0, 1200 + 2133, 2400 + 3200]
         );
         // Too short for the minimum: equal shares.
-        assert_eq!(proportional_starts(&pages, 0, 3_000, 1_200), vec![0, 1000, 2000]);
         assert_eq!(
-            page_starts(&pages, &PageClock::Clip { offset_ms: 500, clip_ms: 6_000 }),
+            proportional_starts(&pages, 0, 3_000, 1_200),
+            vec![0, 1000, 2000]
+        );
+        assert_eq!(
+            page_starts(
+                &pages,
+                &PageClock::Clip {
+                    offset_ms: 500,
+                    clip_ms: 6_000
+                }
+            ),
             vec![0, 500 + 2000, 500 + 3000]
         );
     }
@@ -833,12 +943,74 @@ mod tests {
         )
         .unwrap();
         let pad = 1920.0 * 0.08;
-        assert_eq!(top_inset_px(TextPosition::Bottom, Some(&brand), "a", LAND), pad);
+        assert_eq!(
+            top_inset_px(TextPosition::Bottom, Some(&brand), "a", LAND),
+            pad
+        );
         assert_eq!(top_inset_px(TextPosition::Top, None, "a", LAND), pad);
-        assert!((top_inset_px(TextPosition::Top, Some(&brand), "a", LAND) - 0.17 * 1080.0).abs() < 1e-3);
-        assert_eq!(top_inset_px(TextPosition::Middle, Some(&brand), "x", LAND), pad);
+        assert!(
+            (top_inset_px(TextPosition::Top, Some(&brand), "a", LAND) - 0.17 * 1080.0).abs() < 1e-3
+        );
+        assert_eq!(
+            top_inset_px(TextPosition::Middle, Some(&brand), "x", LAND),
+            pad
+        );
         let low: Brand =
             serde_json::from_str(r#"{"logo":{"src":"l.png","corner":"bottom_left"}}"#).unwrap();
         assert_eq!(top_inset_px(TextPosition::Top, Some(&low), "a", LAND), pad);
+    }
+}
+
+#[cfg(test)]
+mod place_tests {
+    use super::*;
+
+    fn layout(json: &str) -> Result<TextLayout, String> {
+        serde_json::from_str(json).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn position_reads_a_name_or_a_point_and_writes_it_back_the_same() {
+        for raw in [
+            r#"{"position":"top"}"#,
+            r#"{"position":{"y":0.6}}"#,
+            r#"{"position":{"y":0.6,"x":0.3}}"#,
+        ] {
+            let l = layout(raw).unwrap();
+            assert_eq!(serde_json::to_string(&l).unwrap(), raw);
+        }
+        let r = layout(r#"{"position":{"y":0.6}}"#).unwrap().resolved();
+        assert_eq!(r.at, Some(TextPoint { y: 0.6, x: None }));
+        assert_eq!(r.position, TextPosition::Middle);
+        assert_eq!(layout(r#"{"position":"top"}"#).unwrap().resolved().at, None);
+    }
+
+    #[test]
+    fn position_errors_name_the_problem() {
+        let e = layout(r#"{"position":"left"}"#).unwrap_err();
+        assert!(e.contains("unknown variant `left`"), "{e}");
+        let e = layout(r#"{"position":{"x":0.5}}"#).unwrap_err();
+        assert!(e.contains("missing field `y`"), "{e}");
+        let e = layout(r#"{"position":{"y":0.5,"z":1}}"#).unwrap_err();
+        assert!(e.contains("unknown field `z`"), "{e}");
+        let ok = |j: &str| layout(j).unwrap().problems("text_layout.");
+        assert!(ok(r#"{"position":{"y":0}}"#).is_empty());
+        assert!(ok(r#"{"position":{"y":1,"x":1}}"#).is_empty());
+        assert_eq!(
+            ok(r#"{"position":{"y":1.2}}"#),
+            vec!["text_layout.position.y 1.2 must be between 0 (top) and 1 (bottom)"]
+        );
+        assert_eq!(
+            ok(r#"{"position":{"y":0.5,"x":-0.1}}"#),
+            vec!["text_layout.position.x -0.1 must be between 0 (left) and 1 (right)"]
+        );
+    }
+
+    #[test]
+    fn a_scene_point_wins_over_a_brand_name_and_back() {
+        let scene = layout(r#"{"position":{"y":0.6}}"#).unwrap();
+        let brand = layout(r#"{"position":"top"}"#).unwrap();
+        assert!(scene.or(Some(&brand)).resolved().at.is_some());
+        assert_eq!(brand.or(Some(&scene)).resolved().at, None);
     }
 }

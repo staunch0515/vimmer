@@ -65,8 +65,7 @@ pub(crate) fn text_area(
     // The box's padding and border are inside the layer's box (`box-sizing: border-box`).
     let pad = reach.pad + reach.border;
     let line_height_px = font_px * f64::from(t.line_height);
-    let line_width =
-        (f64::from(layer.width) * f64::from(res.width) - 2.0 * reach.total()).max(1.0);
+    let line_width = (f64::from(layer.width) * f64::from(res.width) - 2.0 * reach.total()).max(1.0);
     let max_lines = match layer.height {
         Some(bh) => ((f64::from(bh) * h - 2.0 * pad) / line_height_px)
             .floor()
@@ -84,6 +83,7 @@ pub(crate) fn text_area(
             bottom_y: 0.0,
             top_y: 0.0,
             position: vimmer_dsl::TextPosition::Bottom,
+            at: None,
         },
         pad,
     )
@@ -330,6 +330,7 @@ fn area(font_px: f64, lh: f64, line_width: f64) -> SceneTextArea {
         bottom_y: 0.0,
         top_y: 0.0,
         position: vimmer_dsl::TextPosition::Bottom,
+        at: None,
     }
 }
 
@@ -780,7 +781,11 @@ mod style_tests {
         let (styled, pad) = text_area(&t, &l, RES, None);
         // padding 0.2 x 54 px = 10.8, border 4, outline 3 on each side.
         assert!((pad - 14.8).abs() < 1e-4, "{pad}");
-        assert!((styled.line_width - (960.0 - 2.0 * 17.8)).abs() < 1e-4, "{}", styled.line_width);
+        assert!(
+            (styled.line_width - (960.0 - 2.0 * 17.8)).abs() < 1e-4,
+            "{}",
+            styled.line_width
+        );
         assert!(styled.max_lines <= plain.max_lines);
         // The brand's box applies to a layer without its own.
         let brand: Brand = serde_json::from_str(

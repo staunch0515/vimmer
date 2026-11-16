@@ -194,6 +194,33 @@ pub fn scene_text_lines_with(
     fonts: &Fonts,
     role: Role,
 ) -> u32 {
+    // An explicit line break starts a new line (`AnimatedText.tsx` draws it as a `<br>`).
+    explicit_lines(text)
+        .map(|line| line_count(line, area, factor, fonts, role))
+        .sum()
+}
+
+/// The lines of `text` as typed: split at line breaks, blank lines left out (the renderer draws
+/// a run of line breaks as one).
+pub fn explicit_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.split('\n').filter(|l| !l.trim().is_empty())
+}
+
+/// Widest line of the scene text block in `area`, px (the line width when a line wraps).
+pub fn scene_text_block_width(text: &str, area: &SceneTextArea, fonts: &Fonts, role: Role) -> f64 {
+    let gap = area.word_gap_em * area.font_px;
+    explicit_lines(text)
+        .map(|line| {
+            let w: f64 = line
+                .split_whitespace()
+                .map(|word| fonts.width(role, word, area.font_px, area.letter_spacing_em) + gap)
+                .sum();
+            (w - gap).min(area.line_width)
+        })
+        .fold(0.0, f64::max)
+}
+
+fn line_count(text: &str, area: &SceneTextArea, factor: f64, fonts: &Fonts, role: Role) -> u32 {
     let gap = area.word_gap_em * area.font_px;
     let mut lines = 0u32;
     let mut cur = 0.0f64;
@@ -377,6 +404,7 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
                 role,
             );
             let runs_off = match area.position {
+                _ if area.at.is_some() => "the first and last lines run off the frame",
                 vimmer_dsl::TextPosition::Bottom => "the top lines run off the frame",
                 vimmer_dsl::TextPosition::Top => "the last lines run into the subtitle area",
                 vimmer_dsl::TextPosition::Middle => {

@@ -44,10 +44,11 @@ test("nothing set is the old layout; each part falls back to the brand", () => {
   assert.ok(isDefaultLayout({}, { text_layout: {} }));
   assert.ok(!isDefaultLayout({ size: 92 }, null));
   assert.ok(!isDefaultLayout(null, { text_layout: { position: "top" } }));
-  assert.deepEqual(resolveTextLayout(null, null), { size: 92, position: "bottom", paging: "off" });
+  assert.deepEqual(resolveTextLayout(null, null), { size: 92, position: "bottom", at: null, paging: "off" });
   assert.deepEqual(resolveTextLayout({ size: 120 }, { text_layout: { size: 60, position: "middle" } }), {
     size: 120,
     position: "middle",
+    at: null,
     paging: "off",
   });
 });

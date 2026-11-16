@@ -388,7 +388,7 @@ camera move).
 | part | value | meaning |
 |---|---|---|
 | `size` | 40..160 (default 92) | font size in px on a 1080p frame (both supported resolutions draw it 1:1) |
-| `position` | `"top"`, `"middle"`, `"bottom"` (default) | where the text block sits. All three keep the 260 px bottom inset that leaves the subtitle band free; `top` and `middle` also start below a logo in a top corner (8 % of the frame width from the top otherwise) |
+| `position` | `"top"`, `"middle"`, `"bottom"` (default), or a point `{"y": 0.6}` / `{"y": 0.6, "x": 0.4}` | where the text block sits. The three names keep the 260 px bottom inset that leaves the subtitle band free; `top` and `middle` also start below a logo in a top corner (8 % of the frame width from the top otherwise). A point (自由位置) puts the **centre** of the text block at `y` of the frame height (0 top, 1 bottom) and `x` of the width (default 0.5, centred), each 0..1; it ignores the inset and the logo, and `vimmer check` warns when the text then crosses the title-safe bottom or sides, or covers the subtitles |
 | `paging` | `"off"` (default), `"auto"`, `"manual"` | `auto`: a page per sentence (split after 。！？.!? and at line breaks; a very short sentence joins its neighbour; a sentence too long for about three lines at this size is split at commas, then between words). `manual`: **a blank line in the text starts a new page** (pages are not split further) |
 
 Where it goes: `scene.text_layout`, and `brand.text_layout` as the default for every scene. Each
@@ -422,6 +422,44 @@ every page, and the outgoing page fades and lifts away over 8 frames while the n
     "text_layout": { "position": "middle", "paging": "manual" } }
 ]
 ```
+
+#### Caption band: yellow keywords inside Chinese text, line breaks, free position — 关键词高亮
+
+Short Chinese tutorial videos often show the picture in the top part of a portrait frame and a
+two-line caption just under it (about 60 % down), with a few **yellow keywords** inside the
+sentence. Three things make that possible:
+
+- **Keywords inside CJK text.** `highlights` used to light up only whole space-separated words, so
+  `文字` in `输入文字就能` never lit. Now a highlight also matches **part of a word when CJK is
+  involved**: the highlight has a Chinese/Japanese/Korean character, or both sides of the match are
+  CJK or the word's edge (`AI` lights up in `用AI生成`; `cat` never does in `concatenate`, and `AI`
+  stays plain in `AIGC`). Overlapping keywords merge. A word without any CJK character never matches
+  a part, so Latin text renders exactly as before. Highlights work the same in text layers.
+- **Highlight color.** Highlights use the brand `accent` color; set `"colors": {"accent": "#f5c400"}`
+  for the yellow of the reference videos (editor: 关键词用黄色).
+- **Line breaks.** A single line break (`\n`) in the scene text now starts a new line (a run of
+  breaks counts once; a blank line is still a page break with `paging: "manual"`). Before, the
+  break was dropped. `vimmer check` counts the lines the same way.
+- **Free position.** `text_layout.position: {"y": 0.6}` as above; as a brand default
+  (`brand.text_layout.position`) it applies to every scene without its own position.
+
+Word-by-word reveal is unchanged: a run of Chinese without spaces is one reveal step (as before),
+and its highlighted part appears with it. Word-timed subtitles are separate and unchanged.
+
+```json
+"brand": { "colors": { "accent": "#f5c400" }, "text_layout": { "position": { "y": 0.64 } } },
+"scenes": [
+  { "id": "keywords", "duration_ms": 4000, "text": "输入文字就能\n变出一支影片",
+    "highlights": ["文字", "影片"], "text_layout": { "position": { "y": 0.6 }, "size": 96 } }
+]
+```
+
+In the editor (场景 Scene tab): select a few characters in the text and press **★ 高亮选中的字**;
+each keyword is a chip with × to remove it; **关键词用黄色** sets the brand accent to `#f5c400`.
+位置 Position → **自由位置 Custom** shows 上下 Y and 左右 X sliders (each drag is one undo step);
+the Brand tab has the same control as the default for every scene.
+`fixtures/caption-band-demo.json` is a portrait demo: media in the top half, captions at y 0.6 with
+yellow keywords, explicit two-line pages, and a scene that takes the brand's default point.
 
 `vimmer check` uses the real size, position and pages: overflow and the title-safe top per page,
 reading speed per page (a page's characters over its share of the scene; narrated pages are paced
