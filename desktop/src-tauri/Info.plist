@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Recording (录音): macOS shows this when Vimmer Studio first asks for the microphone.
+	     Tauri merges this file into the app bundle and embeds it in the `tauri dev` binary. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Vimmer Studio 用麦克风录制旁白和配音（只存到你的项目里）。Vimmer Studio records voice-overs with the microphone; takes are saved only in your project.</string>
+</dict>
+</plist>

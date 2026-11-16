@@ -214,3 +214,28 @@ export const scenesUnder = (t: VideoTimeline, clip: VoiceoverClip, lengths: Leng
   });
   return out;
 };
+
+/**
+ * A recorded take (`takeMs` long, file `source`) placed at exactly `startMs` (where the
+ * teleprompter started). Clips it would overlap are refused, or removed with `replace`.
+ */
+export const placeTake = (
+  t: VideoTimeline,
+  source: string,
+  startMs: number,
+  takeMs: number,
+  lengths: Lengths,
+  replace: boolean,
+): TrackEdit & { replaced?: string[] } => {
+  const start = Math.max(0, Math.round(startMs));
+  if (start >= total(t)) return { error: "The take starts after the end of the video." };
+  const end = start + takeMs;
+  const clashes = clipsOf(t).filter((c) => c.start_ms < end && endMs(c, lengths) > start);
+  if (clashes.length && !replace) {
+    return { error: `The take overlaps ${clashes.map((c) => `“${c.id}”`).join(", ")} on the voice-over track.` };
+  }
+  const id = newClipId(t);
+  const kept = clipsOf(t).filter((c) => !clashes.includes(c));
+  const next = withClips(t, [...kept, { id, source, start_ms: start }]);
+  return { timeline: next, index: clipsOf(next).findIndex((c) => c.id === id), replaced: clashes.map((c) => c.id) };
+};

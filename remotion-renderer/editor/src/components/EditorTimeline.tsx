@@ -389,8 +389,9 @@ export const EditorTimeline = ({ timeline, selection, frame, onSeek, onSelect, d
                       setDrag({ kind: "voTrim", index: i, edge: "start", startX: e.clientX, startTrim: t0, trim: t0 });
                     }}
                   />
-                  <span className="block-title">🎙 {clip.source.split("/").pop()}</span>
-                  <span className="block-sub mono">{(played / 1000).toFixed(2)} s{clip.gain !== undefined && clip.gain !== 1 ? ` · ×${clip.gain}` : ""}</span>
+                  <span className="block-title">
+                    🎙 {clip.source.split("/").pop()} · {(played / 1000).toFixed(2)} s{clip.gain !== undefined && clip.gain !== 1 ? ` · ×${clip.gain}` : ""}
+                  </span>
                   <div
                     className="trim-handle right"
                     aria-label={`Trim the end of ${clip.id}`}

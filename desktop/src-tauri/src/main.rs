@@ -11,6 +11,7 @@ mod narration;
 mod paths;
 mod project;
 mod project_assets;
+mod recording;
 mod render;
 mod renders;
 mod studio;
@@ -33,6 +34,7 @@ fn main() {
             music::music_library,
             music::music_pick,
             narration::listen_narration,
+            recording::save_recording,
             render::start_render,
             render::cancel_render,
             render::render_defaults,

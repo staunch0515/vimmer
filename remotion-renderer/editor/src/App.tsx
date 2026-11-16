@@ -51,6 +51,8 @@ import { NarrationBar } from "./components/NarrationBar";
 import { useAudioLengths } from "./audioLengths";
 import * as vo from "./voiceover";
 import type { VoicePanelProps } from "./components/VoiceoverPanel";
+import { SceneRecorder } from "./components/SceneRecorder";
+import { Teleprompter } from "./components/Teleprompter";
 import "./studio/studio.css";
 import { ASSET_DRAG_TYPE } from "./studio/AssetPanel";
 import { errorText, tauriApi } from "./studio/api";
@@ -624,6 +626,7 @@ export const App = () => {
   // The voice-over track: file lengths (measured from the files) and the 旁白 tab's commands.
   const audioAssetUrl = useMemo(() => (assetRoot ? assetUrlFor(assetRoot) : null), [assetRoot]);
   const [audioVersion] = useState(0);
+  const [prompter, setPrompter] = useState(false);
   const audioLengths = useAudioLengths(timeline, audioAssetUrl, audioVersion);
   const addVoiceoverClip = (source: string, atMs: number): string | null => {
     const made = vo.addClip(timeline, source, atMs, audioLengths);
@@ -634,6 +637,12 @@ export const App = () => {
   };
   const voice: VoicePanelProps = {
     lengths: audioLengths,
+    onRecordAll: () => setPrompter(true),
+    sceneRecorder: (index) => {
+      const scene = timeline.scenes[index];
+      // Keyed by scene: switching scenes unmounts it, which releases the microphone.
+      return scene ? <SceneRecorder key={`${index}:${scene.id}`} scene={scene} index={index} dispatch={dispatch} /> : null;
+    },
     onAddClip: (source) => addVoiceoverClip(source, frameToMs(frame, fps)),
     onMoveSceneAudio: (index) => {
       const moved = vo.moveSceneAudioToTrack(timeline, index, audioLengths);
@@ -821,6 +830,16 @@ export const App = () => {
         }
       />
     </div>
+    {prompter && (
+      <Teleprompter
+        timeline={timeline}
+        playheadMs={frameToMs(frame, fps)}
+        lengths={audioLengths}
+        dispatch={dispatch}
+        onSeekMs={(ms) => seek(Math.round((ms * fps) / 1000))}
+        onClose={() => setPrompter(false)}
+      />
+    )}
     {screen === "home" && (
       <div className="st-home-layer">
         <Home
