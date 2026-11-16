@@ -194,7 +194,10 @@ pub async fn render_timeline_with(
 ) -> Result<RunReport, SchedulerError> {
     // Remotion runs inside `remotion_dir`, so a relative props or output path handed to it
     // would resolve against the wrong directory. Anchor every path at our own cwd first.
-    let cfg = cfg.absolutized()?;
+    let mut cfg = cfg.absolutized()?;
+    // Which scene audio files are recordings is read from their paths, before staging renames
+    // them (word subtitles time recordings like narration).
+    cfg.word_subtitles.recorded_scenes = crate::wordsubs::recorded_scenes(&timeline);
     ctx.emit(Progress::Stage {
         name: "Checking timeline".into(),
     });
