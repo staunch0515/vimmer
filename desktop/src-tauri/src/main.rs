@@ -1,6 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod align;
 mod api_key;
 mod assets;
 mod assistant;
@@ -35,6 +36,7 @@ fn main() {
             music::music_pick,
             narration::listen_narration,
             recording::save_recording,
+            align::align_scenes,
             render::start_render,
             render::cancel_render,
             render::render_defaults,

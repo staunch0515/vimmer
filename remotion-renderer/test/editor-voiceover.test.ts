@@ -154,3 +154,27 @@ test("scenes under a clip", () => {
   assert.deepEqual(vo.scenesUnder(t, { id: "a", source: "rec/long.wav", start_ms: 0 }, L), [0, 1, 2]);
   assert.deepEqual(vo.scenesUnder(t, { id: "a", source: "rec/two.wav", start_ms: 3000 }, L), [1]);
 });
+
+test("按旁白对齐场景: a proposal is applied whole, as one undo step, and refused when stale", async () => {
+  const { alignCliArgs } = await import("../editor/assistant-server.ts");
+  type S = Undoable<VideoTimeline>;
+  const same = (a: VideoTimeline, b: VideoTimeline) => JSON.stringify(a) === JSON.stringify(b);
+  const t = base();
+  const ids = t.scenes.map((s) => s.id);
+  const next = vo.withSceneDurations(t, [2650, 3200, 3150], ids);
+  assert.ok(!("error" in next));
+  assert.deepEqual(next.scenes.map((s) => s.duration_ms), [2650, 3200, 3150]);
+  assert.equal(next.scenes[0].text, "a");
+  let s: S = { timeline: t, history: [], future: [] };
+  s = record(s, { ...s, timeline: next }, null, same);
+  assert.equal(s.history.length, 1);
+  assert.deepEqual(undo(s)!.timeline, t);
+  assert.equal(vo.withSceneDurations(t, [3000, 3000, 3000], ids), t, "no change, same document");
+  assert.ok("error" in vo.withSceneDurations(t, [1, 2], ids));
+  assert.ok("error" in vo.withSceneDurations(t, [1000, 1000, 1000], ["a", "c", "b"]));
+  assert.ok("error" in vo.withSceneDurations(t, [1000, 0, 1000], ids));
+  // The dev server only passes a clip id.
+  assert.deepEqual(alignCliArgs(undefined, "/p"), ["align-scenes", "-", "--json", "--public-dir", "/p"]);
+  assert.deepEqual(alignCliArgs("vo-1", "/p").slice(-1), ["--clip=vo-1"]);
+  assert.equal(alignCliArgs("--evil", "/p"), "clip must be a clip id");
+});

@@ -216,6 +216,19 @@ export const scenesUnder = (t: VideoTimeline, clip: VoiceoverClip, lengths: Leng
 };
 
 /**
+ * 按旁白对齐场景, applied: every scene gets its proposed length. A proposal for another document
+ * (a different number of scenes, or scenes reordered since) is refused.
+ */
+export const withSceneDurations = (t: VideoTimeline, durations: number[], ids?: string[]): VideoTimeline | { error: string } => {
+  if (durations.length !== t.scenes.length || (ids && ids.some((id, i) => t.scenes[i]?.id !== id))) {
+    return { error: "The scenes changed since the alignment was proposed; align again." };
+  }
+  if (durations.some((ms) => !(Number.isInteger(ms) && ms > 0))) return { error: "The proposed lengths are not valid." };
+  if (durations.every((ms, i) => ms === t.scenes[i].duration_ms)) return t;
+  return { ...t, scenes: t.scenes.map((s, i) => (s.duration_ms === durations[i] ? s : { ...s, duration_ms: durations[i] })) };
+};
+
+/**
  * A recorded take (`takeMs` long, file `source`) placed at exactly `startMs` (where the
  * teleprompter started). Clips it would overlap are refused, or removed with `replace`.
  */

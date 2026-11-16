@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+mod align_cmd;
 mod beats_cmd;
 mod tts_cmd;
 mod check_cmd;
@@ -311,6 +312,8 @@ async fn main() -> ExitCode {
         return music_cmd::main(args);
     } else if args.get(1).is_some_and(|a| a == "tts") {
         return tts_cmd::main(args).await;
+    } else if args.get(1).is_some_and(|a| a == "align-scenes") {
+        return align_cmd::main(args).await;
     } else {
         run(Cli::parse_from(args)).await
     };

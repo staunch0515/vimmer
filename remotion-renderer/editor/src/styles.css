@@ -671,3 +671,9 @@ textarea { resize: vertical; width: 100%; }
 .prompter-time { color: #a78bfa; }
 .tab[data-tab="voice"] { white-space: nowrap; padding-left: 8px; padding-right: 8px; }
 
+/* 按旁白对齐场景 */
+.align-box { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.align-result { display: flex; flex-direction: column; gap: 6px; }
+.align-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.align-table th, .align-table td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--border); }
+.align-table th { color: var(--text-3); font-weight: 500; }

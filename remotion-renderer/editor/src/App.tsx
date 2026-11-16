@@ -53,6 +53,7 @@ import * as vo from "./voiceover";
 import type { VoicePanelProps } from "./components/VoiceoverPanel";
 import { SceneRecorder } from "./components/SceneRecorder";
 import { Teleprompter } from "./components/Teleprompter";
+import { AlignScenes } from "./components/AlignScenes";
 import "./studio/studio.css";
 import { ASSET_DRAG_TYPE } from "./studio/AssetPanel";
 import { errorText, tauriApi } from "./studio/api";
@@ -638,6 +639,13 @@ export const App = () => {
   const voice: VoicePanelProps = {
     lengths: audioLengths,
     onRecordAll: () => setPrompter(true),
+    alignControls: (
+      <AlignScenes
+        timeline={timeline}
+        dispatch={dispatch}
+        clipId={state.selection.kind === "voiceover" ? (timeline.voiceover?.[state.selection.index]?.id ?? null) : null}
+      />
+    ),
     sceneRecorder: (index) => {
       const scene = timeline.scenes[index];
       // Keyed by scene: switching scenes unmounts it, which releases the microphone.

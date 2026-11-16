@@ -436,6 +436,19 @@ export const saveTake = (publicDir: string, stem: string, wav: Buffer): { path: 
   return { path: `${RECORDINGS_DIR}/${name}` };
 };
 
+// 按旁白对齐场景: `vimmer align-scenes - --json` proposes scene lengths from a voice-over clip.
+const ALIGN_ENDPOINT = "/__vimmer/align";
+const ALIGN_TIMEOUT_MS = 6 * 60 * 1000;
+const alignSlots = limiter(1, 2);
+
+/** The argv for an alignment: the clip id (letters, digits, - and _) when given. */
+export const alignCliArgs = (clip: unknown, publicDir: string): string[] | string => {
+  const out = ["align-scenes", "-", "--json", "--public-dir", publicDir];
+  if (clip === undefined || clip === null) return out;
+  if (typeof clip !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(clip)) return "clip must be a clip id";
+  return [...out, `--clip=${clip}`];
+};
+
 export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
   name: "vimmer-edit-assistant",
   configureServer(server) {
@@ -508,6 +521,39 @@ export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
           return send(res, 200, JSON.parse(line));
         } catch {
           return send(res, 200, { ok: false, error: `vimmer music failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}` });
+        }
+      })();
+    });
+    server.middlewares.use(ALIGN_ENDPOINT, (req: IncomingMessage, res: ServerResponse) => {
+      void (async () => {
+        if (req.method !== "POST") return send(res, 405, { ok: false, error: "POST only" });
+        if (!isLocalRequest(req)) return send(res, 403, { ok: false, error: "local requests only" });
+        let body: { timelineJson?: unknown; clip?: unknown };
+        try {
+          body = JSON.parse(await readBody(req)) as typeof body;
+        } catch (e) {
+          return send(res, 400, { ok: false, error: `bad request: ${String(e)}` });
+        }
+        if (typeof body.timelineJson !== "string") return send(res, 400, { ok: false, error: "timelineJson must be a string" });
+        const args = alignCliArgs(body.clip, publicDir);
+        if (typeof args === "string") return send(res, 400, { ok: false, error: args });
+        const bin = findVimmer(repo);
+        if (!bin) return send(res, 200, { ok: false, error: `Build the CLI to align scenes: ${BUILD_CLI}` });
+        let out: { code: number | null; stdout: string; stderr: string };
+        try {
+          out = await alignSlots.run(() => runCli(bin, args, body.timelineJson as string, ALIGN_TIMEOUT_MS));
+        } catch {
+          return send(res, 200, { ok: false, error: "An alignment is already running; try again when it is done." });
+        }
+        const line = out.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
+        try {
+          return send(res, 200, JSON.parse(line));
+        } catch {
+          const old = /unrecognized|unexpected argument|align-scenes/i.test(out.stderr) && !line;
+          return send(res, 200, {
+            ok: false,
+            error: old ? `The vimmer CLI is too old to align scenes. ${BUILD_CLI}` : `vimmer align-scenes failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}`,
+          });
         }
       })();
     });

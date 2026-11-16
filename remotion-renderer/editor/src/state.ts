@@ -63,6 +63,9 @@ export type Action =
   // A whole new document made by an editor command that was checked first (adding a clip, moving
   // a scene's audio to the track, aligning scenes to the voice-over): one undo step.
   | { type: "commitTimeline"; timeline: VideoTimeline; selection?: Selection }
+  // 按旁白对齐场景: every scene's new length at once (one undo step); keyframes, layers and
+  // transitions are kept inside the new lengths like after a resize.
+  | { type: "setSceneDurations"; durations: number[]; ids: string[] }
   // A whole timeline proposed by the editing assistant and accepted by the user: one undo step.
   | { type: "applyAssistant"; timeline: VideoTimeline }
   | { type: "undo" }
@@ -398,6 +401,11 @@ const edit = (state: EditorState, action: Action): EditorState => {
     }
     case "commitTimeline":
       return commit(state, action.timeline, action.selection ?? keptSelection(state.selection, action.timeline));
+    case "setSceneDurations": {
+      const next = vo.withSceneDurations(t, action.durations, action.ids);
+      if ("error" in next || next === t) return state;
+      return commit(state, { ...next, scenes: normalizeScenes(next.scenes) });
+    }
     case "applyAssistant": {
       const next = { ...action.timeline, subtitles: action.timeline.subtitles ?? [] };
       return commit(state, next, keptSelection(state.selection, next));
