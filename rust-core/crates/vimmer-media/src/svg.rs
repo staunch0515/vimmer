@@ -15,6 +15,10 @@
 //!    already downloads), with every network request sent to a dead proxy (scripts are already
 //!    gone; `--blink-settings=scriptEnabled=false` is not used because it makes headless Chrome
 //!    skip the screenshot), then checks that the PNG has the canvas size and is not one flat colour.
+//!    Chrome is driven over the DevTools protocol (`--remote-debugging-pipe`, like Remotion),
+//!    because its `--screenshot` mode hangs forever on some Macs (Apple Silicon, macOS 26);
+//!    `--screenshot` is still tried when DevTools cannot be used at all. Both give identical
+//!    pixels for the same SVG.
 //!
 //! The PNG then goes through the normal image pipeline ([`crate::normalize_image`]).
 
@@ -790,6 +794,29 @@ pub fn find_chrome(remotion_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+/// How [`rasterize_svg_with`] drives Chrome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RasterMethod {
+    /// DevTools first; `--screenshot` only when DevTools cannot be used at all (not on a
+    /// timeout or cancellation).
+    Auto,
+    /// The DevTools protocol over `--remote-debugging-pipe` (see `cdp.rs`), as Remotion does.
+    DevTools,
+    /// Chrome's `--screenshot` command-line mode, which never finishes on some Macs (Apple
+    /// Silicon, macOS 26).
+    Screenshot,
+}
+
+impl fmt::Display for RasterMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            RasterMethod::Auto => "auto",
+            RasterMethod::DevTools => "DevTools capture",
+            RasterMethod::Screenshot => "--screenshot",
+        })
+    }
+}
+
 /// Screenshots the (already sanitized) SVG at `svg` into a `width` x `height` PNG at `png`.
 /// `profile_dir` is a scratch Chrome profile, removed afterwards.
 pub fn rasterize_svg(
@@ -801,24 +828,155 @@ pub fn rasterize_svg(
     profile_dir: &Path,
     limits: &Limits,
 ) -> Result<(), SvgError> {
+    rasterize_svg_with(
+        RasterMethod::Auto,
+        chrome,
+        svg,
+        png,
+        width,
+        height,
+        profile_dir,
+        limits,
+    )
+    .map(|_| ())
+}
+
+/// [`rasterize_svg`] with a chosen method; returns the method that produced the PNG.
+#[allow(clippy::too_many_arguments)]
+pub fn rasterize_svg_with(
+    method: RasterMethod,
+    chrome: &Path,
+    svg: &Path,
+    png: &Path,
+    width: u32,
+    height: u32,
+    profile_dir: &Path,
+    limits: &Limits,
+) -> Result<RasterMethod, SvgError> {
     let svg = std::path::absolute(svg).map_err(|e| SvgError::Raster(e.to_string()))?;
     let png = std::path::absolute(png).map_err(|e| SvgError::Raster(e.to_string()))?;
     let _ = std::fs::remove_file(&png);
-    let mut cmd = Command::new(chrome);
-    cmd.arg("--headless")
-        .arg("--disable-gpu")
-        .arg("--hide-scrollbars")
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .arg("--disable-extensions")
-        .arg("--disable-background-networking")
-        .arg("--disable-sync")
-        .arg("--mute-audio")
+    let used = match method {
+        RasterMethod::Screenshot => {
+            screenshot_cli(chrome, &svg, &png, width, height, profile_dir, limits)?;
+            RasterMethod::Screenshot
+        }
+        RasterMethod::DevTools => {
+            screenshot_devtools(chrome, &svg, &png, width, height, profile_dir, limits)?;
+            RasterMethod::DevTools
+        }
+        RasterMethod::Auto => {
+            match screenshot_devtools(chrome, &svg, &png, width, height, profile_dir, limits) {
+                Ok(()) => RasterMethod::DevTools,
+                Err(SvgError::Raster(devtools)) => {
+                    let _ = std::fs::remove_file(&png);
+                    match screenshot_cli(chrome, &svg, &png, width, height, profile_dir, limits) {
+                        Ok(()) => RasterMethod::Screenshot,
+                        Err(SvgError::Raster(cli)) => {
+                            return Err(SvgError::Raster(format!(
+                                "{devtools}; the --screenshot fallback also failed: {cli}"
+                            )))
+                        }
+                        Err(SvgError::TimedOut { secs }) => {
+                            return Err(SvgError::Raster(format!(
+                                "{devtools}; the --screenshot fallback timed out after {secs} s"
+                            )))
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    };
+    check_png(&png, width, height)?;
+    Ok(used)
+}
+
+/// The Chrome switches both methods share.
+fn chrome_args(profile_dir: &Path, width: u32, height: u32) -> Vec<String> {
+    [
+        "--headless",
+        "--disable-gpu",
+        "--hide-scrollbars",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-extensions",
+        "--disable-background-networking",
+        "--disable-sync",
+        "--mute-audio",
         // Any network request (there should be none left) goes to a closed port.
-        .arg("--proxy-server=127.0.0.1:9")
-        .arg("--force-device-scale-factor=1")
-        .arg(format!("--user-data-dir={}", profile_dir.display()))
-        .arg(format!("--window-size={width},{height}"))
+        "--proxy-server=127.0.0.1:9",
+        "--force-device-scale-factor=1",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .chain([
+        format!("--user-data-dir={}", profile_dir.display()),
+        format!("--window-size={width},{height}"),
+    ])
+    .collect()
+}
+
+/// `file://` URL for an absolute path, percent-encoding everything but unreserved characters
+/// and `/`.
+fn file_url(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut url = String::from("file://");
+    for &b in path.as_os_str().as_bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+            url.push(b as char);
+        } else {
+            url.push_str(&format!("%{b:02X}"));
+        }
+    }
+    url
+}
+
+/// Loads the SVG over the DevTools protocol and captures the viewport.
+fn screenshot_devtools(
+    chrome: &Path,
+    svg: &Path,
+    png: &Path,
+    width: u32,
+    height: u32,
+    profile_dir: &Path,
+    limits: &Limits,
+) -> Result<(), SvgError> {
+    let args = chrome_args(profile_dir, width, height);
+    let result = crate::cdp::capture_png(
+        chrome,
+        &args,
+        profile_dir,
+        &file_url(svg),
+        width,
+        height,
+        limits,
+    );
+    let _ = std::fs::remove_dir_all(profile_dir);
+    match result {
+        Ok(bytes) => std::fs::write(png, bytes)
+            .map_err(|e| SvgError::Raster(format!("cannot write {}: {e}", png.display()))),
+        Err(crate::cdp::CdpError::Cancelled) => Err(SvgError::Cancelled),
+        Err(crate::cdp::CdpError::TimedOut { secs }) => Err(SvgError::TimedOut { secs }),
+        Err(crate::cdp::CdpError::Failed(m)) => {
+            Err(SvgError::Raster(format!("DevTools capture failed: {m}")))
+        }
+    }
+}
+
+/// Chrome's own `--screenshot` mode (the original method, kept as a fallback).
+fn screenshot_cli(
+    chrome: &Path,
+    svg: &Path,
+    png: &Path,
+    width: u32,
+    height: u32,
+    profile_dir: &Path,
+    limits: &Limits,
+) -> Result<(), SvgError> {
+    let mut cmd = Command::new(chrome);
+    cmd.args(chrome_args(profile_dir, width, height))
         .arg(format!("--screenshot={}", png.display()))
         .arg(format!("file://{}", svg.display()));
     let result = run_limited(cmd, limits);
@@ -846,7 +1004,7 @@ pub fn rasterize_svg(
             output.status
         )));
     }
-    check_png(&png, width, height)
+    Ok(())
 }
 
 /// The PNG must have the canvas size and must not be a single flat colour (which is what a

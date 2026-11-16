@@ -1,5 +1,5 @@
-//! Sanitizer tests with hostile SVG samples. No Chrome needed except in `check_png` tests,
-//! which write their own PNGs.
+//! Sanitizer tests with hostile SVG samples. No Chrome needed (the `check_png` tests write their
+//! own PNGs), except in the ignored `real_chrome_*` test.
 
 use super::*;
 
@@ -284,4 +284,53 @@ fn check_png_rejects_flat_and_wrong_size_pictures() {
     assert!(check_png(&ok, 64, 36).is_ok());
     assert!(matches!(check_png(&ok, 64, 64), Err(SvgError::Raster(_))));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn file_urls_are_percent_encoded() {
+    assert_eq!(
+        file_url(Path::new("/a b/路/x#y?.svg")),
+        "file:///a%20b/%E8%B7%AF/x%23y%3F.svg"
+    );
+}
+
+/// Needs a real headless Chrome: `$VIMMER_CHROME` or Remotion's (run from `rust-core` with
+/// `remotion-renderer/node_modules` present). `cargo test -p vimmer-media -- --ignored`.
+#[test]
+#[ignore]
+fn real_chrome_devtools_and_screenshot_give_the_same_pixels() {
+    let remotion = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../remotion-renderer");
+    let chrome = find_chrome(&remotion).expect("a headless Chrome");
+    let dir = std::env::temp_dir()
+        .join(format!("vimmer-svg-real-{}", std::process::id()))
+        .join("with space 路径");
+    std::fs::create_dir_all(&dir).unwrap();
+    let svg = dir.join("in.svg");
+    let body = r##"<circle cx="600" cy="500" r="300" fill="#e94" opacity=".7"/><text x="960" y="540" font-size="120" fill="#fff" text-anchor="middle">春眠 Hello</text>"##;
+    std::fs::write(&svg, clean(body).svg).unwrap();
+    let limits = Limits::none().with_timeout(std::time::Duration::from_secs(60));
+    let mut pictures = Vec::new();
+    for method in [
+        RasterMethod::DevTools,
+        RasterMethod::Screenshot,
+        RasterMethod::Auto,
+    ] {
+        let png = dir.join(format!("{method:?}.png"));
+        let used = rasterize_svg_with(method, &chrome, &svg, &png, W, H, &dir.join("p"), &limits)
+            .unwrap_or_else(|e| panic!("{method}: {e}"));
+        let expected = if method == RasterMethod::Screenshot {
+            RasterMethod::Screenshot
+        } else {
+            RasterMethod::DevTools
+        };
+        assert_eq!(used, expected);
+        assert!(!dir.join("p").exists(), "the profile dir is removed");
+        pictures.push(image::open(&png).unwrap().to_rgb8());
+    }
+    assert!(
+        pictures[0] == pictures[1],
+        "DevTools and --screenshot differ"
+    );
+    assert!(pictures[0] == pictures[2]);
+    let _ = std::fs::remove_dir_all(dir.parent().unwrap());
 }
