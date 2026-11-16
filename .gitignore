@@ -21,3 +21,7 @@ remotion-renderer/editor/dist/
 desktop/node_modules/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
+
+# Takes recorded in the browser editor (the desktop app saves them in the project)
+remotion-renderer/public/assets/recordings/
+remotion-renderer/public/assets/**/*.whisper-*.json

@@ -84,7 +84,8 @@ impl GenerateOptions {
             timeout: DEFAULT_TIMEOUT,
             record_dir: None,
             music_moods: Vec::new(),
-            tts: TtsEngine::Say,
+            // Generated scenes leave the voice automatic, which a render speaks with Kokoro.
+            tts: TtsEngine::Kokoro,
         }
     }
 }

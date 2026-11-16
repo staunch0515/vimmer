@@ -376,6 +376,7 @@ mod tests {
             brand: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         }
     }
 

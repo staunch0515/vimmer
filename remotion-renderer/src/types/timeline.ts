@@ -441,6 +441,18 @@ export type VideoTimeline = {
   subtitle_box?: SubtitleBox | null;
   // Default grade and atmosphere overlays of every scene. Absent: none, exactly as before.
   look?: Look | null;
+  // The voice-over track (旁白音轨): recorded speech on the global clock. Absent: none.
+  voiceover?: VoiceoverClip[];
+};
+
+// One clip of the voice-over track. Mirrors `VoiceoverClip` in vimmer-dsl/src/voiceover.rs.
+export type VoiceoverClip = {
+  id: string;
+  source: string;
+  start_ms: number; // from the video start
+  trim_start_ms?: number; // skipped at the start of the file (default 0)
+  trim_end_ms?: number; // cut off the end of the file (default 0)
+  gain?: number; // linear, 0..4 (default 1)
 };
 
 export type SubtitleBox = {

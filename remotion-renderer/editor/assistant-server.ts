@@ -10,7 +10,7 @@
 // the CLI is started through `zsh -c 'source ~/.zshrc; exec "$@"'`, so only the child sees it.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -55,13 +55,13 @@ export const isLocalRequest = (req: IncomingMessage): boolean => {
   return loopback && LOCAL_HOSTS.has(host) && originOk;
 };
 
-const readBody = (req: IncomingMessage): Promise<string> =>
+const readBody = (req: IncomingMessage, max = MAX_BODY): Promise<string> =>
   new Promise((ok, bad) => {
     let size = 0;
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => {
       size += c.length;
-      if (size > MAX_BODY) {
+      if (size > max) {
         bad(new Error("request too large"));
         req.destroy();
       } else chunks.push(c);
@@ -395,6 +395,60 @@ const runCli = (bin: string, args: string[], stdin: string, timeoutMs: number): 
     child.stdin.end(stdin);
   });
 
+// Recording (录音) in the browser editor: a take (WAV, 48 kHz mono 16-bit, made by the editor) is
+// saved as public/assets/recordings/<stem>-<n>.wav, never overwriting an earlier take. The desktop
+// app does the same in the open project with its `save_recording` command.
+const RECORDING_ENDPOINT = "/__vimmer/recording";
+export const RECORDINGS_DIR = "assets/recordings";
+const MAX_RECORDING_BODY = 40 * 1024 * 1024;
+
+/** Mirrors `safe_stem` in desktop/src-tauri/src/recording.rs. */
+export const safeStem = (stem: string): string => {
+  const s = [...stem].map((c) => (/^[A-Za-z0-9_-]$/.test(c) ? c : "-")).join("").replace(/^-+|-+$/g, "").slice(0, 40);
+  return s || "take";
+};
+
+/** The first free `<stem>-<n>.wav` among `taken`. */
+export const recordingName = (stem: string, taken: (name: string) => boolean): string => {
+  for (let n = 1; ; n++) if (!taken(`${stem}-${n}.wav`)) return `${stem}-${n}.wav`;
+};
+
+/** Checks a take: a 16-bit PCM mono 48 kHz WAV with data. Returns an error, or null. */
+export const takeProblem = (b: Buffer): string | null => {
+  if (b.length < 44 || b.toString("ascii", 0, 4) !== "RIFF" || b.toString("ascii", 8, 12) !== "WAVE") return "The recording is not a WAV file.";
+  if (b.readUInt16LE(20) !== 1 || b.readUInt16LE(22) !== 1 || b.readUInt32LE(24) !== 48000 || b.readUInt16LE(34) !== 16) {
+    return "The recording must be 16-bit PCM, mono, 48 kHz.";
+  }
+  if (b.readUInt32LE(40) === 0) return "The recording is empty.";
+  return null;
+};
+
+/** Saves a take under `publicDir`; returns the public-relative path. */
+export const saveTake = (publicDir: string, stem: string, wav: Buffer): { path: string } | { error: string } => {
+  const problem = takeProblem(wav);
+  if (problem) return { error: problem };
+  const dir = join(publicDir, RECORDINGS_DIR);
+  mkdirSync(dir, { recursive: true });
+  const name = recordingName(safeStem(stem), (n) => existsSync(join(dir, n)));
+  const part = join(dir, `.${name}.part`);
+  writeFileSync(part, wav);
+  renameSync(part, join(dir, name));
+  return { path: `${RECORDINGS_DIR}/${name}` };
+};
+
+// 按旁白对齐场景: `vimmer align-scenes - --json` proposes scene lengths from a voice-over clip.
+const ALIGN_ENDPOINT = "/__vimmer/align";
+const ALIGN_TIMEOUT_MS = 6 * 60 * 1000;
+const alignSlots = limiter(1, 2);
+
+/** The argv for an alignment: the clip id (letters, digits, - and _) when given. */
+export const alignCliArgs = (clip: unknown, publicDir: string): string[] | string => {
+  const out = ["align-scenes", "-", "--json", "--public-dir", publicDir];
+  if (clip === undefined || clip === null) return out;
+  if (typeof clip !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(clip)) return "clip must be a clip id";
+  return [...out, `--clip=${clip}`];
+};
+
 export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
   name: "vimmer-edit-assistant",
   configureServer(server) {
@@ -468,6 +522,54 @@ export const assistantPlugin = (repo: string, publicDir: string): Plugin => ({
         } catch {
           return send(res, 200, { ok: false, error: `vimmer music failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}` });
         }
+      })();
+    });
+    server.middlewares.use(ALIGN_ENDPOINT, (req: IncomingMessage, res: ServerResponse) => {
+      void (async () => {
+        if (req.method !== "POST") return send(res, 405, { ok: false, error: "POST only" });
+        if (!isLocalRequest(req)) return send(res, 403, { ok: false, error: "local requests only" });
+        let body: { timelineJson?: unknown; clip?: unknown };
+        try {
+          body = JSON.parse(await readBody(req)) as typeof body;
+        } catch (e) {
+          return send(res, 400, { ok: false, error: `bad request: ${String(e)}` });
+        }
+        if (typeof body.timelineJson !== "string") return send(res, 400, { ok: false, error: "timelineJson must be a string" });
+        const args = alignCliArgs(body.clip, publicDir);
+        if (typeof args === "string") return send(res, 400, { ok: false, error: args });
+        const bin = findVimmer(repo);
+        if (!bin) return send(res, 200, { ok: false, error: `Build the CLI to align scenes: ${BUILD_CLI}` });
+        let out: { code: number | null; stdout: string; stderr: string };
+        try {
+          out = await alignSlots.run(() => runCli(bin, args, body.timelineJson as string, ALIGN_TIMEOUT_MS));
+        } catch {
+          return send(res, 200, { ok: false, error: "An alignment is already running; try again when it is done." });
+        }
+        const line = out.stdout.trim().split("\n").filter(Boolean).pop() ?? "";
+        try {
+          return send(res, 200, JSON.parse(line));
+        } catch {
+          const old = /unrecognized|unexpected argument|align-scenes/i.test(out.stderr) && !line;
+          return send(res, 200, {
+            ok: false,
+            error: old ? `The vimmer CLI is too old to align scenes. ${BUILD_CLI}` : `vimmer align-scenes failed (exit ${out.code}): ${out.stderr.trim().slice(-300)}`,
+          });
+        }
+      })();
+    });
+    server.middlewares.use(RECORDING_ENDPOINT, (req: IncomingMessage, res: ServerResponse) => {
+      void (async () => {
+        if (req.method !== "POST") return send(res, 405, { ok: false, error: "POST only" });
+        if (!isLocalRequest(req)) return send(res, 403, { ok: false, error: "local requests only" });
+        let body: { stem?: unknown; wavBase64?: unknown };
+        try {
+          body = JSON.parse(await readBody(req, MAX_RECORDING_BODY)) as typeof body;
+        } catch (e) {
+          return send(res, 413, { ok: false, error: `The recording could not be received: ${String(e)}` });
+        }
+        if (typeof body.stem !== "string" || typeof body.wavBase64 !== "string") return send(res, 400, { ok: false, error: "stem and wavBase64 must be strings" });
+        const saved = saveTake(publicDir, body.stem, Buffer.from(body.wavBase64, "base64"));
+        return "error" in saved ? send(res, 200, { ok: false, error: saved.error }) : send(res, 200, { ok: true, ...saved });
       })();
     });
     // "Listen" (试听): the narration of some or all scenes, synthesized by `vimmer tts` into the

@@ -49,6 +49,13 @@ export const importIntoOpenProject = async (source: string): Promise<string | nu
   return got.path;
 };
 
+/** A file the editor itself wrote into the open project (a recording): known at once. */
+export const addProjectFile = (path: string): void => {
+  if (!open) return;
+  open.files.add(path);
+  open.onImport?.();
+};
+
 // An unsaved project document is mirrored to localStorage like a plain one (App.tsx's draft);
 // this remembers which project it belongs to, so the next launch reopens that project.
 const DRAFT_PROJECT_KEY = "vimmer-studio-draft:project";

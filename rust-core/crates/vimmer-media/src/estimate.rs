@@ -55,13 +55,14 @@ impl SpeechLang {
 }
 
 impl TtsEngine {
-    /// The engine a render uses when not told: `$VIMMER_TTS` (`say` or `kokoro`), else `say`.
-    /// An unknown value means `say`, as in the render.
+    /// The engine a render uses when not told: `$VIMMER_TTS` (`say` or `kokoro`), else Kokoro.
+    /// An unknown value means Kokoro, as in the render. Scenes that name a `say` voice are still
+    /// spoken by `say` (see [`crate::engine_for_voice`]).
     pub fn from_env() -> Self {
         std::env::var(ENV_TTS)
             .ok()
             .and_then(|v| Self::parse(&v))
-            .unwrap_or(Self::Say)
+            .unwrap_or(Self::Kokoro)
     }
 }
 

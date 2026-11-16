@@ -6,6 +6,7 @@ import { patchCue } from "../../src/subtitles/words";
 import * as kfs from "./layerKeyframes";
 import { clampBox } from "./subtitleBox";
 import { endMerge, record, redo, undo, type Merge } from "./history";
+import * as vo from "./voiceover";
 
 export type EditorState = {
   timeline: VideoTimeline;
@@ -54,6 +55,17 @@ export type Action =
   // A new scene made from a template, after scene `after` (-1: at the start).
   | { type: "insertTemplate"; name: string; after: number; params?: SceneTemplate["params"] }
   | { type: "patchTemplate"; index: number; params: SceneTemplate["params"] }
+  // The voice-over track (旁白音轨, voiceover.ts). `lengths`: file lengths measured so far.
+  | { type: "moveVoiceover"; index: number; startMs: number; lengths: vo.Lengths }
+  | { type: "trimVoiceover"; index: number; edge: "start" | "end"; trimMs: number; lengths: vo.Lengths }
+  | { type: "setVoiceoverGain"; index: number; gain: number }
+  | { type: "deleteVoiceover"; index: number }
+  // A whole new document made by an editor command that was checked first (adding a clip, moving
+  // a scene's audio to the track, aligning scenes to the voice-over): one undo step.
+  | { type: "commitTimeline"; timeline: VideoTimeline; selection?: Selection }
+  // 按旁白对齐场景: every scene's new length at once (one undo step); keyframes, layers and
+  // transitions are kept inside the new lengths like after a resize.
+  | { type: "setSceneDurations"; durations: number[]; ids: string[] }
   // A whole timeline proposed by the editing assistant and accepted by the user: one undo step.
   | { type: "applyAssistant"; timeline: VideoTimeline }
   | { type: "undo" }
@@ -109,9 +121,17 @@ const keptSelection = (sel: Selection, t: VideoTimeline): Selection => {
       return t.subtitles[sel.index] ? sel : { kind: "none" };
     case "music":
       return t.music ? sel : { kind: "none" };
+    case "voiceover":
+      return t.voiceover?.[sel.index] ? sel : { kind: "none" };
     case "none":
       return sel;
   }
+};
+
+// A clip's index changes when the track is re-sorted by time: follow the clip by its id.
+const clipSelection = (t: VideoTimeline, id: string | undefined): Selection => {
+  const index = vo.clipsOf(t).findIndex((c) => c.id === id);
+  return index >= 0 ? { kind: "voiceover", index } : { kind: "none" };
 };
 
 // Keeps scene-local motion valid after structural edits (resize, reorder, delete):
@@ -360,6 +380,31 @@ const edit = (state: EditorState, action: Action): EditorState => {
       if (!scene?.template) return state;
       const params = Object.fromEntries(Object.entries(action.params ?? {}).filter(([, v]) => v !== undefined && v !== ""));
       return commit(state, withScene(t, action.index, (s) => ({ ...s, template: { ...scene.template!, params } })));
+    }
+    case "moveVoiceover": {
+      const clip = vo.clipsOf(t)[action.index];
+      const next = vo.moveClip(t, action.index, action.startMs, action.lengths);
+      return next === t ? state : commit(state, next, clipSelection(next, clip?.id));
+    }
+    case "trimVoiceover": {
+      const clip = vo.clipsOf(t)[action.index];
+      const next = vo.trimClip(t, action.index, action.edge, action.trimMs, action.lengths);
+      return next === t ? state : commit(state, next, clipSelection(next, clip?.id));
+    }
+    case "setVoiceoverGain": {
+      const next = vo.setGain(t, action.index, action.gain);
+      return next === t ? state : commit(state, next);
+    }
+    case "deleteVoiceover": {
+      const next = vo.deleteClip(t, action.index);
+      return next === t ? state : commit(state, next, { kind: "none" });
+    }
+    case "commitTimeline":
+      return commit(state, action.timeline, action.selection ?? keptSelection(state.selection, action.timeline));
+    case "setSceneDurations": {
+      const next = vo.withSceneDurations(t, action.durations, action.ids);
+      if ("error" in next || next === t) return state;
+      return commit(state, { ...next, scenes: normalizeScenes(next.scenes) });
     }
     case "applyAssistant": {
       const next = { ...action.timeline, subtitles: action.timeline.subtitles ?? [] };

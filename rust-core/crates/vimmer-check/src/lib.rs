@@ -27,6 +27,7 @@ pub mod text;
 pub mod textbox;
 pub mod timing;
 pub mod video;
+pub mod voiceover;
 
 use std::path::{Path, PathBuf};
 
@@ -161,7 +162,7 @@ pub struct CheckOptions {
     pub synth: bool,
     pub ffmpeg: PathBuf,
     /// Narration engine the render will use, for the length estimate (the CLI: `--tts`, else
-    /// `$VIMMER_TTS`, else `say`).
+    /// `$VIMMER_TTS`, else Kokoro). Scenes that name a `say` voice are estimated as `say`.
     pub tts: vimmer_media::TtsEngine,
 }
 
@@ -172,7 +173,7 @@ impl Default for CheckOptions {
             rendered: None,
             synth: false,
             ffmpeg: PathBuf::from("ffmpeg"),
-            tts: vimmer_media::TtsEngine::Say,
+            tts: vimmer_media::TtsEngine::Kokoro,
         }
     }
 }
@@ -296,6 +297,7 @@ fn check_expanded(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding>
             findings.extend(assets::check(timeline, dir));
             findings.extend(layers::check_assets(timeline, dir));
             findings.extend(audio::check_sources(timeline, dir, &opts.ffmpeg));
+            findings.extend(voiceover::check(timeline, dir, &opts.ffmpeg));
             findings.extend(video::check(timeline, dir, &opts.ffmpeg));
             findings.extend(sfx::check(timeline, dir, &opts.ffmpeg));
             findings.extend(sfx::check_beats(

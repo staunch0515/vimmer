@@ -14,6 +14,7 @@ pub mod template;
 pub mod text_layout;
 pub mod text_style;
 pub mod validation;
+pub mod voiceover;
 
 pub use beatsync::{
     beat_grid, manual_beats, scene_floor, snap_cuts, CutSnap, SnapReport, MIN_SCENE_MS,
@@ -53,4 +54,5 @@ pub use text_layout::{
 pub use text_style::{
     style_scale, CustomShadow, ShadowPreset, TextOutline, TextShadow, TextStyle, MAX_OUTLINE_PX,
 };
-pub use validation::{sfx_problems, validate, ValidationError, MAX_SFX_PER_SCENE, SFX_EXTENSIONS};
+pub use voiceover::{overlapping_clips, VoiceoverClip, MAX_VOICEOVER_CLIPS, MAX_VOICEOVER_GAIN};
+pub use validation::{sfx_problems, validate, voiceover_problems, ValidationError, MAX_SFX_PER_SCENE, SFX_EXTENSIONS};

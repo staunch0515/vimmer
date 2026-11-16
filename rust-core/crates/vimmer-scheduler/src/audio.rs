@@ -47,6 +47,9 @@ pub struct Placement {
     pub end: u64,
     /// Linear gain; 1.0 (scene audio) adds no filter.
     pub gain: f32,
+    /// Samples skipped at the start of the file (a voice-over clip's `trim_start_ms`); 0 adds
+    /// no filter.
+    pub skip: u64,
 }
 
 /// The sound of a video clip, prepared by `video.rs`: a WAV that starts on the clip's first frame.
@@ -105,6 +108,7 @@ pub fn place_scene_audio(timeline: &VideoTimeline) -> Vec<Placement> {
                 start: frame_to_sample(start, fps),
                 end: frame_to_sample(end, fps),
                 gain: 1.0,
+                skip: 0,
             })
         })
         .collect()
@@ -133,11 +137,42 @@ pub fn place_clip_sounds(
                     start,
                     end,
                     gain: c.gain,
+                    skip: 0,
                 },
                 audible_ms,
             )
         })
         .unzip()
+}
+
+/// Places the voice-over track: each clip on the frame of its `start_ms` (like scene audio, so
+/// the editor's preview and the render agree), skipping `trim_start_ms` of the file and playing
+/// its trimmed length, cut at the end of the video. `file_ms[i]` is the length of clip `i`'s
+/// file. Clips that would start at or after the end, or have nothing left to play, are dropped.
+/// Returns the placements and how long each one is audible, in ms (for ducking).
+pub fn place_voiceover(timeline: &VideoTimeline, file_ms: &[u64]) -> (Vec<Placement>, Vec<u64>) {
+    let fps = timeline.fps;
+    let total = total_samples(timeline);
+    let mut out = (Vec::new(), Vec::new());
+    for (clip, &ms) in timeline.voiceover.iter().zip(file_ms) {
+        let played = clip.played_ms(ms);
+        let start = frame_to_sample(ms_to_frames(clip.start_ms, fps), fps);
+        if played == 0 || start >= total {
+            continue;
+        }
+        let room = (played * SAMPLE_RATE / 1000).min(total - start);
+        out.0.push(Placement {
+            // Not tied to a scene; the index is past the scenes.
+            scene: timeline.scenes.len(),
+            source: clip.source.clone(),
+            start,
+            end: start + room,
+            gain: clip.gain,
+            skip: clip.trim_start_ms * SAMPLE_RATE / 1000,
+        });
+        out.1.push((room * 1000).div_ceil(SAMPLE_RATE));
+    }
+    out
 }
 
 /// Places every sound effect: on the frame of its moment in its scene, playing until the end of
@@ -168,6 +203,7 @@ pub fn place_sfx(timeline: &VideoTimeline) -> Vec<(Placement, bool)> {
                     start,
                     end: total,
                     gain: fx.volume,
+                    skip: 0,
                 },
                 fx.duck_music,
             ));
@@ -215,10 +251,19 @@ pub fn filter_graph(
         } else {
             format!(",volume={}", p.gain)
         };
+        // A trimmed start is cut away first; the clip's own time then starts at zero again.
+        let trim = if p.skip == 0 {
+            format!("atrim=end_sample={}", p.room())
+        } else {
+            format!(
+                "atrim=start_sample={}:end_sample={},asetpts=N/SR/TB",
+                p.skip,
+                p.skip + p.room()
+            )
+        };
         chains.push(format!(
-            "[{input}:a]{format},atrim=end_sample={room}{gain},adelay=delays={start}S:all=1[c{k}]",
+            "[{input}:a]{format},{trim}{gain},adelay=delays={start}S:all=1[c{k}]",
             input = k + 1,
-            room = p.room(),
             start = p.start,
         ));
         labels.push(format!("[c{k}]"));
@@ -372,6 +417,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         }
     }
 
@@ -407,6 +453,7 @@ mod tests {
                     start: 0,
                     end: 30 * 1_600,
                     gain: 1.0,
+                    skip: 0,
                 },
                 Placement {
                     scene: 2,
@@ -414,6 +461,7 @@ mod tests {
                     start: (120 + 16) * 1_600,
                     end: 210 * 1_600,
                     gain: 1.0,
+                    skip: 0,
                 },
             ],
             "an offset at the scene's end plays nothing"
@@ -443,6 +491,7 @@ mod tests {
             start,
             end,
             gain: 1.0,
+            skip: 0,
         };
         let iv = speech_intervals(&[p(48_000, 144_000), p(144_000, 192_000)], &[1_500, 5_000]);
         assert_eq!(iv, vec![(1_000.0, 2_500.0), (3_000.0, 4_000.0)]);
@@ -575,5 +624,88 @@ mod tests {
         assert!(!g.contains("volume=eval"));
         assert!(!g.contains("amix"));
         assert_eq!(filter_graph(&[], None, None, 48_000, false), None);
+    }
+
+    fn vo(id: &str, start: u64, trim_start: u64, trim_end: u64, gain: f32) -> vimmer_dsl::VoiceoverClip {
+        vimmer_dsl::VoiceoverClip {
+            id: id.into(),
+            source: format!("rec/{id}.wav"),
+            start_ms: start,
+            trim_start_ms: trim_start,
+            trim_end_ms: trim_end,
+            gain,
+        }
+    }
+
+    #[test]
+    fn voiceover_clips_land_on_frames_trimmed_and_cut_at_the_end() {
+        let mut t = timeline(vec![scene("a", 2_000, None), scene("b", 2_000, None)]);
+        t.voiceover = vec![
+            // 1010 ms -> frame 30; skips 250 ms, plays 2000 - 250 - 150 = 1600 ms.
+            vo("one", 1_010, 250, 150, 0.8),
+            // Starts at 3.5 s with 3 s of file: cut at the end of the video (4 s).
+            vo("two", 3_500, 0, 0, 1.0),
+            // Starts after the end: dropped.
+            vo("late", 4_000, 0, 0, 1.0),
+            // Trimmed away completely: dropped.
+            vo("empty", 100, 500, 600, 1.0),
+        ];
+        let (placed, audible) = place_voiceover(&t, &[2_000, 3_000, 1_000, 1_000]);
+        assert_eq!(
+            placed,
+            vec![
+                Placement {
+                    scene: 2,
+                    source: "rec/one.wav".into(),
+                    start: 30 * 1_600,
+                    end: 30 * 1_600 + 1_600 * 48,
+                    gain: 0.8,
+                    skip: 250 * 48,
+                },
+                Placement {
+                    scene: 2,
+                    source: "rec/two.wav".into(),
+                    start: 105 * 1_600,
+                    end: total_samples(&t),
+                    gain: 1.0,
+                    skip: 0,
+                },
+            ]
+        );
+        assert_eq!(audible, vec![1_600, 500]);
+        // The trimmed clip cuts its start away and restarts its clock before the delay.
+        let g = filter_graph(&placed, None, None, total_samples(&t), false).unwrap();
+        assert!(
+            g.contains("atrim=start_sample=12000:end_sample=88800,asetpts=N/SR/TB,volume=0.8,adelay=delays=48000S:all=1[c0]"),
+            "{g}"
+        );
+        assert!(g.contains("atrim=end_sample=24000,adelay=delays=168000S:all=1[c1]"), "{g}");
+    }
+
+    #[test]
+    fn music_ducks_under_the_voiceover() {
+        let mut t = timeline(vec![scene("a", 3_000, None), scene("b", 3_000, None)]);
+        t.music = Some(music(Duck::default()));
+        t.voiceover = vec![vo("v", 1_000, 0, 0, 1.0)];
+        let (placed, audible) = place_voiceover(&t, &[2_000]);
+        let m = t.music.as_ref().unwrap();
+        let segments = duck::duck_segments(&speech_intervals(&placed, &audible), &m.duck);
+        assert_eq!(segments.len(), 1, "{segments:?}");
+        let expr = duck::volume_expr(&segments, &m.duck).unwrap();
+        let g = filter_graph(&placed, Some(m), Some(&expr), total_samples(&t), false).unwrap();
+        assert!(g.contains("volume=eval=frame"), "{g}");
+        assert!(g.contains("amix=inputs=2"), "{g}");
+    }
+
+    #[test]
+    fn voiceover_placement_does_not_depend_on_chunking() {
+        // The track is placed from the whole timeline; chunk props never carry it.
+        let mut t = timeline(vec![scene("a", 2_000, None), scene("b", 2_000, None)]);
+        t.voiceover = vec![vo("v", 500, 0, 0, 1.0)];
+        let chunks = crate::plan::plan_chunks(&t, 1_000);
+        assert!(chunks.len() > 1);
+        for chunk in &chunks {
+            assert!(crate::plan::chunk_timeline(&t, chunk).voiceover.is_empty());
+        }
     }
 }

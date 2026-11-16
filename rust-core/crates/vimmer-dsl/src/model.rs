@@ -653,6 +653,9 @@ pub struct VideoTimeline {
     /// Absent: no grade, no overlays, exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<Look>,
+    /// The voice-over track (旁白音轨, see [`crate::voiceover`]). Empty: none, and not written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub voiceover: Vec<crate::voiceover::VoiceoverClip>,
 }
 
 impl VideoTimeline {

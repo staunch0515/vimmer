@@ -66,7 +66,7 @@ pub struct PanelOptions {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderDefaults {
-    /// The engine a render uses without a choice: `$VIMMER_TTS`, else `say`.
+    /// The engine a render uses without a choice: `$VIMMER_TTS`, else Kokoro.
     pub tts: &'static str,
     /// Whether that came from `$VIMMER_TTS`.
     pub tts_from_env: bool,
@@ -124,11 +124,12 @@ pub fn render_options(panel: &PanelOptions, env: &dyn Fn(&str) -> Option<String>
     Ok(opts)
 }
 
-/// `$VIMMER_TTS` when it names an engine, else `say`; and whether the variable decided it.
+/// `$VIMMER_TTS` when it names an engine, else Kokoro (scenes that name a `say` voice still use
+/// `say`); and whether the variable decided it.
 pub(crate) fn default_engine(env: &dyn Fn(&str) -> Option<String>) -> (TtsEngine, bool) {
     match env("VIMMER_TTS").as_deref().and_then(TtsEngine::parse) {
         Some(engine) => (engine, true),
-        None => (TtsEngine::Say, false),
+        None => (TtsEngine::Kokoro, false),
     }
 }
 
@@ -452,17 +453,18 @@ mod tests {
     #[test]
     fn empty_panel_renders_like_the_cli_without_flags() {
         let opts = render_options(&PanelOptions::default(), &no_env).unwrap();
-        assert_eq!(opts, RenderOptions { tts: Some(TtsEngine::Say), ..RenderOptions::default() });
+        assert_eq!(opts, RenderOptions { tts: Some(TtsEngine::Kokoro), ..RenderOptions::default() });
     }
 
     #[test]
     fn missing_engine_follows_vimmer_tts() {
-        let env = |name: &str| (name == "VIMMER_TTS").then(|| "Kokoro".to_string());
+        let env = |name: &str| (name == "VIMMER_TTS").then(|| "Say".to_string());
         let opts = render_options(&PanelOptions::default(), &env).unwrap();
-        assert_eq!(opts.tts, Some(TtsEngine::Kokoro));
-        assert_eq!(default_engine(&env), (TtsEngine::Kokoro, true));
+        assert_eq!(opts.tts, Some(TtsEngine::Say));
+        assert_eq!(default_engine(&env), (TtsEngine::Say, true));
         let junk = |_: &str| Some("espeak".to_string());
-        assert_eq!(default_engine(&junk), (TtsEngine::Say, false));
+        assert_eq!(default_engine(&junk), (TtsEngine::Kokoro, false), "the default is Kokoro");
+        assert_eq!(default_engine(&no_env), (TtsEngine::Kokoro, false));
     }
 
     #[test]
@@ -507,13 +509,14 @@ mod tests {
         let mut timeline: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(fixture).unwrap()).unwrap();
         timeline["scenes"][0]["duration_ms"] = 300.into(); // far too short for its narration
         timeline["scenes"][1]["image"] = "missing/nope.png".into(); // an error
-        let run = |tts: &str| {
+        let run_on = |timeline: &serde_json::Value, tts: &str| {
             let args = CheckArgs { timeline_json: timeline.to_string(), tts: Some(tts.into()), project_dir: None };
             serde_json::to_value(tauri::async_runtime::block_on(check_timeline_in(args, None)).unwrap()).unwrap()
         };
         let find = |report: &serde_json::Value, code: &str| {
             report["findings"].as_array().unwrap().iter().find(|f| f["code"] == code).cloned().unwrap()
         };
+        let run = |tts: &str| run_on(&timeline, tts);
         let say = run("say");
         assert_eq!(say["schema"], "vimmer-check/1");
         assert!(say["summary"]["errors"].as_u64().unwrap() > 0);
@@ -523,7 +526,13 @@ mod tests {
         let too_long = find(&say, "narration.too_long");
         assert_eq!(too_long["suggestion"]["path"], "/scenes/0/duration_ms");
         assert!(too_long["message"].as_str().unwrap().contains("say"));
+        // The fixture's scene names the `say` voice Samantha: it keeps `say` under Kokoro too.
         let kokoro = run("kokoro");
+        assert!(find(&kokoro, "narration.too_long")["message"].as_str().unwrap().contains(", say)"));
+        // With an automatic voice the scene is estimated as Kokoro.
+        let mut auto = timeline.clone();
+        auto["scenes"][0]["narration"]["voice"] = serde_json::Value::Null;
+        let kokoro = run_on(&auto, "kokoro");
         assert!(find(&kokoro, "narration.too_long")["message"].as_str().unwrap().contains("kokoro"));
 
         let bad = CheckArgs { timeline_json: "{}".into(), tts: None, project_dir: None };

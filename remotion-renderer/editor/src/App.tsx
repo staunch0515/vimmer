@@ -48,6 +48,12 @@ import { heardPages } from "../../src/textPages";
 import { listenKey, rememberClips, toPreviewMs, toSavedMs, withNarration, type HeardClips, type ListenClip, type TtsChoice } from "./narration";
 import { listenNarration } from "./listen";
 import { NarrationBar } from "./components/NarrationBar";
+import { useAudioLengths } from "./audioLengths";
+import * as vo from "./voiceover";
+import type { VoicePanelProps } from "./components/VoiceoverPanel";
+import { SceneRecorder } from "./components/SceneRecorder";
+import { Teleprompter } from "./components/Teleprompter";
+import { AlignScenes } from "./components/AlignScenes";
 import "./studio/studio.css";
 import { ASSET_DRAG_TYPE } from "./studio/AssetPanel";
 import { errorText, tauriApi } from "./studio/api";
@@ -576,6 +582,7 @@ export const App = () => {
     if (selection.kind === "subtitle") setTab("subtitles");
     if (selection.kind === "scene" || selection.kind === "keyframe" || selection.kind === "layer") setTab("scene");
     if (selection.kind === "music") setTab("music");
+    if (selection.kind === "voiceover") setTab("voice");
   };
 
   const seek = (f: number) => {
@@ -615,6 +622,43 @@ export const App = () => {
     const selection = findingSelection(f, timeline);
     if (selection) select(selection);
     if (f.time_ms !== undefined) seek(Math.round((f.time_ms / 1000) * fps));
+  };
+
+  // The voice-over track: file lengths (measured from the files) and the 旁白 tab's commands.
+  const audioAssetUrl = useMemo(() => (assetRoot ? assetUrlFor(assetRoot) : null), [assetRoot]);
+  const [audioVersion] = useState(0);
+  const [prompter, setPrompter] = useState(false);
+  const audioLengths = useAudioLengths(timeline, audioAssetUrl, audioVersion);
+  const addVoiceoverClip = (source: string, atMs: number): string | null => {
+    const made = vo.addClip(timeline, source, atMs, audioLengths);
+    if ("error" in made) return made.error;
+    dispatch({ type: "commitTimeline", timeline: made.timeline, selection: { kind: "voiceover", index: made.index } });
+    setTab("voice");
+    return null;
+  };
+  const voice: VoicePanelProps = {
+    lengths: audioLengths,
+    onRecordAll: () => setPrompter(true),
+    alignControls: (
+      <AlignScenes
+        timeline={timeline}
+        dispatch={dispatch}
+        clipId={state.selection.kind === "voiceover" ? (timeline.voiceover?.[state.selection.index]?.id ?? null) : null}
+      />
+    ),
+    sceneRecorder: (index) => {
+      const scene = timeline.scenes[index];
+      // Keyed by scene: switching scenes unmounts it, which releases the microphone.
+      return scene ? <SceneRecorder key={`${index}:${scene.id}`} scene={scene} index={index} dispatch={dispatch} /> : null;
+    },
+    onAddClip: (source) => addVoiceoverClip(source, frameToMs(frame, fps)),
+    onMoveSceneAudio: (index) => {
+      const moved = vo.moveSceneAudioToTrack(timeline, index, audioLengths);
+      if ("error" in moved) return moved.error;
+      dispatch({ type: "commitTimeline", timeline: moved.timeline, selection: { kind: "voiceover", index: moved.index } });
+      setTab("voice");
+      return null;
+    },
   };
 
   const addSubtitleAtPlayhead = () => {
@@ -713,6 +757,7 @@ export const App = () => {
             assetRoot={assetRoot}
             playerRef={playerRef}
             onFrame={onPlayerFrame}
+            audioLengths={audioLengths}
             selectedLayer={selectedLayer}
             subtitlesSelected={state.selection.kind === "subtitle"}
             onMoveSubtitles={(box) => dispatch({ type: "setSubtitleBox", box })}
@@ -771,6 +816,7 @@ export const App = () => {
             timelineJson: () => text,
             audioUrl: (path) => resolveAsset(path, assetRoot ? assetUrlFor(assetRoot) : null),
           }}
+          voice={voice}
         />
         </div>
         }
@@ -783,10 +829,25 @@ export const App = () => {
         onSelect={select}
         dispatch={dispatch}
         beatMarks={marks}
+        lengths={audioLengths}
+        onDropVoiceover={(path, atMs) => {
+          const err = addVoiceoverClip(path, atMs);
+          if (err) setError(err);
+        }}
       />
         }
       />
     </div>
+    {prompter && (
+      <Teleprompter
+        timeline={timeline}
+        playheadMs={frameToMs(frame, fps)}
+        lengths={audioLengths}
+        dispatch={dispatch}
+        onSeekMs={(ms) => seek(Math.round((ms * fps) / 1000))}
+        onClose={() => setPrompter(false)}
+      />
+    )}
     {screen === "home" && (
       <div className="st-home-layer">
         <Home

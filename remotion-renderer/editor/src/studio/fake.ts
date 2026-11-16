@@ -61,8 +61,12 @@ const asset = (path: string, bytes: number, extra: Partial<AssetInfo> = {}): Ass
 
 const usedBy = (timelineJson: string, path: string): string[] => {
   try {
-    const t = JSON.parse(timelineJson) as { scenes: { id: string; image?: string | null; video?: { src: string } | null; audio?: { source: string } | null }[] };
-    return t.scenes.filter((s) => s.image === path || s.video?.src === path || s.audio?.source === path).map((s) => s.id);
+    const t = JSON.parse(timelineJson) as {
+      scenes: { id: string; image?: string | null; video?: { src: string } | null; audio?: { source: string } | null }[];
+      voiceover?: { source: string }[];
+    };
+    const scenes = t.scenes.filter((s) => s.image === path || s.video?.src === path || s.audio?.source === path).map((s) => s.id);
+    return (t.voiceover ?? []).some((c) => c.source === path) ? [...scenes, "Voice-over"] : scenes;
   } catch {
     return [];
   }

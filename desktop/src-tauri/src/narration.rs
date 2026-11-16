@@ -214,12 +214,18 @@ mod tests {
         let out = listen_in(args(Some(&["c"]), None), &s, speech.clone(), Arc::new(FixedProbe), &no_env).await;
         assert!(out["error"].as_str().unwrap().contains("Scene `c` has nothing to narrate"), "{out}");
 
-        // Kokoro chosen in the panel but not installed: `say` speaks, with the render's note.
+        // Kokoro (the default) not installed: a scene with an automatic voice gets a clear error
+        // that says how to install it; `say` does not stand in.
         let env = |name: &str| (name == "VIMMER_KOKORO_PYTHON").then(|| "/nonexistent/python".to_string());
+        let out = listen_in(args(Some(&["b"]), None), &s, speech.clone(), Arc::new(FixedProbe), &env).await;
+        assert_eq!(out["ok"], false, "{out}");
+        let error = out["error"].as_str().unwrap();
+        assert!(error.starts_with("Kokoro is not installed") && error.contains("install_kokoro.sh"), "{out}");
+        assert_eq!(speech.0.load(Ordering::SeqCst), 0);
+        // A scene that names a `say` voice (an old project) needs no Kokoro.
         let out = listen_in(args(Some(&["a"]), Some("kokoro")), &s, speech.clone(), Arc::new(FixedProbe), &env).await;
         assert_eq!(out["ok"], true, "{out}");
         assert_eq!(out["engine"], "say");
-        assert!(out["warnings"][0].as_str().unwrap().contains("uses `say` instead"), "{out}");
         assert_eq!(speech.0.load(Ordering::SeqCst), 1);
         let _ = std::fs::remove_dir_all(&s.remotion_dir);
     }

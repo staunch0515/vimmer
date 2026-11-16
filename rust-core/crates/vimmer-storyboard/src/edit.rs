@@ -630,6 +630,9 @@ enum Kind {
     Overlay,
     /// The timeline's `subtitle_box`: where the subtitles sit.
     SubtitleBox,
+    /// The voice-over track (`voiceover`) and one clip.
+    Voiceover,
+    VoiceoverClip,
     /// The timeline's `brand` and its parts.
     Brand,
     BrandColors,
@@ -661,6 +664,15 @@ impl Kind {
                 ("brand", Brand),
                 ("subtitle_box", SubtitleBox),
                 ("look", Look),
+                ("voiceover", Voiceover),
+            ],
+            VoiceoverClip => &[
+                ("id", Leaf),
+                ("source", Leaf),
+                ("start_ms", Leaf),
+                ("trim_start_ms", Leaf),
+                ("trim_end_ms", Leaf),
+                ("gain", Leaf),
             ],
             Look => &[("grade", Grade), ("overlays", Overlays)],
             Grade => &[("preset", Leaf), ("strength", Leaf)],
@@ -799,6 +811,7 @@ impl Kind {
             Kind::HideOn | Kind::ParamList | Kind::PickExclude => Some(Kind::Leaf),
             Kind::SfxList => Some(Kind::Sfx),
             Kind::Overlays => Some(Kind::Overlay),
+            Kind::Voiceover => Some(Kind::VoiceoverClip),
             _ => None,
         }
     }
@@ -845,6 +858,8 @@ impl Kind {
             Kind::Overlays => "an overlay list",
             Kind::Overlay => "an atmosphere overlay",
             Kind::SubtitleBox => "the subtitle box",
+            Kind::Voiceover => "the voice-over track",
+            Kind::VoiceoverClip => "a voice-over clip",
             Kind::Brand => "the brand",
             Kind::BrandColors => "the brand colors",
             Kind::BrandFonts => "the brand fonts",
@@ -1966,6 +1981,9 @@ fn asset_refs(t: &VideoTimeline) -> Vec<(String, String)> {
     if let Some(source) = t.music.as_ref().and_then(|m| m.source.as_ref()) {
         out.push(("music.source".into(), source.clone()));
     }
+    for clip in &t.voiceover {
+        out.push((format!("voice-over clip `{}` source", clip.id), clip.source.clone()));
+    }
     if let Some(b) = &t.brand {
         for (what, src) in b.assets() {
             out.push((format!("brand {what}"), src.to_string()));
@@ -2403,9 +2421,45 @@ pub fn summarize(before: &VideoTimeline, after: &VideoTimeline) -> Vec<String> {
             describe(&after.look)
         ));
     }
+    if before.voiceover != after.voiceover {
+        out.extend(voiceover_changes(&before.voiceover, &after.voiceover));
+    }
     let (t0, t1) = (before.total_duration_ms(), after.total_duration_ms());
     if t0 != t1 {
         out.push(format!("total length: {} -> {}", secs(t0), secs(t1)));
+    }
+    out
+}
+
+/// One phrase per voice-over clip change, clips matched by id: added, removed, moved, retimed.
+fn voiceover_changes(
+    before: &[vimmer_dsl::VoiceoverClip],
+    after: &[vimmer_dsl::VoiceoverClip],
+) -> Vec<String> {
+    let show = |c: &vimmer_dsl::VoiceoverClip| {
+        let mut s = format!("\"{}\" at {}", clip(&c.source, 40), secs(c.start_ms));
+        if c.trim_start_ms > 0 || c.trim_end_ms > 0 {
+            s.push_str(&format!(" trimmed {}/{} ms", c.trim_start_ms, c.trim_end_ms));
+        }
+        if c.gain != 1.0 {
+            s.push_str(&format!(" gain {}", c.gain));
+        }
+        s
+    };
+    let mut out = Vec::new();
+    for c in after {
+        match before.iter().find(|b| b.id == c.id) {
+            None => out.push(format!("voice-over: added `{}` ({})", c.id, show(c))),
+            Some(b) if b != c => {
+                out.push(format!("voice-over `{}`: {} -> {}", c.id, show(b), show(c)))
+            }
+            Some(_) => {}
+        }
+    }
+    for b in before {
+        if !after.iter().any(|c| c.id == b.id) {
+            out.push(format!("voice-over: removed `{}`", b.id));
+        }
     }
     out
 }

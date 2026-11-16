@@ -9,6 +9,7 @@ import { AssetUrlContext, resolveAsset, type AssetUrl } from "../../../src/asset
 import { ClipLengthContext, type ClipLength } from "../../../src/components/ClipVideo";
 import { assetUrlFor } from "../media";
 import { usePreviewTimeline } from "../templates";
+import { AudioLengthsContext } from "../../../src/voiceover";
 
 type Props = {
   timeline: VideoTimeline;
@@ -23,6 +24,8 @@ type Props = {
   // onMoveSubtitles once, when the drag ends (one undo step).
   subtitlesSelected?: boolean;
   onMoveSubtitles?: (box: SubtitleBox) => void;
+  // Measured audio file lengths: voice-over clips play exactly their trimmed length.
+  audioLengths?: Record<string, number>;
 };
 
 // The shown subtitle box, in fractions of the frame: left, top, width, height.
@@ -189,7 +192,7 @@ const useClipLengths = (timeline: VideoTimeline, assetUrl: AssetUrl | null): Cli
 };
 
 // The preview is the real Remotion composition running in the Player, so what you see is what renders.
-export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer, onMoveLayer, subtitlesSelected, onMoveSubtitles }: Props) => {
+export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer, onMoveLayer, subtitlesSelected, onMoveSubtitles, audioLengths }: Props) => {
   const frameRef = useRef<HTMLDivElement>(null);
   // While the subtitles are dragged, the Player draws them at the dragged place.
   const [dragBox, setDragBox] = useState<SubtitleBox | null>(null);
@@ -219,6 +222,7 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
       >
       <AssetUrlContext.Provider value={assetUrl}>
       <ClipLengthContext.Provider value={clipLength}>
+      <AudioLengthsContext.Provider value={audioLengths ?? null}>
       <Player
         ref={playerRef}
         component={Timeline}
@@ -231,6 +235,7 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
         clickToPlay={false}
         style={{ width: "100%", height: "100%" }}
       />
+      </AudioLengthsContext.Provider>
       </ClipLengthContext.Provider>
       </AssetUrlContext.Provider>
       {templateErrors.length > 0 && (

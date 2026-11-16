@@ -30,7 +30,7 @@ struct TtsCli {
     /// The Remotion public dir; clips go to <public-dir>/generated/tts, as in a render.
     #[arg(long, default_value = "remotion-renderer/public")]
     public_dir: PathBuf,
-    /// Narration engine: `say` or `kokoro`. Default: $VIMMER_TTS, else `say` (as a render).
+    /// Narration engine: `say` or `kokoro`. Default: $VIMMER_TTS, else Kokoro (as a render).
     #[arg(long)]
     tts: Option<String>,
     /// Python interpreter with Kokoro installed (default as for a render).

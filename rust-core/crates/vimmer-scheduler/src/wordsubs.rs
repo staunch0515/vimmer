@@ -37,6 +37,9 @@ pub struct WordSubtitleConfig {
     /// scene. Off by default, so a timeline renders the same subtitles it always did: word
     /// timing is only added to cues the timeline already has.
     pub auto_subtitles: AutoSubtitles,
+    /// Scenes whose own audio is a recording (see [`recorded_scenes`]). The render sets it from
+    /// the timeline before assets are staged; empty: no scene audio is timed, as before.
+    pub recorded_scenes: Vec<usize>,
 }
 
 /// Which narrated scenes get generated subtitle cues (only where no cue covers the narration;
@@ -72,6 +75,7 @@ impl Default for WordSubtitleConfig {
             model: None,
             language: None,
             auto_subtitles: AutoSubtitles::Off,
+            recorded_scenes: Vec::new(),
         }
     }
 }
@@ -80,14 +84,231 @@ impl Default for WordSubtitleConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NarrationClip {
     pub scene_index: usize,
+    /// The script the clip speaks. Empty for a recording without a script: the recognized text
+    /// is used (filled in after recognition).
     pub text: String,
     pub wav: PathBuf,
     /// Where the clip starts, in ms from the video start.
     pub start_ms: u64,
-    /// The latest a cue for this clip may end: the end of its scene.
+    /// The latest a cue for this clip may end: the end of its scene (a voice-over clip: its own
+    /// end, or the end of the video).
     pub scene_end_ms: u64,
     /// The whole narration is shown as text while it plays (see [`narration_on_screen`]).
     pub on_screen: bool,
+    pub kind: ClipKind,
+}
+
+/// Where a clip's speech comes from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum ClipKind {
+    /// Synthesized narration (`generated/tts/`), as before recordings existed.
+    #[default]
+    Narration,
+    /// A recording that is a scene's own audio (`scene.audio` under a `recordings/` folder).
+    Recording,
+    /// A clip of the voice-over track, by id.
+    Voiceover(String),
+}
+
+impl NarrationClip {
+    /// How messages name the clip: its scene, or the voice-over clip.
+    pub(crate) fn who(&self, timeline: &VideoTimeline) -> String {
+        match &self.kind {
+            ClipKind::Voiceover(id) => format!("voice-over clip `{id}`"),
+            _ => format!("scene `{}`", timeline.scenes[self.scene_index].id),
+        }
+    }
+}
+
+/// True for a recording made in the editor (or put next to them): a file in a `recordings`
+/// folder. Only these count as speech among scene audio files, so a scene whose audio is music or
+/// a sound gets no subtitles from it.
+pub fn is_recording_path(path: &str) -> bool {
+    path.split(['/', '\\']).rev().skip(1).any(|part| part == "recordings")
+}
+
+/// Scenes whose own audio is a recording, by index. Read before assets are staged (staging
+/// renames the files); the render keeps the answer in [`WordSubtitleConfig::recorded_scenes`].
+pub fn recorded_scenes(timeline: &VideoTimeline) -> Vec<usize> {
+    timeline
+        .scenes
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.audio.as_ref().is_some_and(|a| is_recording_path(&a.source)))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// What a speaker reads in a scene: its spoken line (台词) when set, else its text (whether or
+/// not narration is on). Empty when the scene has neither.
+pub(crate) fn script_of(scene: &Scene) -> &str {
+    scene
+        .narration
+        .as_ref()
+        .and_then(|n| n.spoken_line())
+        .or(scene.text.as_deref().filter(|t| !t.trim().is_empty()))
+        .unwrap_or("")
+        .trim()
+}
+
+/// Joins scripts in order: a space between them, nothing between two CJK characters.
+pub(crate) fn join_scripts<'a>(scripts: impl IntoIterator<Item = &'a str>) -> String {
+    let mut out = String::new();
+    for s in scripts.into_iter().map(str::trim).filter(|s| !s.is_empty()) {
+        let cjk = |c: Option<char>| c.is_some_and(vimmer_media::is_cjk);
+        if !out.is_empty() && !(cjk(out.chars().last()) && cjk(s.chars().next())) {
+            out.push(' ');
+        }
+        out.push_str(s);
+    }
+    out
+}
+
+/// Frame-rounded ms of a scene boundary or a clip start, as the renderer places them.
+fn frame_ms(timeline: &VideoTimeline, frame: u64) -> u64 {
+    let fps = u64::from(timeline.fps);
+    (frame * 1000 + fps / 2) / fps
+}
+
+/// The end of scene `i` as cues must respect it: the frame-rounded end, and never past the sum of
+/// `duration_ms` (what validation measures).
+fn scene_end(timeline: &VideoTimeline, starts: &[u32], i: usize) -> u64 {
+    let ms_end: u64 = timeline.scenes[..=i].iter().map(|s| s.duration_ms).sum();
+    frame_ms(
+        timeline,
+        u64::from(starts[i] + timeline.scenes[i].duration_frames(timeline.fps)),
+    )
+    .min(ms_end)
+}
+
+/// Recordings that are scene audio ([`recorded_scenes`]): the scene's script, or none (the
+/// recognized text is then used). Cues stay inside the scene, where the recording is cut.
+pub(crate) fn recording_clips(
+    timeline: &VideoTimeline,
+    cfg: &SchedulerConfig,
+) -> Vec<NarrationClip> {
+    let starts = timeline.scene_start_frames();
+    cfg.word_subtitles
+        .recorded_scenes
+        .iter()
+        .filter_map(|&i| {
+            let scene = timeline.scenes.get(i)?;
+            let audio = scene.audio.as_ref()?;
+            let text = script_of(scene).to_string();
+            Some(NarrationClip {
+                scene_index: i,
+                on_screen: !text.is_empty() && narration_on_screen(scene, &text, audio.offset_ms),
+                text,
+                wav: cfg.public_dir.join(&audio.source),
+                start_ms: frame_ms(timeline, u64::from(starts[i])) + audio.offset_ms,
+                scene_end_ms: scene_end(timeline, &starts, i),
+                kind: ClipKind::Recording,
+            })
+        })
+        .collect()
+}
+
+/// The voice-over track's clips. Each speaks the scripts of the scenes it plays over, joined in
+/// order; a trimmed clip is recognized from a trimmed copy (`generated/voiceover/`), so word
+/// times are relative to what is heard. Cues stay inside the clip and the video.
+pub(crate) async fn voiceover_clips(
+    timeline: &VideoTimeline,
+    cfg: &SchedulerConfig,
+    probe: Arc<dyn AudioProbe>,
+    ctx: &RenderContext,
+) -> Result<Vec<NarrationClip>, SchedulerError> {
+    let mut out = Vec::new();
+    if timeline.voiceover.is_empty() {
+        return Ok(out);
+    }
+    let starts = timeline.scene_start_frames();
+    let total = timeline.total_duration_ms();
+    for clip in &timeline.voiceover {
+        let src = cfg.public_dir.join(&clip.source);
+        let p = probe.clone();
+        let path = src.clone();
+        let file_ms = tokio::task::spawn_blocking(move || p.duration_ms(&path))
+            .await
+            .map_err(|e| SchedulerError::Join(e.to_string()))??;
+        let played = clip.played_ms(file_ms);
+        let fps = u64::from(timeline.fps);
+        let start = frame_ms(timeline, (clip.start_ms * fps + 500) / 1000);
+        if played == 0 || start >= total {
+            continue;
+        }
+        let end = (start + played).min(total);
+        let covered = scenes_between(timeline, &starts, start, end);
+        let text = join_scripts(covered.iter().map(|&i| script_of(&timeline.scenes[i])));
+        let on_screen = !text.is_empty()
+            && covered.iter().all(|&i| {
+                let scene = &timeline.scenes[i];
+                let s = script_of(scene);
+                s.is_empty() || narration_on_screen(scene, s, 0)
+            });
+        let wav = if clip.trim_start_ms > 0 || clip.trim_end_ms > 0 {
+            trimmed_copy(cfg, &src, clip.trim_start_ms, played, ctx).await?
+        } else {
+            src
+        };
+        out.push(NarrationClip {
+            scene_index: covered.first().copied().unwrap_or(timeline.scenes.len() - 1),
+            text,
+            wav,
+            start_ms: start,
+            scene_end_ms: end,
+            on_screen,
+            kind: ClipKind::Voiceover(clip.id.clone()),
+        });
+    }
+    Ok(out)
+}
+
+/// Scenes whose time overlaps [start, end), in order.
+fn scenes_between(timeline: &VideoTimeline, starts: &[u32], start: u64, end: u64) -> Vec<usize> {
+    (0..timeline.scenes.len())
+        .filter(|&i| {
+            let from = frame_ms(timeline, u64::from(starts[i]));
+            from < end && scene_end(timeline, starts, i) > start
+        })
+        .collect()
+}
+
+/// A copy of `src` from `skip_ms`, `len_ms` long, as 48 kHz mono WAV under
+/// `generated/voiceover/` (named by the source, its size and the cut, so it is made once).
+async fn trimmed_copy(
+    cfg: &SchedulerConfig,
+    src: &std::path::Path,
+    skip_ms: u64,
+    len_ms: u64,
+    ctx: &RenderContext,
+) -> Result<PathBuf, SchedulerError> {
+    let size = tokio::fs::metadata(src).await.map(|m| m.len()).unwrap_or(0);
+    let dir = cfg.public_dir.join("generated").join("voiceover");
+    tokio::fs::create_dir_all(&dir).await?;
+    let key = fnv1a(&format!("{}\n{size}\n{skip_ms}\n{len_ms}", src.display()));
+    let out = dir.join(format!("trim-{key:016x}.wav"));
+    if out.is_file() {
+        return Ok(out);
+    }
+    let part = dir.join(format!("trim-{key:016x}.part{}.wav", std::process::id()));
+    let mut cmd = tokio::process::Command::new(&cfg.ffmpeg);
+    cmd.args(["-y", "-hide_banner", "-loglevel", "error"])
+        .args(["-ss", &format!("{:.3}", skip_ms as f64 / 1000.0)])
+        .args(["-t", &format!("{:.3}", len_ms as f64 / 1000.0)])
+        .arg("-i")
+        .arg(src)
+        .args(["-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le"])
+        .arg(&part);
+    let output = crate::run::run_process(cmd, cfg, ctx).await?;
+    if !output.status.success() {
+        let _ = tokio::fs::remove_file(&part).await;
+        return Err(SchedulerError::Mix(format!(
+            "could not trim the voice-over for subtitles: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    tokio::fs::rename(&part, &out).await?;
+    Ok(out)
 }
 
 /// Synthesized narration clips: scenes with `narration` whose audio is the generated file.
@@ -121,6 +342,7 @@ pub(crate) fn narration_clips(
                 wav: cfg.public_dir.join(&audio.source),
                 start_ms: scene_start + audio.offset_ms,
                 scene_end_ms: scene_end,
+                kind: ClipKind::Narration,
             })
         })
         .collect()
@@ -202,7 +424,8 @@ pub type PageWords = std::collections::HashMap<usize, Vec<(String, u64, u64)>>;
 /// pages and the narration speaks that same text.
 pub(crate) fn pages_follow_clip(timeline: &VideoTimeline, clip: &NarrationClip) -> bool {
     let scene = &timeline.scenes[clip.scene_index];
-    scene.text.as_deref() == Some(clip.text.as_str())
+    clip.kind == ClipKind::Narration
+        && scene.text.as_deref() == Some(clip.text.as_str())
         && scene
             .text_page_texts(timeline.brand.as_ref(), timeline.resolution)
             .len()
@@ -225,7 +448,17 @@ pub async fn add_word_subtitles_with(
         return Ok(0);
     }
     drop_stale_words(&mut timeline.subtitles, warnings);
-    let all = narration_clips(timeline, cfg);
+    let mut all = narration_clips(timeline, cfg);
+    // Recorded speech: scene recordings, then the voice-over track. A timeline without either
+    // times exactly what it did before.
+    all.extend(recording_clips(timeline, cfg));
+    match voiceover_clips(timeline, cfg, probe.clone(), ctx).await {
+        Ok(clips) => all.extend(clips),
+        Err(SchedulerError::Cancelled) => return Err(SchedulerError::Cancelled),
+        Err(e) => warnings.push(format!(
+            "word-by-word subtitles skipped for the voice-over: {e}"
+        )),
+    }
     if cfg.word_subtitles.auto_subtitles == AutoSubtitles::On {
         let shown: Vec<&str> = all
             .iter()
@@ -391,9 +624,11 @@ fn recognize_batch(
     } else {
         " "
     };
+    // A recording without a script gives no prompt: whisper writes what it hears.
+    let prompt = texts.join(separator);
     let request = TranscribeRequest {
         language: batch.language.clone(),
-        prompt: Some(texts.join(separator)),
+        prompt: (!prompt.trim().is_empty()).then_some(prompt),
     };
     if let [(clip, _, _)] = batch.members[..] {
         return Ok(vec![engine.transcribe(
@@ -518,9 +753,8 @@ pub(crate) async fn apply_word_subtitles_with(
     warnings: &mut Vec<String>,
     page_words: &mut PageWords,
 ) -> Result<usize, SchedulerError> {
-    let scene_id = |timeline: &VideoTimeline, clip: &NarrationClip| {
-        timeline.scenes[clip.scene_index].id.clone()
-    };
+    // "scene `id`" (as before), or "voice-over clip `id`".
+    let scene_id = |timeline: &VideoTimeline, clip: &NarrationClip| clip.who(timeline);
     let languages: Vec<Option<String>> = clips
         .iter()
         .map(|clip| match ws.language.as_deref() {
@@ -555,7 +789,7 @@ pub(crate) async fn apply_word_subtitles_with(
             // same budget again on every remaining batch.
             for &(clip, _, _) in &batch.members {
                 warnings.push(format!(
-                    "scene `{}`: word-by-word subtitles skipped after an earlier recognition timed out",
+                    "{}: word-by-word subtitles skipped after an earlier recognition timed out",
                     scene_id(timeline, &clips[clip])
                 ));
             }
@@ -587,7 +821,7 @@ pub(crate) async fn apply_word_subtitles_with(
                 timed_out |= matches!(e, MediaError::TimedOut { .. });
                 for &(clip, _, _) in &batch.members {
                     warnings.push(format!(
-                        "scene `{}`: word-by-word subtitles skipped: {e}",
+                        "{}: word-by-word subtitles skipped: {e}",
                         scene_id(timeline, &clips[clip])
                     ));
                 }
@@ -600,22 +834,41 @@ pub(crate) async fn apply_word_subtitles_with(
     } else {
         28
     };
+    // A recording without a script shows what was recognized.
+    let mut owned = clips.to_vec();
+    for (clip, tokens) in owned.iter_mut().zip(&recognized) {
+        if clip.text.trim().is_empty() {
+            if let Some(tokens) = tokens {
+                clip.text = recognized_text(tokens);
+            }
+        }
+    }
+    let clips = &owned[..];
     let clip_words: Vec<Option<Vec<AlignedWord>>> = clips
         .iter()
         .zip(&recognized)
         .zip(&durations)
         .map(|((clip, tokens), &ms)| {
             let tokens = tokens.as_ref()?;
-            Some(
-                align_words(&clip.text, tokens, ms)
-                    .into_iter()
+            let words = align_words(&clip.text, tokens, ms)
+                .into_iter()
+                .map(|w| AlignedWord {
+                    start_ms: w.start_ms + clip.start_ms,
+                    end_ms: w.end_ms + clip.start_ms,
+                    text: w.text,
+                });
+            Some(match clip.kind {
+                ClipKind::Narration => words.collect(),
+                // A recording is cut at its scene's end, a voice-over clip at its own end and
+                // the video's: words after that are never heard, so they get no cue.
+                _ => words
+                    .filter(|w| w.start_ms < clip.scene_end_ms)
                     .map(|w| AlignedWord {
-                        start_ms: w.start_ms + clip.start_ms,
-                        end_ms: w.end_ms + clip.start_ms,
-                        text: w.text,
+                        end_ms: w.end_ms.min(clip.scene_end_ms),
+                        ..w
                     })
                     .collect(),
-            )
+            })
         })
         .collect();
     for (clip, words) in clips.iter().zip(&clip_words) {
@@ -640,7 +893,7 @@ pub(crate) async fn apply_word_subtitles_with(
         let id = scene_id(timeline, clip);
         if recognized[k].as_ref().is_some_and(Vec::is_empty) {
             warnings.push(format!(
-                "scene `{id}`: speech recognition heard nothing; word timing is estimated from text length"
+                "{id}: speech recognition heard nothing; word timing is estimated from text length"
             ));
         }
         if merge_clip_words(
@@ -654,12 +907,18 @@ pub(crate) async fn apply_word_subtitles_with(
             timed += 1;
         } else {
             warnings.push(format!(
-                "scene `{id}`: existing subtitle cues do not match the narration text; they keep plain timing"
+                "{id}: existing subtitle cues do not match the narration text; they keep plain timing"
             ));
         }
     }
     timeline.subtitles.sort_by_key(|c| c.start_ms);
     Ok(timed)
+}
+
+/// The text whisper heard, for a recording without a script: its tokens joined, trimmed.
+pub(crate) fn recognized_text(tokens: &[RecognizedToken]) -> String {
+    let joined: String = tokens.iter().map(|t| t.text.as_str()).collect();
+    joined.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The span of the timeline a clip's words may be shown in: from the clip start to the end of
@@ -1001,6 +1260,7 @@ mod tests {
             start_ms,
             scene_end_ms,
             on_screen: false,
+            kind: ClipKind::Narration,
         }
     }
 
@@ -1393,6 +1653,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         t.scenes[0].audio = None; // not narrated by us: ignored
         let cfg = SchedulerConfig::new(
@@ -1453,6 +1714,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         // Words from an earlier text, and times that no longer fit the edited cue.
         t.subtitles[0].words = ["再", "见", "。"]
@@ -1515,6 +1777,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -1576,6 +1839,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -1647,6 +1911,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let mut clips = narration_clips(
             &t,
@@ -1731,6 +1996,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -1856,6 +2122,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -1909,6 +2176,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         }
     }
 
@@ -2159,6 +2427,7 @@ mod tests {
             music: None,
             subtitle_box: None,
             look: None,
+            voiceover: vec![],
         }
     }
 
@@ -2308,4 +2577,204 @@ mod tests {
         assert_eq!(all.subtitles.len(), 2);
         assert_eq!(all.subtitles[0].text, "Good morning.");
     }
+
+    // --- recordings and the voice-over track ---------------------------------------------------
+
+    fn plain(id: &str, ms: u64, text: Option<&str>, audio: Option<&str>) -> Scene {
+        let mut s = narrated(id, ms, text.unwrap_or(""));
+        s.text = text.map(String::from);
+        s.narration = None;
+        s.audio = audio.map(|a| AudioMapping {
+            source: a.into(),
+            offset_ms: 0,
+        });
+        s
+    }
+
+    fn timeline_of(scenes: Vec<Scene>) -> VideoTimeline {
+        VideoTimeline {
+            brand: None,
+            fps: 30,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            scenes,
+            subtitles: vec![],
+            music: None,
+            subtitle_box: None,
+            look: None,
+            voiceover: vec![],
+        }
+    }
+
+    fn cfg() -> SchedulerConfig {
+        SchedulerConfig::new(PathBuf::from("w"), PathBuf::from("o.mp4"), PathBuf::from("r"))
+    }
+
+    #[test]
+    fn only_recordings_count_among_scene_audio() {
+        assert!(is_recording_path("assets/recordings/intro-1.wav"));
+        assert!(is_recording_path("recordings/a.wav"));
+        assert!(!is_recording_path("assets/music/recordings.wav"));
+        assert!(!is_recording_path("assets/voice.wav"));
+        let t = timeline_of(vec![
+            plain("a", 2000, Some("Hello there."), Some("assets/recordings/a-1.wav")),
+            plain("b", 2000, Some("Music."), Some("assets/music/loop.m4a")),
+            narrated("c", 2000, "Synth."),
+        ]);
+        assert_eq!(recorded_scenes(&t), vec![0]);
+        let mut cfg = cfg();
+        // Without the render's list (old callers): no recording is timed.
+        assert!(recording_clips(&t, &cfg).is_empty());
+        cfg.word_subtitles.recorded_scenes = recorded_scenes(&t);
+        let clips = recording_clips(&t, &cfg);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].kind, ClipKind::Recording);
+        assert_eq!(clips[0].text, "Hello there.");
+        assert_eq!((clips[0].start_ms, clips[0].scene_end_ms), (0, 2000));
+        assert!(clips[0].on_screen);
+        // Synthesized narration is found as before, and only it.
+        let narr = narration_clips(&t, &cfg);
+        assert_eq!(narr.len(), 1);
+        assert_eq!(narr[0].kind, ClipKind::Narration);
+    }
+
+    #[test]
+    fn scripts_join_with_a_space_except_between_cjk() {
+        assert_eq!(join_scripts(["Hello.", " World. "]), "Hello. World.");
+        assert_eq!(join_scripts(["你好。", "世界"]), "你好。 世界", "punctuation is not CJK");
+        assert_eq!(join_scripts(["你好", "世界"]), "你好世界");
+        assert_eq!(join_scripts(["", "a"]), "a");
+        let mut s = plain("s", 1000, Some("Shown"), None);
+        assert_eq!(script_of(&s), "Shown");
+        s.narration = Some(Narration {
+            voice: None,
+            text: Some(" Said ".into()),
+        });
+        assert_eq!(script_of(&s), "Said");
+        s.text = None;
+        s.narration = None;
+        assert_eq!(script_of(&s), "");
+    }
+
+    #[tokio::test]
+    async fn voiceover_clips_speak_the_scenes_they_cover() {
+        let mut t = timeline_of(vec![
+            plain("intro", 2000, Some("Title"), None),
+            plain("a", 3000, Some("Every morning."), None),
+            plain("b", 3000, Some("Grind the beans."), None),
+            plain("c", 2000, Some("Enjoy."), None),
+        ]);
+        t.voiceover = vec![vimmer_dsl::VoiceoverClip {
+            id: "vo".into(),
+            source: "rec/vo.wav".into(),
+            start_ms: 2010,
+            trim_start_ms: 0,
+            trim_end_ms: 0,
+            gain: 1.0,
+        }];
+        // 5 s of file: plays 2000..7000 (start on frame 60), over a and b.
+        let clips = voiceover_clips(&t, &cfg(), Arc::new(FixedProbe(5000)), &RenderContext::silent())
+            .await
+            .unwrap();
+        assert_eq!(clips.len(), 1);
+        let c = &clips[0];
+        assert_eq!(c.kind, ClipKind::Voiceover("vo".into()));
+        assert_eq!(c.text, "Every morning. Grind the beans.");
+        assert_eq!((c.start_ms, c.scene_end_ms, c.scene_index), (2000, 7000, 1));
+        assert!(c.on_screen);
+        assert_eq!(c.who(&t), "voice-over clip `vo`");
+        // A file longer than the video: cues stop at the end of the video.
+        let long = voiceover_clips(&t, &cfg(), Arc::new(FixedProbe(60_000)), &RenderContext::silent())
+            .await
+            .unwrap();
+        assert_eq!(long[0].scene_end_ms, 10_000);
+        assert_eq!(long[0].text, "Every morning. Grind the beans. Enjoy.");
+    }
+
+    #[tokio::test]
+    async fn voiceover_words_become_cues_inside_the_clip() {
+        let mut t = timeline_of(vec![
+            plain("a", 2000, Some("Hello there."), None),
+            plain("b", 2000, Some("Bye now."), None),
+        ]);
+        let clip = NarrationClip {
+            scene_index: 0,
+            text: "Hello there. Bye now.".into(),
+            wav: PathBuf::from("vo.wav"),
+            start_ms: 500,
+            scene_end_ms: 3000,
+            on_screen: true,
+            kind: ClipKind::Voiceover("vo".into()),
+        };
+        let engine = Arc::new(FixedTranscriber(
+            vec![
+                RecognizedToken::new(" Hello", 0, 400),
+                RecognizedToken::new(" there.", 400, 900),
+                RecognizedToken::new(" Bye", 1500, 1900),
+                RecognizedToken::new(" now.", 1900, 3200),
+            ],
+            Mutex::new(vec![]),
+        ));
+        let mut warnings = vec![];
+        let n = apply_word_subtitles(
+            &mut t,
+            std::slice::from_ref(&clip),
+            engine.clone(),
+            Arc::new(FixedProbe(3300)),
+            &auto(),
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 1, "{warnings:?}");
+        assert!(validate(&t).is_ok());
+        assert_eq!(engine.1.lock().unwrap()[0].prompt.as_deref(), Some("Hello there. Bye now."));
+        let texts: Vec<&str> = t.subtitles.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, vec!["Hello there.", "Bye now."]);
+        assert!(t.subtitles.iter().all(|c| c.start_ms >= 500 && c.end_ms <= 3000), "{:?}", t.subtitles);
+        // "now." runs to 3700 in the file, but the clip ends at 3000.
+        assert_eq!(t.subtitles[1].words.last().unwrap().end_ms, 3000);
+    }
+
+    #[tokio::test]
+    async fn a_recording_without_a_script_shows_what_was_heard() {
+        let mut t = timeline_of(vec![plain("a", 3000, None, Some("assets/recordings/a-1.wav"))]);
+        t.scenes[0].image = Some("x.png".into());
+        let mut c = cfg();
+        c.word_subtitles.recorded_scenes = vec![0];
+        let clips = recording_clips(&t, &c);
+        assert_eq!(clips[0].text, "");
+        assert!(!clips[0].on_screen);
+        let engine = Arc::new(FixedTranscriber(
+            vec![
+                RecognizedToken::new(" Good", 100, 400),
+                RecognizedToken::new(" morning!", 400, 900),
+            ],
+            Mutex::new(vec![]),
+        ));
+        let mut warnings = vec![];
+        let ws = WordSubtitleConfig {
+            auto_subtitles: AutoSubtitles::On,
+            ..WordSubtitleConfig::default()
+        };
+        apply_word_subtitles(
+            &mut t,
+            &clips,
+            engine.clone(),
+            Arc::new(FixedProbe(1000)),
+            &ws,
+            &RenderContext::silent(),
+            &mut warnings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(engine.1.lock().unwrap()[0].prompt, None, "no script, no prompt");
+        assert_eq!(t.subtitles.len(), 1, "{warnings:?}");
+        assert_eq!(t.subtitles[0].text, "Good morning!");
+        assert_eq!(t.subtitles[0].start_ms, 100);
+    }
 }
+

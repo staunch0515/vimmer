@@ -6,6 +6,7 @@ import { boxProblems } from "./subtitleBox";
 import { nothingToSpeak } from "./narration";
 import { lookProblems } from "../../src/motion/look";
 import { layoutProblems } from "./textLayout";
+import { voiceoverProblems } from "./voiceover";
 
 export const MAX_DURATION_MS = 200_000;
 export const ALLOWED_RESOLUTIONS = [
@@ -71,6 +72,7 @@ export const checkTimeline = (t: VideoTimeline): string[] => {
       problems.push("Beat sync max shift must be between 1 and 1000 ms.");
     }
   }
+  problems.push(...voiceoverProblems(t));
   problems.push(...boxProblems(t.subtitle_box));
   t.subtitles?.forEach((c, i) => {
     if (c.start_ms >= c.end_ms) problems.push(`Subtitle ${i + 1} must start before it ends.`);
@@ -99,6 +101,8 @@ export type Selection =
   // `keyframe`: one of the layer's keyframes is selected too (its index in layer.keyframes).
   | { kind: "layer"; sceneIndex: number; index: number; keyframe?: number }
   | { kind: "music" }
+  // A clip of the voice-over track (旁白音轨), by its index in `voiceover`.
+  | { kind: "voiceover"; index: number }
   | { kind: "none" };
 
 export const sortCues = (cues: SubtitleCue[]): SubtitleCue[] =>

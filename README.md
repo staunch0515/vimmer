@@ -72,7 +72,8 @@ round). Nothing is written to the timeline.
   render will make it (speech + 300 ms when longer); the bar names the scenes that will be stretched.
   The playhead and the timeline below stay in the saved timeline's time. Scenes edited since are
   silent in that preview until listened to again. **关闭旁白** returns to the plain preview.
-- Kokoro chosen but not installed: like the render, `say` speaks and a note says so.
+- Kokoro needed but not installed: like the render, an error that says how to install it (no
+  switch to `say`). Scenes that name a `say` voice need no Kokoro.
 - At most two syntheses run at once (desktop app and dev server alike); more wait.
 - Desktop app: the `listen_narration` command. Browser dev editor: `POST /__vimmer/tts` (local
   requests only) runs the CLI, which must be built (`cargo build -p vimmer-cli`, or `VIMMER_BIN`):
@@ -747,8 +748,8 @@ The first scene's transition is dropped with a warning.
   kana, Latin letters and words, digits (numbers are read out), a pause per comma and per
   sentence end, and a fixed lead-in. Roughly zh 250 ms per character, ja 200 ms, en 400 ms per
   word; on the calibration corpus the mean error is about 3-7% (worst sentence about 20%).
-- It is sized for the engine the render will use: `--tts`, else `$VIMMER_TTS`, else `say`
-  (`vimmer-storyboard` without the CLI: `$VIMMER_TTS`, else `say`).
+- It is sized for the engine the render will use: `--tts`, else `$VIMMER_TTS`, else Kokoro
+  (`vimmer-storyboard` without the CLI: `$VIMMER_TTS`, else Kokoro).
 - Then 600 ms of padding is added (the 300 ms narration tail plus slack), and the result is at
   least 2000 ms.
 - Re-measure after a voice or model update: `rust-core/crates/vimmer-media/calibration/README.md`.
@@ -1172,7 +1173,7 @@ and runs the quality check before anything renders:
 
 | Panel option | CLI flag | Default |
 | --- | --- | --- |
-| Voice engine: say / Kokoro | `--tts` | `$VIMMER_TTS`, else `say` |
+| Voice engine: Kokoro / say | `--tts` | `$VIMMER_TTS`, else Kokoro (scenes that name a `say` voice keep `say`) |
 | Auto-subtitles: Off / On / All | `--auto-subtitles` | Off |
 | Word-by-word subtitle timing | `--word-subtitles` | on |
 | Advanced: chunk length (s) | `--chunk-ms` | 30 |
@@ -1557,19 +1558,24 @@ show without a rebuild. Typing a path still works in both the browser and the de
 
 ## Narration (local TTS)
 
-A scene with **Narrate the text** checked (Inspector, Audio) gets its speech generated
-when you render: its spoken line (`narration.text`, see [above](#narration-and-spoken-lines-narration-narrationtext)), else its `text`, is synthesized with macOS `say` (Samantha for English, Tingting
-for Chinese, Kyoko for Japanese; or pick a voice) and converted to WAV. The scene is stretched to fit the speech,
+A scene with **Narrate the text** checked (Inspector, 朗读 Narration) gets its speech generated
+when you render: its spoken line (`narration.text`, see [above](#narration-and-spoken-lines-narration-narrationtext)), else its `text`, is synthesized with **Kokoro**
+(the default since the voice-over work; see below) and converted to WAV. A scene whose `voice`
+names a macOS `say` voice (Samantha, Tingting, Kyoko …: what old projects have) is still spoken
+by `say`, exactly as before; the editor shows 「这个声音已不推荐」 there with a one-click
+「换成 Kokoro」 (Tingting → `zf_001`, Kyoko → `jf_alpha`, Samantha → `af_heart`, male voices to
+male voices). `--tts say` (or `VIMMER_TTS=say`, or the render panel) speaks every scene with `say`. The scene is stretched to fit the speech,
 plus 300 ms. Files are cached in `remotion-renderer/public/generated/tts/`, keyed by voice and
 text. A scene that already has its own audio file keeps it. The preview stays silent until
 you render. Local narration needs macOS.
 
-### Kokoro narration (optional, local)
+### Kokoro narration (the default, local)
 
 [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) is a small neural TTS that sounds much
 more natural than `say`. Vimmer runs its ONNX build ([kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx))
-locally through a Python helper; nothing is sent anywhere and nothing costs money. `say` stays
-the default.
+locally through a Python helper; nothing is sent anywhere and nothing costs money. It is the
+default engine: render, 试听 Listen, the CLI, `vimmer check`, the desktop app and the generator
+all use it unless `say` is chosen.
 
 **Install** (once; about 730 MB of models, Python 3.10–3.12; works on Intel Macs, where the
 PyTorch build of Kokoro has no wheels):
@@ -1589,7 +1595,7 @@ unidic-lite, soundfile) and downloads into `~/.local/share/vimmer/models/kokoro/
 
 | What | Flag | Variable | Default |
 |---|---|---|---|
-| Engine | `--tts say\|kokoro` | `VIMMER_TTS` | `say` |
+| Engine | `--tts say\|kokoro` | `VIMMER_TTS` | `kokoro` |
 | Interpreter | `--kokoro-python` | `VIMMER_KOKORO_PYTHON` | `~/.local/share/vimmer/kokoro-venv/bin/python` |
 | Models | `--kokoro-models` | `VIMMER_KOKORO_MODELS` | `~/.local/share/vimmer/models/kokoro` |
 
@@ -1598,8 +1604,13 @@ cd rust-core && cargo run -p vimmer-cli -- ../fixtures/word-subtitles-demo.json 
   -o /tmp/kokoro.mp4 --remotion-dir ../remotion-renderer --tts kokoro
 ```
 
-The desktop app has no switch; it reads the same variables (`VIMMER_TTS=kokoro`), as long as
-they reach the app's environment (e.g. `launchctl setenv VIMMER_TTS kokoro`, then restart it).
+The desktop app's render panel has the switch (Kokoro first); it also reads the same variables,
+as long as they reach the app's environment (e.g. `launchctl setenv VIMMER_TTS say`).
+
+**Voice picker.** The scene inspector lists Kokoro voices by language and gender with Chinese
+labels (中文 女声 1–5 / 男声 1–5, 美式/英式 女声/男声, 日语 女声/男声) and a ▶ 试听声音 button: a short
+sample made locally with the render's own narration code (a one-scene timeline
+`voice-sample-<voice>`), cached in `generated/tts/` like any clip.
 
 **Languages and voices.** The language comes from the text, by the same rule as recognition:
 any kana → Japanese, other CJK ideographs → Chinese, anything else → English.
@@ -1613,9 +1624,9 @@ any kana → Japanese, other CJK ideographs → Chinese, anything else → Engli
 Chinese uses the v1.1-zh model on purpose: v1.0's Chinese G2P runs syllables together
 (「已有」 comes out as 「你有」). A scene's `voice` is used when it is a Kokoro voice for that
 language (`zf_…`/`zm_…` for Chinese, `j…` for Japanese, `a…`/`b…` for English). A `say` voice
-such as `Tingting`, or a Kokoro voice of another language, is ignored with a warning and the
-default is used, so timelines written for `say` render with Kokoro unchanged. In `say` mode a
-Kokoro voice name is likewise replaced by the `say` default with a warning.
+such as `Tingting` keeps `say` (see above); a Kokoro voice of another language is ignored with
+a warning and the default is used. In `say` mode a Kokoro voice name is replaced by the `say`
+default with a warning.
 
 **English inside Chinese** (「我们用 Python 制作视频」) is read in English: the English words go
 through misaki's espeak fallback, which uses the espeak-ng library kokoro-onnx already ships, so
@@ -1632,13 +1643,111 @@ load once. On a 4-core Intel Mac: about 25 s of start-up (imports, jieba, models
 real time (a 5 s clip takes about 5 s). The run is killed after 180 s plus 1 s per character,
 and when the render is cancelled.
 
-**Fallback.** When Kokoro cannot run (interpreter or model file missing, the helper fails or
-times out), the render prints one warning and narrates the whole video with `say`, so voices
-never mix within a video. A cancel stops the helper and cancels the render.
+**Kokoro missing.** When a scene needs Kokoro and it cannot run (interpreter or model file
+missing, the helper fails or times out), the render (and 试听) stops with an error that names the
+scenes and says how to fix it: run `install_kokoro.sh` (Python 3.10–3.12), or choose `say`. It
+never switches to `say` on its own. Scenes that all name `say` voices need no Kokoro. A cancel
+stops the helper and cancels the render.
 
 **Limits.** Speed is fixed at 1.0 (no DSL field). Korean and other languages are read as
 English. Word-by-word subtitles work unchanged with Kokoro audio (recognition and alignment
 do not care which engine spoke).
+
+## Voice-over, recording and alignment (旁白、录音、对齐)
+
+### Voice-over track (`voiceover`, 旁白音轨)
+
+A timeline-level list of recorded or imported speech clips on the video's own clock:
+
+```json
+"voiceover": [
+  { "id": "vo-1", "source": "assets/recordings/voiceover-1.wav", "start_ms": 2000,
+    "trim_start_ms": 120, "trim_end_ms": 300, "gain": 1.2 }
+]
+```
+
+- `start_ms` is from the video start; `trim_start_ms` / `trim_end_ms` cut that much off the
+  file's start / end (default 0); `gain` is linear, 0–4 (default 1). Defaults are not written,
+  and an empty track is not written at all, so old timelines are byte-identical.
+- Clips never overlap. The render places each on the frame of its `start_ms`, mixes it once over
+  the joined video like scene audio (chunked = full, sample for sample) and **ducks the music
+  under it** like narration. A clip that runs past the end of the video is cut there.
+- `vimmer check`: `voiceover.missing`, `voiceover.unreadable`, `voiceover.overlap` (with the
+  start that fixes it), `voiceover.past_end`, `voiceover.longer_than_video`, `voiceover.clipping`
+  (a gain that pushes the peak to full scale) and the usual file levels. Bad ids, gains and
+  starts after the end are validation errors.
+- Editor: the **旁白 Voice-over** lane on the timeline (drag a clip to move it, drag its edges
+  to trim, Delete to remove, drop an audio file from the project's assets onto the lane) and
+  the **旁白** tab (add a file at the playhead, the clip list, start / trims / gain of the
+  selected clip). Every drag or edit is one undo step; the preview plays the track in sync.
+- **本幕音频（跟着场景走）**: a scene's own `audio` still plays inside its scene only and stops at
+  the cut (old projects, synthesized narration, a sound tied to a shot). **移到旁白音轨** moves
+  the file onto the voice-over track at the same absolute time (one undo step; the scene's
+  narration setting is switched off so nothing is synthesized in its place). `audio.cut_off`
+  suggests it.
+- The editing assistant can move, trim, retime and remove clips (`voiceover` is whitelisted
+  and documented in its prompt); it never invents a file.
+
+### Recording (录音) and the teleprompter (提词器)
+
+- **🎙 录这一幕** in the scene inspector: the scene's script (its spoken line, else its text) in
+  large type, a 3-2-1 countdown with the input level meter already moving, recording with a
+  timer and **■ 停止**, then play back, **重录**, **丢弃** or **保留**. Keeping saves the take as
+  `assets/recordings/<scene>-<n>.wav` (never overwriting an earlier take) and sets the scene's
+  `audio`; a take longer than the scene can lengthen the scene in the same undo step.
+- **🎙 录制整段旁白（提词器）** in the 旁白 tab: every scene's script in order in big type, from 0:00
+  or from the playhead. While recording, the preview's playhead follows the take (silently, so
+  the speakers are not recorded) and the scene being read is highlighted. **保留到旁白音轨** puts
+  the take on the track at the chosen start; a take that overlaps clips is refused unless
+  「替换重叠的片段」 is ticked. One undo step.
+- Takes are WAV, 48 kHz, mono, 16-bit, captured with `getUserMedia` + Web Audio in the page
+  (echo cancellation, noise suppression and auto gain off; resampled when the device runs at
+  another rate). **Desktop app:** the `save_recording` command stores the take in the open
+  project (`assets/recordings/`), or in `public/assets/recordings/` without one, converting any
+  other WAV format with ffmpeg. macOS asks for the microphone the first time; the prompt text
+  comes from `desktop/src-tauri/Info.plist` (`NSMicrophoneUsageDescription`), which Tauri embeds
+  in the `tauri dev` binary and bundles in the app. In `npm run dev` started from a terminal,
+  macOS attributes the request to that terminal app (allow it under System Settings → Privacy &
+  Security → Microphone). **Browser editor:** the dev server's `POST /__vimmer/recording` stores
+  it in `public/assets/recordings/` (git-ignored).
+
+### Subtitles for recordings
+
+Word-by-word subtitles and `--auto-subtitles` also work for recorded speech, with the same local
+whisper path as synthesized narration:
+
+- **Recorded scene audio**: a scene `audio` file inside a `recordings/` folder (what the recorder
+  makes). Other scene audio (music, sounds) is never treated as speech.
+- **Voice-over clips**: always. A trimmed clip is recognized from a trimmed copy
+  (`generated/voiceover/`), so word times are what is heard.
+- The words are aligned to the known script: the scene's spoken line or text, or for a voice-over
+  clip the scripts of the scenes it plays over, joined in order. Without a script the recognized
+  text is shown. Cues stay inside their clip: words after a recording's scene cut, or after a
+  voice-over clip's end or the end of the video, get no cue.
+- Synthesized narration is timed exactly as before.
+
+### Align scene cuts to the voice-over (按旁白对齐场景)
+
+A voice-over recorded at its own pace rarely matches cuts drawn before it. **按旁白对齐场景**
+(旁白 tab, for the selected clip or the first one) recognizes the clip, aligns it to the
+scripts of the scenes it plays over, and proposes lengths so every cut between two of those
+scenes lands in the pause between their sentences (the middle of the pause, at most 150 ms
+before the next sentence). The first covered scene keeps its start and the last its end (or the
+last word + 300 ms when later); scenes outside the clip's range keep their lengths; no scene
+gets shorter than it needs. The tab shows old → new lengths and when each scene is spoken;
+**应用** applies them as one undo step.
+
+```bash
+# The same from the command line (JSON with --json; --apply writes the changed timeline)
+vimmer align-scenes fixtures/voiceover-demo.json --public-dir remotion-renderer/public --json
+```
+
+Desktop app: the `align_scenes` command. Browser dev editor: `POST /__vimmer/align`.
+
+`fixtures/voiceover-demo.json` is a 14 s demo: one voice-over clip across four scenes
+(`assets/voiceover-demo.wav`, made locally with `say`), music that ducks under it, and scene
+lengths a little off so that 按旁白对齐场景 has something to propose. Render it with
+`--auto-subtitles all` for subtitles from the voice-over.
 
 ## Word-by-word subtitles (local speech recognition)
 
