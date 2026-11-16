@@ -82,6 +82,8 @@ pub(crate) fn text_area(
             line_width,
             max_lines,
             bottom_y: 0.0,
+            top_y: 0.0,
+            position: vimmer_dsl::TextPosition::Bottom,
         },
         pad,
     )
@@ -326,6 +328,8 @@ fn area(font_px: f64, lh: f64, line_width: f64) -> SceneTextArea {
         line_width: line_width.max(1.0),
         max_lines: u32::MAX,
         bottom_y: 0.0,
+        top_y: 0.0,
+        position: vimmer_dsl::TextPosition::Bottom,
     }
 }
 

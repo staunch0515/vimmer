@@ -2,7 +2,8 @@
 //! Shared by the logo-overlap and the contrast-over-media checks.
 //!
 //! * Scene text (`AnimatedText.tsx`): centered, bottom edge fixed at `height - 260 px`, growing
-//!   upward. The div shrinks to its content up to 88% of the padded width; with several lines
+//!   upward (at its `text_layout` size; `top` text hangs from the top padding, `middle` text is
+//!   centered between it and the bottom edge; a paged text has one box per page). The div shrinks to its content up to 88% of the padded width; with several lines
 //!   (`text-wrap: balance`) each line is about the total width over the line count, so the glyphs
 //!   take that width (+10% for uneven breaks), centered.
 //! * Text layers (`LayerKinds.tsx` `TextLayerView`): the layer box; a fixed-height box centers the
@@ -17,7 +18,7 @@
 //!
 //! Rotation and entrance/exit animations are ignored (the box at rest).
 
-use vimmer_dsl::{Brand, Layer, LayerContent, Resolution, TextAlign, TextLayer, TextStyle};
+use vimmer_dsl::{Brand, Layer, LayerContent, Resolution, TextAlign, TextLayer};
 
 use crate::fonts::Fonts;
 use crate::layers::{
@@ -43,20 +44,33 @@ pub enum Role {
     Body,
 }
 
-/// The scene text's box with its `style` (box padding and outline around the glyphs), or `None`
-/// without text.
-pub(crate) fn scene_text(
+/// The box of each page of scene `i`'s text at its size and position, with the page's window
+/// (ms from the scene start). One box for an unpaged text; none without text.
+pub(crate) fn scene_pages(
+    t: &vimmer_dsl::VideoTimeline,
+    i: usize,
+    fonts: &Fonts,
+) -> Vec<(Rect, crate::pages::ScenePage)> {
+    let (area, reach) = SceneTextArea::for_scene(t, i);
+    crate::pages::scene_pages(t, i)
+        .into_iter()
+        .filter_map(|p| Some((text_in_area(&p.text, &area, reach, t.resolution, fonts)?, p)))
+        .collect()
+}
+
+/// The box of `text` laid out in `area` (centered, at the area's position).
+pub(crate) fn text_in_area(
     text: &str,
+    area: &SceneTextArea,
+    reach: StyleReach,
     res: Resolution,
     fonts: &Fonts,
-    style: &TextStyle,
 ) -> Option<Rect> {
     if text.trim().is_empty() {
         return None;
     }
-    let (area, reach) = SceneTextArea::styled(res, style);
-    let lines = scene_text_lines_with(text, &area, 1.0, fonts, Role::Heading).max(1);
-    let total = words_width(text, &area, fonts, Role::Heading);
+    let lines = scene_text_lines_with(text, area, 1.0, fonts, Role::Heading).max(1);
+    let total = words_width(text, area, fonts, Role::Heading);
     let w = if lines == 1 {
         total.min(area.line_width)
     } else {
@@ -65,7 +79,7 @@ pub(crate) fn scene_text(
     let h = f64::from(lines) * area.line_height_px;
     let left = (f64::from(res.width) - w) / 2.0;
     let r = reach.total();
-    Some((left - r, area.bottom_y - h - r, w + 2.0 * r, h + 2.0 * r))
+    Some((left - r, area.text_top(lines, r), w + 2.0 * r, h + 2.0 * r))
 }
 
 /// The box a text layer's glyphs (or its background) take.
@@ -132,6 +146,8 @@ pub(crate) fn layer_box(
                 line_width: w,
                 max_lines: u32::MAX,
                 bottom_y: 0.0,
+                top_y: 0.0,
+                position: vimmer_dsl::TextPosition::Bottom,
             };
             let title = words_width(&lt.title, &area(f), fonts, Role::Heading);
             let sub = lt.subtitle.as_deref().map_or(0.0, |s| {

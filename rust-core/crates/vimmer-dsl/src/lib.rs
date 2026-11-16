@@ -11,6 +11,7 @@ pub mod look;
 pub mod model;
 pub mod srt;
 pub mod template;
+pub mod text_layout;
 pub mod text_style;
 pub mod validation;
 
@@ -44,6 +45,10 @@ pub use model::{
 pub use srt::{parse_srt, SrtError};
 pub use template::{
     expand_scene, expand_templates, SceneTemplate, TemplateError, TemplateInfo, CATALOG,
+};
+pub use text_layout::{
+    Paging, ResolvedTextLayout, TextLayout, TextPage, TextPosition, DEFAULT_TEXT_PX, MAX_TEXT_PX,
+    MIN_TEXT_PX,
 };
 pub use text_style::{
     style_scale, CustomShadow, ShadowPreset, TextOutline, TextShadow, TextStyle, MAX_OUTLINE_PX,

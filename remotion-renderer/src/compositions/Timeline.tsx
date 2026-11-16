@@ -6,7 +6,8 @@ import { KenBurnsImage, KenBurnsVideo } from "../components/KenBurnsImage";
 import { LayerStack } from "../components/LayerStack";
 import { AssetUrlContext, resolveAsset } from "../assets";
 import { BUILTIN, brandColor } from "../brand";
-import { BrandContext, BrandOverlay } from "../components/Brand";
+import { BrandContext, BrandOverlay, useBrand } from "../components/Brand";
+import { scenePages } from "../textPages";
 import { layoutScenes, msToFrames, totalFrames, type SceneLayout } from "../layout";
 import { transitionPose } from "../motion/transitions";
 import { holdWindow, inHoldWindow, type HoldWindow } from "../motion/hold";
@@ -50,11 +51,29 @@ const SceneBody: React.FC<{ scene: Scene; durationInFrames: number }> = ({ scene
     ) : null}
     <LayerStack layers={scene.layers} side="below" sceneFrames={durationInFrames} />
     {scene.text ? (
-      <AnimatedText text={scene.text} highlights={scene.highlights} onImage={Boolean(scene.image || scene.video)} textStyle={scene.text_style} />
+      <SceneText scene={scene} />
     ) : null}
     <LayerStack layers={scene.layers} side="above" sceneFrames={durationInFrames} />
   </AbsoluteFill>
 );
+
+// The scene text, paged when its layout asks for it (src/textPages.ts): the render's timed
+// `text_pages`, else pages timed by characters over the scene (the editor preview).
+const SceneText: React.FC<{ scene: Scene }> = ({ scene }) => {
+  const { width, height } = useVideoConfig();
+  const brand = useBrand();
+  return (
+    <AnimatedText
+      text={scene.text ?? ""}
+      highlights={scene.highlights}
+      onImage={Boolean(scene.image || scene.video)}
+      textStyle={scene.text_style}
+      layout={scene.text_layout}
+      pages={scenePages(scene, brand, { width, height })}
+      sceneId={scene.id}
+    />
+  );
+};
 
 // How a scene's look is drawn: the timeline default, what `auto` stands for, and the scene's first
 // frame in the full timeline (chunk offset included).

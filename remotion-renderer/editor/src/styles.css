@@ -613,3 +613,12 @@ textarea { resize: vertical; width: 100%; }
 .scope-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .chat-scope-line { margin-bottom: 4px; }
 .prompt-scope select { flex: 1; min-width: 0; }
+
+/* 文字分页: the page list under the scene's Text fields. */
+.page-list { display: flex; flex-direction: column; gap: 6px; }
+.page-list .pages { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.page-list .page-item {
+  all: unset; cursor: pointer; display: block; font-size: 12px; line-height: 1.4; color: var(--text-2);
+  padding: 2px 4px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.page-list .page-item:hover { background: var(--bg-3, rgba(255, 255, 255, 0.06)); color: var(--text-1, inherit); }

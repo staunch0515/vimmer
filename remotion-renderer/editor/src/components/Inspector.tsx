@@ -18,7 +18,10 @@ import { BeatSyncFields, SfxList, type BeatStatus } from "./SoundPanel";
 import type { DetectedBeats } from "../beats";
 import { MoodMusicFields, MusicModeSwitch } from "./MusicPanel";
 import type { MusicLibrary, PickedTrack } from "../music";
-import { withSpokenLine, withVoice } from "../narration";
+import { clipFor, spokenText, withSpokenLine, withVoice } from "../narration";
+import { PageList, TextLayoutFields } from "./TextLayoutFields";
+import { insertPageBreak, withLayoutPart } from "../textLayout";
+import { pagePreview, resolveTextLayout } from "../../../src/textPages";
 import { LookFields } from "./LookFields";
 import { ListenButton, type ListenProps } from "./ListenButton";
 import { autoPreset } from "../../../src/motion/look";
@@ -120,7 +123,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, list
       />
       {scene.template && <TemplateParams index={index} template={scene.template} dispatch={dispatch} />}
       <Field label="Text" hint={scene.template ? "drawn over the template" : undefined}>
-        <textarea rows={3} value={scene.text ?? ""} onChange={(e) => patch({ text: e.target.value || null })} />
+        <textarea rows={3} data-scene-text value={scene.text ?? ""} onChange={(e) => patch({ text: e.target.value || null })} />
       </Field>
       {/* What the narration says, when it differs from the text on screen. Empty: it reads the
           text above; clearing it removes `narration.text`. */}
@@ -141,6 +144,34 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, list
           onChange={(e) => patch({ highlights: e.target.value.split(",").map((w) => w.trim()).filter(Boolean) })}
         />
       </Field>
+      <div className="section-title">文字 Text</div>
+      <TextLayoutFields
+        name="scene"
+        layout={scene.text_layout}
+        inherited={timeline.brand?.text_layout}
+        onChange={(part, value) => patch({ text_layout: withLayoutPart(scene.text_layout, part, value) ?? undefined })}
+      />
+      {(() => {
+        const paging = resolveTextLayout(scene.text_layout, timeline.brand).paging;
+        if (paging === "off") return null;
+        const ownText = Boolean(scene.narration) && !scene.audio && spokenText(scene) === scene.text;
+        const clip = ownText && listen ? clipFor(listen.heard, scene, listen.engine) : null;
+        return (
+          <PageList
+            pages={pagePreview(scene, timeline.brand, timeline.resolution, clip?.speech_ms)}
+            paging={paging}
+            narrated={ownText}
+            heard={clip != null}
+            onSeek={(ms) => onSeekMs?.(sceneStartMs + Math.min(ms, scene.duration_ms - 1))}
+            onInsertBreak={() => {
+              const el = document.querySelector<HTMLTextAreaElement>("textarea[data-scene-text]");
+              const text = scene.text ?? "";
+              const at = el && document.activeElement === el ? el.selectionStart : (el?.selectionStart ?? text.length);
+              patch({ text: insertPageBreak(text, at).text });
+            }}
+          />
+        );
+      })()}
       <div className="section-title">Text style</div>
       <TextStyleFields
         name="scene"

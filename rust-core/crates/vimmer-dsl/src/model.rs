@@ -4,6 +4,7 @@ use crate::brand::Brand;
 use crate::layer::{Layer, VideoClip};
 use crate::look::Look;
 use crate::template::SceneTemplate;
+use crate::text_layout::{TextLayout, TextPage};
 use crate::text_style::TextStyle;
 
 /// Target frame rate for every render.
@@ -199,6 +200,15 @@ pub struct Scene {
     /// (see [`crate::text_style`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_style: Option<TextStyle>,
+    /// Size, position and paging of `text`. Absent: the brand's `text_layout`, else the built-in
+    /// layout (92 px, bottom, no paging; see [`crate::text_layout`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_layout: Option<TextLayout>,
+    /// The pages `text` is shown in and when each starts. Written by the render into its render
+    /// props for paged scenes (see [`crate::text_layout`]); never part of a saved timeline, and
+    /// recomputed by every render. Empty: the renderer pages the text itself (editor preview).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_pages: Vec<TextPage>,
     /// Path or URL of the background image, relative to the public dir.
     #[serde(default)]
     pub image: Option<String>,
@@ -254,6 +264,25 @@ impl Scene {
             .clone()
             .unwrap_or_default()
             .or(brand.and_then(|b| b.text_style.as_ref()))
+    }
+
+    /// Size, position and paging of the scene text as drawn: each part the scene's own, else the
+    /// brand's, else the built-in one.
+    pub fn effective_text_layout(&self, brand: Option<&Brand>) -> crate::text_layout::ResolvedTextLayout {
+        self.text_layout
+            .unwrap_or_default()
+            .or(brand.and_then(|b| b.text_layout.as_ref()))
+            .resolved()
+    }
+
+    /// The pages the scene text is shown in on a `res` frame (one page, the text, without
+    /// paging; none without text). Timing is decided at render ([`crate::text_layout::page_starts`]).
+    pub fn text_page_texts(&self, brand: Option<&Brand>, res: Resolution) -> Vec<String> {
+        let Some(text) = self.text.as_deref() else {
+            return Vec::new();
+        };
+        let layout = self.effective_text_layout(brand);
+        crate::text_layout::split_pages(text, layout.paging, layout.font_px(res), res)
     }
 
     /// Duration in frames at `fps`, rounded to the nearest frame.
@@ -937,6 +966,34 @@ mod tests {
                 assert!(v.get("look").is_none());
             }
         }
+    }
+
+    #[test]
+    fn old_fixtures_write_no_text_layout_or_pages_and_round_trip_byte_identical() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fixtures");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.ends_with(".json") || name.starts_with("brand.") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).unwrap();
+            let t: VideoTimeline = serde_json::from_str(&raw).unwrap();
+            let out = serde_json::to_string(&t).unwrap();
+            assert!(!out.contains("\"text_pages\""), "{name}");
+            if !raw.contains("\"text_layout\"") {
+                assert!(!out.contains("\"text_layout\""), "{name}");
+                // Serializing again gives the same bytes: nothing new is written.
+                let again: VideoTimeline = serde_json::from_str(&out).unwrap();
+                assert_eq!(serde_json::to_string(&again).unwrap(), out, "{name}");
+            }
+        }
+        // Absent layout: the old look, whatever the brand sets elsewhere.
+        let s: Scene = serde_json::from_str(r#"{"id":"a","duration_ms":1000,"text":"One. Two."}"#).unwrap();
+        let l = s.effective_text_layout(None);
+        assert_eq!((l.size, l.paging), (92.0, crate::text_layout::Paging::Off));
+        let res = Resolution { width: 1920, height: 1080 };
+        assert_eq!(s.text_page_texts(None, res), vec!["One. Two.".to_string()]);
     }
 
     #[test]

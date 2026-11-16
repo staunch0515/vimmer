@@ -11,7 +11,7 @@ use vimmer_media::{normalize_image, AudioProbe, MediaError, Speech};
 use crate::control::{Progress, RenderContext};
 use crate::narrate::{narrate_scenes, TtsConfig};
 use crate::plan::{chunk_props, plan_chunks, Chunk, DEFAULT_CHUNK_MS};
-use crate::wordsubs::{add_word_subtitles, WordSubtitleConfig};
+use crate::wordsubs::{add_word_subtitles_with, PageWords, WordSubtitleConfig};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SchedulerError {
@@ -279,13 +279,15 @@ pub async fn render_timeline_with(
     // Recognize the narration again to time subtitles word by word. Without an engine this
     // only warns, and subtitles stay as they were.
     let plain_subtitles = timeline.subtitles.clone();
-    let timed = add_word_subtitles(
+    let mut page_words = PageWords::new();
+    let timed = add_word_subtitles_with(
         &mut timeline,
         &cfg,
         probe.clone(),
         &ctx,
         &mut warnings,
         &mut notes,
+        &mut page_words,
     )
     .await?;
     if timed > 0 {
@@ -298,6 +300,10 @@ pub async fn render_timeline_with(
             timeline.subtitles = plain_subtitles;
         }
     }
+
+    // Paged scene texts: when each page starts, from the final scene lengths and the words.
+    crate::pages::add_text_pages(&mut timeline, &page_words, &cfg, probe.clone(), &mut notes)
+        .await?;
 
     ctx.emit(Progress::Stage {
         name: "Preparing images".into(),

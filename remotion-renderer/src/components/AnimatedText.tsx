@@ -14,8 +14,10 @@ import {
   styleScale,
   withGlow,
 } from "../textStyle";
-import type { Brand, TextBackground, TextStyle } from "../types/timeline";
+import type { Brand, TextBackground, TextLayout, TextPage, TextPosition, TextStyle } from "../types/timeline";
 import { useBrand } from "./Brand";
+import { PAGE_FADE_FRAMES, fontPx, isDefaultLayout, pageAt, resolveTextLayout, topInsetPx } from "../textPages";
+import { msToFrames } from "../layout";
 
 type Props = {
   text: string;
@@ -25,11 +27,26 @@ type Props = {
   onImage?: boolean;
   // The scene's text_style (outline, box, shadow); each part falls back to the brand's.
   textStyle?: TextStyle | null;
+  // The scene's text_layout (size, position, paging); each part falls back to the brand's.
+  // Neither set: the text is drawn exactly as before text layouts existed.
+  layout?: TextLayout | null;
+  // The pages to show (src/textPages.ts `scenePages`); fewer than two: the whole text.
+  pages?: TextPage[];
+  // For a top-corner logo hidden on this scene (top / middle text starts below a shown logo).
+  sceneId?: string;
 };
 
 // Behind the text (lower part of the frame) and the subtitle band.
 const IMAGE_SCRIM =
   "linear-gradient(to top, rgba(9, 9, 11, 0.62) 0%, rgba(9, 9, 11, 0.45) 30%, rgba(9, 9, 11, 0) 62%)";
+// The same behind text at the top, and a band behind text in the middle.
+const POSITION_SCRIM: Record<TextPosition, string> = {
+  bottom: IMAGE_SCRIM,
+  top: "linear-gradient(to bottom, rgba(9, 9, 11, 0.62) 0%, rgba(9, 9, 11, 0.45) 30%, rgba(9, 9, 11, 0) 62%)",
+  middle:
+    "linear-gradient(to bottom, rgba(9, 9, 11, 0) 15%, rgba(9, 9, 11, 0.45) 35%, rgba(9, 9, 11, 0.45) 65%, rgba(9, 9, 11, 0) 85%)",
+};
+const JUSTIFY: Record<TextPosition, string> = { top: "flex-start", middle: "center", bottom: "flex-end" };
 
 const STAGGER_FRAMES = 3;
 const WORD_FADE_FRAMES = 12;
@@ -104,25 +121,33 @@ export const highlightKeys = (highlights: readonly string[]): Set<string> => new
 export const splitWords = (text: string): string[] => text.split(/\s+/).filter(Boolean);
 
 // Word-by-word entrance with keyword highlights. Text wraps via CSS, and the
-// padding keeps content inside the safe area on phones.
-export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = false, textStyle }) => {
+// padding keeps content inside the safe area on phones. A paged text shows one page at a time,
+// each revealed word by word from its own start; the outgoing page fades and lifts away over
+// PAGE_FADE_FRAMES while the next one comes in. Pages are a pure function of the props, so a
+// chunk render draws every frame as the full render does.
+export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = false, textStyle, layout, pages, sceneId = "" }) => {
   const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
+  const { width, height, fps } = useVideoConfig();
   const brand = useBrand();
   const highlightSet = highlightKeys(highlights);
-  const words = splitWords(text);
   const style = resolveTextStyle(textStyle, brand);
   const styled = !isEmptyStyle(style);
   const scale = styleScale(width, height);
   const shadow = shadowCss(style.shadow, scale, SOFT_SHADOW);
+  const plain = isDefaultLayout(layout, brand);
+  const resolved = resolveTextLayout(layout, brand);
+  const position = plain ? "bottom" : resolved.position;
 
-  const body = (
+  // One page of words in the text area, revealed from `pageFrame` 0.
+  const page = (words: string[], pageFrame: number, extra?: React.CSSProperties, key?: string) => (
     <AbsoluteFill
+      key={key}
       style={{
-        justifyContent: "flex-end",
+        justifyContent: JUSTIFY[position],
         alignItems: "center",
         // Fixed bottom inset keeps scene text clear of the subtitle band.
-        padding: "8% 8% 260px",
+        padding: position === "bottom" ? "8% 8% 260px" : `${topInsetPx(position, brand, sceneId, width, height)}px 8% 260px`,
+        ...extra,
       }}
     >
       <div
@@ -130,7 +155,7 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = fals
           maxWidth: "88%",
           textAlign: "center",
           fontFamily: fontStack(brand, "heading"),
-          fontSize: 92,
+          fontSize: plain ? 92 : fontPx(resolved.size, width, height),
           fontWeight: 600,
           lineHeight: 1.2,
           letterSpacing: "-0.02em",
@@ -146,21 +171,39 @@ export const AnimatedText: React.FC<Props> = ({ text, highlights, onImage = fals
           <BoxedWords
             words={words}
             highlightSet={highlightSet}
-            frame={frame}
+            frame={pageFrame}
             box={style.background}
             scale={scale}
             shadow={style.shadow ? shadow : undefined}
           />
         ) : (
-          <AnimatedWords words={words} highlightSet={highlightSet} frame={frame} shadow={style.shadow ? shadow : undefined} />
+          <AnimatedWords words={words} highlightSet={highlightSet} frame={pageFrame} shadow={style.shadow ? shadow : undefined} />
         )}
       </div>
     </AbsoluteFill>
   );
-  if (!onImage) return body;
+
+  let body: React.ReactNode;
+  if (!pages || pages.length < 2) {
+    body = page(splitWords(text), frame);
+  } else {
+    const starts = pages.map((p) => msToFrames(p.start_ms, fps));
+    const k = pageAt(starts.map((start_ms) => ({ start_ms })), frame);
+    const out = k > 0 && frame < starts[k] + PAGE_FADE_FRAMES ? k - 1 : -1;
+    const fade = out >= 0 ? interpolate(frame, [starts[k], starts[k] + PAGE_FADE_FRAMES], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 0;
+    body = (
+      <>
+        {out >= 0
+          ? page(splitWords(pages[out].text), frame - starts[out], { opacity: 1 - fade, transform: `translateY(${-24 * fade}px)` }, `page-${out}`)
+          : null}
+        {page(splitWords(pages[k].text), frame - starts[k], undefined, `page-${k}`)}
+      </>
+    );
+  }
+  if (!onImage) return <>{body}</>;
   return (
     <>
-      <AbsoluteFill style={{ background: IMAGE_SCRIM }} />
+      <AbsoluteFill style={{ background: POSITION_SCRIM[position] }} />
       {body}
     </>
   );

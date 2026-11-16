@@ -44,6 +44,7 @@ import { beatMarks, detectBeats, type DetectedBeats } from "./beats";
 import { resolveAutoGrades } from "../../src/motion/look";
 import { loadMusicLibrary, musicForBeats, pickKey, pickMusic, resolvedMusic, type MusicLibrary, type PickedTrack } from "./music";
 import type { BeatStatus } from "./components/SoundPanel";
+import { heardPages } from "../../src/textPages";
 import { listenKey, rememberClips, toPreviewMs, toSavedMs, withNarration, type HeardClips, type ListenClip, type TtsChoice } from "./narration";
 import { listenNarration } from "./listen";
 import { NarrationBar } from "./components/NarrationBar";
@@ -265,7 +266,12 @@ export const App = () => {
   const [listenAll, setListenAll] = useState<{ busy: boolean; error: string | null; warnings: string[] }>({ busy: false, error: null, warnings: [] });
   const onHeard = useCallback((engine: TtsChoice, clips: ListenClip[]) => setHeard((h) => rememberClips(h, engine, clips)), []);
   const narrated = useMemo(
-    () => (narrationOn ? withNarration(previewTimeline, heard, renderEngine) : null),
+    () =>
+      narrationOn
+        ? withNarration(previewTimeline, heard, renderEngine, (scene, speechMs) =>
+            heardPages(scene, previewTimeline.brand, previewTimeline.resolution, speechMs),
+          )
+        : null,
     [narrationOn, previewTimeline, heard, renderEngine],
   );
   const narratable = timeline.scenes.some((s) => listenKey(s, renderEngine) !== null);

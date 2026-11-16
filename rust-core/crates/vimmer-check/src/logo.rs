@@ -60,6 +60,8 @@ struct Item {
     scene: usize,
     /// `None`: the scene text.
     layer: Option<usize>,
+    /// Which page of the scene text (index, count); (0, 1) for anything else.
+    page: (usize, usize),
     text: bool,
     boxes: Vec<Rect>,
     from_ms: u64,
@@ -71,20 +73,17 @@ fn items(t: &VideoTimeline, fonts: &Fonts) -> Vec<Item> {
     let frame_area = f64::from(res.width) * f64::from(res.height);
     let mut out = Vec::new();
     for (si, scene) in t.scenes.iter().enumerate() {
-        if let Some(b) = scene
-            .text
-            .as_deref()
-            .and_then(|s| {
-                textbox::scene_text(s, res, fonts, &scene.effective_text_style(t.brand.as_ref()))
-            })
-        {
+        let pages = textbox::scene_pages(t, si, fonts);
+        let n = pages.len();
+        for (k, (b, page)) in pages.into_iter().enumerate() {
             out.push(Item {
                 scene: si,
                 layer: None,
+                page: (k, n),
                 text: true,
                 boxes: vec![b],
-                from_ms: 0,
-                to_ms: scene.duration_ms,
+                from_ms: page.from_ms,
+                to_ms: page.to_ms,
             });
         }
         for (li, layer) in scene.layers.iter().enumerate() {
@@ -103,6 +102,7 @@ fn items(t: &VideoTimeline, fonts: &Fonts) -> Vec<Item> {
             out.push(Item {
                 scene: si,
                 layer: Some(li),
+                page: (0, 1),
                 text,
                 boxes: poses(layer, rest, res),
                 from_ms: layer.start_ms,
@@ -185,6 +185,7 @@ pub fn overlap(t: &VideoTimeline, public_dir: Option<&Path>, fonts: &Fonts) -> V
             continue;
         }
         let what = match item.layer {
+            None if item.page.1 > 1 => crate::pages::page_name(item.page.0, item.page.1),
             None => "the scene text".to_string(),
             Some(li) => {
                 let layer = &scene.layers[li];

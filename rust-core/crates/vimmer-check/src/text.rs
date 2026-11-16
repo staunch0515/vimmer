@@ -343,8 +343,7 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
         let Some(text) = scene.text.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
         };
-        let style = scene.effective_text_style(timeline.brand.as_ref());
-        let (area, reach) = SceneTextArea::styled(res, &style);
+        let (area, reach) = SceneTextArea::for_scene(timeline, i);
         let styled_note = if reach.total() > 0.0 {
             format!(
                 " (with the text style's {:.0} px box padding and outline)",
@@ -354,37 +353,55 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
             String::new()
         };
         let role = Role::Heading;
-        let nominal = scene_text_lines_with(text, &area, 1.0, fonts, role);
-        let optimistic = scene_text_lines_with(text, &area, fonts.optimistic(role), fonts, role);
-        if nominal > area.max_lines {
+        // Each page is laid out on its own (an unpaged text is one page: the whole text).
+        let pages = crate::pages::scene_pages(timeline, i);
+        let n = pages.len();
+        for (k, page) in pages.iter().enumerate() {
+            let nominal = scene_text_lines_with(&page.text, &area, 1.0, fonts, role);
+            let optimistic =
+                scene_text_lines_with(&page.text, &area, fonts.optimistic(role), fonts, role);
+            if nominal <= area.max_lines {
+                continue;
+            }
             let severity = if optimistic > area.max_lines {
                 Severity::Error
             } else {
                 Severity::Warning
             };
             let cap = capacity_chars_with(
-                text,
+                &page.text,
                 area.line_width,
                 area.font_px,
                 area.max_lines,
                 fonts,
                 role,
             );
+            let runs_off = match area.position {
+                vimmer_dsl::TextPosition::Bottom => "the top lines run off the frame",
+                vimmer_dsl::TextPosition::Top => "the last lines run into the subtitle area",
+                vimmer_dsl::TextPosition::Middle => {
+                    "the first and last lines run past the text area"
+                }
+            };
+            let fix = if n > 1 {
+                format!(
+                    "shorten this page to about {cap} characters, make the text smaller (text_layout.size) or start a new page in it"
+                )
+            } else {
+                format!("shorten the text to about {cap} characters, or split the scene in two")
+            };
             out.push(
                 Finding::new(
                     severity,
                     "text.overflow",
                     format!(
-                        "scene text needs about {nominal} lines at {} px{}{styled_note} but only {} fit above the subtitle area ({}x{}); the top lines run off the frame",
-                        area.font_px, measured_note(fonts, role), area.max_lines, res.width, res.height
+                        "{} needs about {nominal} lines at {} px{}{styled_note} but only {} fit above the subtitle area ({}x{}); {runs_off}",
+                        crate::pages::page_name(k, n), area.font_px, measured_note(fonts, role), area.max_lines, res.width, res.height
                     ),
-                    Suggestion::field(
-                        format!("shorten the text to about {cap} characters, or split the scene in two"),
-                        scene_path(i, "text"),
-                    ),
+                    Suggestion::field(fix, scene_path(i, "text")),
                 )
                 .scene(&scene.id)
-                .at(starts[i]),
+                .at(starts[i] + page.from_ms),
             );
         }
         // Narration that reads the text aloud paces it (and stretches the scene to fit). A
@@ -401,8 +418,44 @@ pub fn check_with(timeline: &VideoTimeline, fonts: &Fonts) -> Vec<Finding> {
             }
         }
         let lang = Lang::of(text);
-        let chars = reading_chars(text, lang);
         let limit = cps_limit(lang);
+        if n > 1 {
+            // Each page is read in its own window.
+            for (k, page) in pages.iter().enumerate() {
+                let chars = reading_chars(&page.text, lang);
+                let page_ms = page.to_ms.saturating_sub(page.from_ms);
+                let cps = chars as f64 * 1000.0 / page_ms.max(1) as f64;
+                if cps <= limit || scene.duration_ms == 0 {
+                    continue;
+                }
+                // The scene length at which this page would read at the limit.
+                let wanted = chars as f64 / limit * 1000.0;
+                let needed = ((shown_ms as f64 * wanted / page_ms.max(1) as f64) / 100.0).ceil()
+                    as u64
+                    * 100;
+                out.push(
+                    Finding::new(
+                        Severity::Warning,
+                        "text.reading_speed",
+                        format!(
+                            "{} is {chars} characters in {} ({cps:.1} chars/s); the {} limit is {limit} chars/s",
+                            crate::pages::page_name(k, n),
+                            crate::secs(page_ms),
+                            lang.code()
+                        ),
+                        Suggestion::set(
+                            format!("lengthen the scene to {needed} ms or shorten this page"),
+                            scene_path(i, "duration_ms"),
+                            json!(needed),
+                        ),
+                    )
+                    .scene(&scene.id)
+                    .at(starts[i] + page.from_ms),
+                );
+            }
+            continue;
+        }
+        let chars = reading_chars(text, lang);
         let cps = chars as f64 * 1000.0 / shown_ms.max(1) as f64;
         if cps > limit && scene.duration_ms > 0 {
             let needed = ((chars as f64 / limit) * 1000.0 / 100.0).ceil() as u64 * 100;

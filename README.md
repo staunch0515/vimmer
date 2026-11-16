@@ -377,6 +377,65 @@ the Scene tab, next to Background in the layer panel (outline, shadow), and in t
 Templates draw their text as text layers, so they follow `brand.text_style` too; lower thirds,
 counters and charts do not use it.
 
+### Text size, position and paging (`text_layout`) — 字号、位置、文字分页
+
+A scene's text can be bigger or smaller, sit at the top, middle or bottom, and a long text can be
+shown in **pages** (文字分页) on the same picture: the background and the camera move carry on,
+only the words change. That replaces duplicating a scene to split its text (which restarts the
+camera move).
+
+| part | value | meaning |
+|---|---|---|
+| `size` | 40..160 (default 92) | font size in px on a 1080p frame (both supported resolutions draw it 1:1) |
+| `position` | `"top"`, `"middle"`, `"bottom"` (default) | where the text block sits. All three keep the 260 px bottom inset that leaves the subtitle band free; `top` and `middle` also start below a logo in a top corner (8 % of the frame width from the top otherwise) |
+| `paging` | `"off"` (default), `"auto"`, `"manual"` | `auto`: a page per sentence (split after 。！？.!? and at line breaks; a very short sentence joins its neighbour; a sentence too long for about three lines at this size is split at commas, then between words). `manual`: **a blank line in the text starts a new page** (pages are not split further) |
+
+Where it goes: `scene.text_layout`, and `brand.text_layout` as the default for every scene. Each
+part is picked on its own: the scene's, else the brand's, else the built-in one. Nothing set
+renders exactly as before (same DOM, same pixels) and `vimmer check` reports the same.
+
+When the pages change is decided by the render, never saved in your timeline:
+
+- A narrated scene that speaks its own text: each page appears just before (150 ms) the narration
+  reaches its first word. The words come from the same local speech recognition as word-by-word
+  subtitles (whisper.cpp); paged scenes are recognized even without subtitles. Without the
+  recognizer, the pages are spread over the narration clip by character count (a note says so).
+- Any other scene (no narration, its own `audio`, or a spoken line that differs from the text): the
+  scene's length is shared by character count, at least 1.2 s a page when the scene is long enough.
+
+The render hands the timed pages to the renderer as `scene.text_pages` in its render props (like
+word timings for subtitles); chunks carry them unchanged, so a chunked render draws every frame as
+the full render does. Each page reveals word by word like the whole text did, highlights apply on
+every page, and the outgoing page fades and lifts away over 8 frames while the next one comes in.
+
+```json
+"brand": { "text_layout": { "size": 100 } },
+"scenes": [
+  { "id": "title", "duration_ms": 2500, "text": "Coffee at Home", "image": "assets/sample.png",
+    "text_layout": { "size": 140, "position": "top" } },
+  { "id": "steps", "duration_ms": 9000, "image": "assets/sample.jpeg", "motion": "zoom_in",
+    "text": "Grind your beans just before you brew. Heat the water. Pour it slowly. Wait four minutes.",
+    "narration": { "voice": "Samantha" }, "text_layout": { "paging": "auto" } },
+  { "id": "manual", "duration_ms": 7500, "image": "assets/sample.png",
+    "text": "第一页。\n\n第二页，\n还是第二页。\n\n第三页！",
+    "text_layout": { "position": "middle", "paging": "manual" } }
+]
+```
+
+`vimmer check` uses the real size, position and pages: overflow and the title-safe top per page,
+reading speed per page (a page's characters over its share of the scene; narrated pages are paced
+by the speech), the logo overlap and the contrast over the picture where each page actually is.
+`fixtures/text-layout-demo.json` shows a 140 px title at the top (under a top-right logo), a small
+centered line, the default, an auto-paged narrated scene (`say`) and a manual-paged scene without
+narration.
+
+In the editor: **文字 Text** in the Scene tab has a size slider (with 重置 to go back to the
+default), a position select and a paging select; with paging on it lists the pages with when each
+shows (click one to move the playhead there), and in manual mode a button inserts a page break (a
+blank line) at the cursor. The preview pages by character count; after 🔊 试听全部 Listen to all,
+narrated pages follow the heard clip's length. The Brand tab sets the default. The assistant
+understands 「字大一点」, 「标题放到上面」 and 「这一幕的长文字分页显示」.
+
 ### Brand kit (`brand`)
 
 One set of colors, fonts and a logo that every scene uses. Put it in the timeline, or keep it in
