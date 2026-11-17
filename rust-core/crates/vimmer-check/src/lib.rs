@@ -9,6 +9,7 @@
 //! timeline and [`Suggestion::value`] the value to write there, so a tool can apply it.
 
 pub mod assets;
+pub mod avatar;
 pub mod audio;
 pub mod brand;
 pub mod fonts;
@@ -322,6 +323,12 @@ fn check_expanded(timeline: &VideoTimeline, opts: &CheckOptions) -> Vec<Finding>
     findings.extend(brand::contrast(timeline));
     findings.extend(brand::check(timeline, opts.public_dir.as_deref()));
     findings.extend(logo::overlap(timeline, opts.public_dir.as_deref(), &fonts));
+    findings.extend(avatar::check(
+        timeline,
+        opts.public_dir.as_deref(),
+        &fonts,
+        &|| vimmer_media::avatar_capability(None),
+    ));
     match &opts.public_dir {
         Some(dir) => {
             findings.extend(media::check(timeline, dir, &opts.ffmpeg, &fonts));
