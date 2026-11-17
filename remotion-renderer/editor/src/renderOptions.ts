@@ -17,6 +17,8 @@ export type RenderOptions = {
   renderJobs: number | null;
   /** A whisper code such as zh, en, ja, or `auto`; empty guesses from each scene's text. */
   whisperLanguage: string;
+  /** 「必须带数字人」: stop when an avatar clip is missing (`--avatar require`). */
+  requireAvatar: boolean;
 };
 
 // Mirrors `RenderDefaults` in desktop/src-tauri/src/render.rs.
@@ -40,6 +42,7 @@ export const DEFAULT_OPTIONS: RenderOptions = {
   preprocessJobs: null,
   renderJobs: null,
   whisperLanguage: "",
+  requireAvatar: false,
 };
 
 export const AUTO_SUBTITLE_MODES: { value: AutoSubtitlesMode; label: string; help: string }[] = [
@@ -53,8 +56,12 @@ export const TTS_ENGINES: { value: TtsName; label: string }[] = [
   { value: "say", label: "say（macOS 旧声音，所有场景都用它）" },
 ];
 
-/** What `start_render` receives as `options`; mirrors `PanelOptions` in render.rs. */
-export const toPanelArgs = (o: RenderOptions, d: RenderDefaults) => ({
+/**
+ * What `start_render` receives as `options`; mirrors `PanelOptions` in render.rs. `avatarOff`:
+ * this one render without the avatar (「不带数字人渲染」). The avatar mode is sent only when it is
+ * not the default `show`.
+ */
+export const toPanelArgs = (o: RenderOptions, d: RenderDefaults, avatarOff = false) => ({
   tts: o.tts ?? d.tts,
   autoSubtitles: o.autoSubtitles,
   wordSubtitles: o.wordSubtitles,
@@ -62,6 +69,7 @@ export const toPanelArgs = (o: RenderOptions, d: RenderDefaults) => ({
   preprocessJobs: o.preprocessJobs,
   renderJobs: o.renderJobs,
   whisperLanguage: o.whisperLanguage.trim() || null,
+  ...(avatarOff ? { avatar: "off" } : o.requireAvatar ? { avatar: "require" } : {}),
 });
 
 // Remembered per project in local storage, keyed by the project's path ("untitled" before it
@@ -94,6 +102,7 @@ export const parseOptions = (raw: string | null): RenderOptions => {
     preprocessJobs: count(v.preprocessJobs, 1),
     renderJobs: count(v.renderJobs, 1),
     whisperLanguage: typeof v.whisperLanguage === "string" ? v.whisperLanguage : "",
+    requireAvatar: v.requireAvatar === true,
   };
 };
 

@@ -1,4 +1,4 @@
-import type { Brand, Look, SubtitleBox, Keyframe, Layer, LayerKind, Music, Scene, SceneTemplate, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
+import type { Avatar, Brand, Look, SceneAvatar, SubtitleBox, Keyframe, Layer, LayerKind, Music, Scene, SceneTemplate, Transition, SubtitleCue, VideoTimeline } from "../../src/types/timeline";
 import { templateScene } from "./templates";
 import { emptyScene, type Selection } from "./model";
 import { clampLayers, moveInStack, newLayer } from "./layers";
@@ -7,6 +7,7 @@ import * as kfs from "./layerKeyframes";
 import { clampBox } from "./subtitleBox";
 import { endMerge, record, redo, undo, type Merge } from "./history";
 import * as vo from "./voiceover";
+import { withAvatar, withSceneAvatar } from "./avatarUi";
 
 export type EditorState = {
   timeline: VideoTimeline;
@@ -52,6 +53,10 @@ export type Action =
   | { type: "setSubtitleBox"; box: SubtitleBox | null }
   // The default look of every scene (null removes it).
   | { type: "setLook"; look: Look | null }
+  // 数字人讲解人: the timeline's avatar (photo and look; null removes it) and a scene's own
+  // settings (show it here or not, corner, other photo; null removes them). avatarUi.ts.
+  | { type: "setAvatar"; patch: Partial<Avatar> | null }
+  | { type: "setSceneAvatar"; index: number; patch: Partial<SceneAvatar> | null }
   // A new scene made from a template, after scene `after` (-1: at the start).
   | { type: "insertTemplate"; name: string; after: number; params?: SceneTemplate["params"] }
   | { type: "patchTemplate"; index: number; params: SceneTemplate["params"] }
@@ -363,6 +368,10 @@ const edit = (state: EditorState, action: Action): EditorState => {
       const { look: _old, ...rest } = t;
       return commit(state, action.look ? { ...rest, look: action.look } : rest);
     }
+    case "setAvatar":
+      return commit(state, withAvatar(t, action.patch));
+    case "setSceneAvatar":
+      return t.scenes[action.index] ? commit(state, withSceneAvatar(t, action.index, action.patch)) : state;
     case "setBrand": {
       const { brand: _old, ...rest } = t;
       return commit(state, action.brand ? { ...rest, brand: action.brand } : rest);

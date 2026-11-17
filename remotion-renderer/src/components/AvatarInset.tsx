@@ -1,5 +1,5 @@
 import { useContext } from "react";
-import { OffthreadVideo, useVideoConfig } from "remotion";
+import { Img, OffthreadVideo, useVideoConfig } from "remotion";
 import { AssetUrlContext, resolveAsset } from "../assets";
 import { avatarBox } from "../avatar";
 import type { AvatarClip } from "../types/timeline";
@@ -29,12 +29,48 @@ export const AvatarInset: React.FC<{ clip: AvatarClip }> = ({ clip }) => {
         backgroundColor: box.ring > 0 ? clip.border_color : undefined,
       }}
     >
+      {clip.preview_photo !== undefined && !clip.src ? (
+        <AvatarStill clip={clip} radius={Math.max(0, box.radius - box.ring)} />
+      ) : (
       <OffthreadVideo
         src={url}
         muted
         trimBefore={clip.offset_frames > 0 ? clip.offset_frames : undefined}
         style={{ display: "block", width: "100%", height: "100%", objectFit: "cover", borderRadius: Math.max(0, box.radius - box.ring) }}
       />
+      )}
+    </div>
+  );
+};
+
+// The editor preview before the clip is generated: the still photo, dimmed, with its badge.
+const AvatarStill: React.FC<{ clip: AvatarClip; radius: number }> = ({ clip, radius }) => {
+  const { height } = useVideoConfig();
+  const url = resolveAsset(clip.preview_photo ?? "", useContext(AssetUrlContext));
+  return (
+    <div data-avatar-still style={{ position: "relative", width: "100%", height: "100%", borderRadius: radius, overflow: "hidden", background: "#3f3f46" }}>
+      {clip.preview_photo ? (
+        <Img src={url} style={{ display: "block", width: "100%", height: "100%", objectFit: "cover", opacity: 0.55, filter: "grayscale(0.35)" }} />
+      ) : null}
+      {clip.preview_badge ? (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: "12%",
+            transform: "translateX(-50%)",
+            whiteSpace: "nowrap",
+            padding: `${Math.round(height * 0.006)}px ${Math.round(height * 0.012)}px`,
+            borderRadius: height,
+            background: "rgba(9,9,11,0.78)",
+            color: "#fff",
+            fontSize: Math.max(10, Math.round(height * 0.02)),
+            fontFamily: "sans-serif",
+          }}
+        >
+          {clip.preview_badge}
+        </div>
+      ) : null}
     </div>
   );
 };

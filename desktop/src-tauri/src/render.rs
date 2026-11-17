@@ -60,6 +60,9 @@ pub struct PanelOptions {
     pub render_jobs: Option<usize>,
     /// A whisper code or `auto`; empty means "guess from the text".
     pub whisper_language: Option<String>,
+    /// The narrator avatar: `show` (default: ready clips, missing ones left out), `require` (stop
+    /// when a clip is missing, 「必须带数字人」) or `off` (「不带数字人渲染」).
+    pub avatar: Option<String>,
 }
 
 /// Defaults the panel shows before the user picks anything.
@@ -77,8 +80,9 @@ pub struct RenderDefaults {
 
 /// Environment variables the scheduler reads. A GUI app started from Finder does not inherit
 /// them, so values from the login shell fill the gaps (only these names are ever read).
-const SHELL_VARS: [&str; 5] = [
+const SHELL_VARS: [&str; 6] = [
     "VIMMER_TTS",
+    "VIMMER_AVATAR_HOME",
     "VIMMER_KOKORO_PYTHON",
     "VIMMER_KOKORO_MODELS",
     "VIMMER_WHISPER_CLI",
@@ -122,6 +126,14 @@ pub fn render_options(panel: &PanelOptions, env: &dyn Fn(&str) -> Option<String>
     opts.whisper_cli = path("VIMMER_WHISPER_CLI");
     opts.whisper_model = path("VIMMER_WHISPER_MODEL");
     Ok(opts)
+}
+
+/// The panel's avatar choice; missing: `show`, as the CLI without `--avatar`.
+pub fn avatar_mode(panel: &PanelOptions) -> Result<vimmer_scheduler::AvatarMode, String> {
+    match panel.avatar.as_deref() {
+        None => Ok(vimmer_scheduler::AvatarMode::Show),
+        Some(m) => vimmer_scheduler::AvatarMode::parse(m).ok_or_else(|| format!("Unknown avatar mode `{m}`.")),
+    }
 }
 
 /// `$VIMMER_TTS` when it names an engine, else Kokoro (scenes that name a `say` voice still use
@@ -270,6 +282,7 @@ pub fn start_render(app: AppHandle, state: State<'_, RenderState>, args: StartAr
         let cache = app.path().app_cache_dir().map_err(|e| format!("No cache folder: {e}"))?;
         let work_dir = cache.join(format!("render-{}", unix_millis()));
         let mut cfg = options.config(work_dir.clone(), output.clone(), remotion_dir.clone());
+        cfg.avatar.mode = avatar_mode(&args.options)?;
         if let Some(dir) = &project {
             // A project's own files come first, as `vimmer <project>/timeline.json` does.
             cfg.asset_dirs = vec![dir.clone()];

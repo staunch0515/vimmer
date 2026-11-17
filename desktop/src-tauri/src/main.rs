@@ -5,6 +5,7 @@ mod align;
 mod api_key;
 mod assets;
 mod assistant;
+mod avatar;
 mod beats;
 mod generate;
 mod music;
@@ -22,6 +23,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(render::RenderState::default())
         .manage(generate::GenerateState::default())
+        .manage(avatar::AvatarState::default())
         .setup(|app| {
             assets::allow_public_dir(app);
             studio::allow_root(app.handle());
@@ -66,7 +68,12 @@ fn main() {
             renders::add_existing_render,
             generate::generate_estimate,
             generate::start_generate,
-            generate::cancel_generate
+            generate::cancel_generate,
+            avatar::avatar_env,
+            avatar::avatar_status,
+            avatar::avatar_probe,
+            avatar::start_avatar_generate,
+            avatar::cancel_avatar_generate
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vimmer Studio");
