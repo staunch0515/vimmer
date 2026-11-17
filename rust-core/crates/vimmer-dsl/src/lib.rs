@@ -3,6 +3,7 @@
 //! The same JSON document is consumed by the Remotion renderer, so field names
 //! here are part of a cross-language contract (`snake_case`, no renames).
 
+pub mod avatar;
 pub mod beatsync;
 pub mod brand;
 pub mod layer;
@@ -16,6 +17,10 @@ pub mod text_style;
 pub mod validation;
 pub mod voiceover;
 
+pub use avatar::{
+    plan_signature as avatar_plan_signature, resolve as resolve_avatar, Avatar, AvatarBorder, AvatarClip, AvatarShape, ResolvedAvatar,
+    SceneAvatar,
+};
 pub use beatsync::{
     beat_grid, manual_beats, scene_floor, snap_cuts, CutSnap, SnapReport, MIN_SCENE_MS,
 };

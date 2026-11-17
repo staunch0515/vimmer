@@ -10,6 +10,7 @@ use std::{
 };
 
 mod align_cmd;
+mod avatar_cmd;
 mod beats_cmd;
 mod check_cmd;
 mod edit_cmd;
@@ -185,7 +186,15 @@ struct IllustrateArgs {
 
 /// Rendering options shared by `vimmer` and `vimmer generate`.
 #[derive(Debug, Args)]
-struct RenderArgs {
+pub(crate) struct RenderArgs {
+    /// Narrator avatar clips: `show` ready ones (a missing one is left out, with a warning),
+    /// `require` them (stop when one is missing), or `off`. Clips are made by `vimmer avatar
+    /// generate`, never by the render.
+    #[arg(long, default_value = "show")]
+    avatar: String,
+    /// The avatar engine's install dir (default ~/.local/share/vimmer/avatar).
+    #[arg(long)]
+    avatar_home: Option<PathBuf>,
     /// Remotion project directory.
     #[arg(long, default_value = "remotion-renderer")]
     remotion_dir: PathBuf,
@@ -314,6 +323,8 @@ async fn main() -> ExitCode {
         return rasterize_cmd::main(args);
     } else if args.get(1).is_some_and(|a| a == "music") {
         return music_cmd::main(args);
+    } else if args.get(1).is_some_and(|a| a == "avatar") {
+        return avatar_cmd::main(args).await;
     } else if args.get(1).is_some_and(|a| a == "tts") {
         return tts_cmd::main(args).await;
     } else if args.get(1).is_some_and(|a| a == "align-scenes") {
@@ -348,7 +359,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 /// renderer's public dir. It wins only for a Studio project (a `project.json` next to the
 /// timeline); for any other timeline the public dir comes first, as it always did, and the
 /// folder only supplies files the public dir does not have.
-fn timeline_assets(timeline: &Path) -> Option<(PathBuf, bool)> {
+pub(crate) fn timeline_assets(timeline: &Path) -> Option<(PathBuf, bool)> {
     let folder = std::path::absolute(timeline).ok()?.parent()?.to_path_buf();
     let is_project = folder.join("project.json").is_file();
     Some((folder, is_project))
@@ -360,6 +371,19 @@ async fn render(
     output: PathBuf,
     assets: Option<(PathBuf, bool)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let cfg = render_config(args, output, assets)?;
+    render_with(timeline, cfg).await
+}
+
+/// The scheduler config for `args` (shared by the render and `vimmer avatar`).
+pub(crate) fn render_config(
+    args: RenderArgs,
+    output: PathBuf,
+    assets: Option<(PathBuf, bool)>,
+) -> Result<vimmer_scheduler::SchedulerConfig, String> {
+    let avatar_mode = vimmer_scheduler::AvatarMode::parse(&args.avatar)
+        .ok_or_else(|| format!("unknown --avatar `{}` (show, require or off)", args.avatar))?;
+    let avatar_home = args.avatar_home.clone();
     let mut cfg = RenderOptions {
         chunk_ms: args.chunk_ms,
         preprocess_jobs: args.preprocess_jobs,
@@ -382,7 +406,21 @@ async fn render(
         cfg.asset_dirs = vec![folder];
         cfg.asset_dirs_first = first;
     }
+    cfg.avatar.mode = avatar_mode;
+    cfg.avatar.home = avatar_home;
+    Ok(cfg)
+}
 
+impl RenderArgs {
+    pub(crate) fn work_dir_path(&self) -> PathBuf {
+        self.work_dir.clone()
+    }
+}
+
+async fn render_with(
+    timeline: VideoTimeline,
+    cfg: vimmer_scheduler::SchedulerConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
     let report = render_timeline(
         timeline,
         cfg,

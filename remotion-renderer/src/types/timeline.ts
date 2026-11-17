@@ -106,6 +106,35 @@ export type Scene = {
   // This scene's grade and atmosphere overlays, over the timeline's `look` part by part.
   // Absent: the timeline's look (none when it has none), exactly as before.
   look?: Look | null;
+  // The narrator avatar (数字人讲解人) for this scene: off, another photo or another corner.
+  avatar?: SceneAvatar | null;
+  // Render-only: the generated talking-head clip this scene shows, set by the scheduler.
+  avatar_clip?: AvatarClip | null;
+};
+
+// ---- Avatar (数字人讲解人). Mirrors rust-core/crates/vimmer-dsl/src/avatar.rs; drawing in
+// components/AvatarInset.tsx, box and frame math in src/avatar.ts.
+
+export type AvatarShape = "circle" | "rounded";
+export type Avatar = {
+  photo: string; // a face photo, head and shoulders
+  corner?: LogoCorner; // default bottom_right
+  size?: number; // inset height, fraction of the frame height, default 0.3
+  margin?: number; // as for the logo, default 0.04
+  shape?: AvatarShape; // default circle
+  border?: { color?: string; width?: number } | null; // width: fraction of the inset size
+  enabled?: boolean;
+};
+export type SceneAvatar = { enabled?: boolean; photo?: string; corner?: LogoCorner };
+export type AvatarClip = {
+  src: string; // muted 25 fps MP4 under public/
+  offset_frames: number; // clip time on the scene's first frame, in timeline frames
+  corner: LogoCorner;
+  size: number;
+  margin: number;
+  shape: AvatarShape;
+  border_width: number;
+  border_color: string;
 };
 
 // ---- Look (画面氛围). Mirrors rust-core/crates/vimmer-dsl/src/look.rs; drawing in
@@ -429,6 +458,8 @@ export type Brand = {
   text_style?: TextStyle | null;
   // Default size, position and paging of every scene text (part by part).
   text_layout?: TextLayout | null;
+  // The default narrator avatar. Absent: none.
+  avatar?: Avatar | null;
 };
 
 export type VideoTimeline = {
@@ -446,6 +477,8 @@ export type VideoTimeline = {
   look?: Look | null;
   // The voice-over track (旁白音轨): recorded speech on the global clock. Absent: none.
   voiceover?: VoiceoverClip[];
+  // The narrator avatar of this video; replaces the brand's. Absent: the brand's, if any.
+  avatar?: Avatar | null;
 };
 
 // One clip of the voice-over track. Mirrors `VoiceoverClip` in vimmer-dsl/src/voiceover.rs.

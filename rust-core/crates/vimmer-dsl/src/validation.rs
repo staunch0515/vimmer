@@ -158,6 +158,10 @@ pub enum ValidationError {
     TooManySfx { scene: String, count: usize },
     #[error("voiceover clip `{clip}`: {message}")]
     BadVoiceover { clip: String, message: String },
+    #[error("avatar: {0}")]
+    BadAvatar(String),
+    #[error("scene `{scene}` avatar: {message}")]
+    BadSceneAvatar { scene: String, message: String },
     #[error("voiceover: {0}")]
     VoiceoverTrack(String),
     #[error("music beats: {0}")]
@@ -847,6 +851,9 @@ pub fn validate(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError>> {
         errors.extend(look.problems().into_iter().map(ValidationError::BadLook));
     }
     errors.extend(voiceover_problems(timeline));
+    if let Some(a) = &timeline.avatar {
+        errors.extend(a.problems().into_iter().map(ValidationError::BadAvatar));
+    }
     let result = if timeline.scenes.iter().any(|s| s.template.is_some()) {
         let mut expanded = timeline.clone();
         match crate::template::expand_templates(&mut expanded) {
@@ -932,6 +939,16 @@ fn validate_expanded(timeline: &VideoTimeline) -> Result<(), Vec<ValidationError
         let has_image = scene.image.as_deref().is_some_and(|i| !i.trim().is_empty());
         if !has_text && !has_image && scene.video.is_none() && scene.layers.is_empty() {
             errors.push(ValidationError::EmptyScene(scene.id.clone()));
+        }
+        if let Some(a) = &scene.avatar {
+            errors.extend(
+                a.problems()
+                    .into_iter()
+                    .map(|message| ValidationError::BadSceneAvatar {
+                        scene: scene.id.clone(),
+                        message,
+                    }),
+            );
         }
         if let Some(look) = &scene.look {
             errors.extend(
@@ -1125,6 +1142,8 @@ mod tests {
             keyframes: vec![],
             layers: vec![],
             look: None,
+            avatar: None,
+            avatar_clip: None,
         }
     }
 
@@ -1142,6 +1161,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         }
     }
 
@@ -1215,6 +1235,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         };
         let errs = validate(&t).unwrap_err();
         assert!(errs.contains(&ValidationError::UnsupportedFps(24)));
@@ -2123,5 +2144,21 @@ mod tests {
             .unwrap_err()
             .iter()
             .any(|e| e.to_string().starts_with("brand: text_layout.size 20 must be")));
+    }
+
+    #[test]
+    fn avatar_settings_are_validated() {
+        let mut t: VideoTimeline = serde_json::from_str(
+            r#"{"fps":30,"resolution":{"width":1920,"height":1080},"scenes":[{"id":"a","duration_ms":1000,"text":"Hi","avatar":{"photo":"../x.png"}}],"subtitles":[],"music":null,"avatar":{"photo":"me.gif","size":0.9}}"#,
+        )
+        .unwrap();
+        let errs = validate(&t).unwrap_err();
+        assert_eq!(errs.iter().filter(|e| matches!(e, ValidationError::BadAvatar(_))).count(), 2, "{errs:?}");
+        assert!(errs.iter().any(|e| matches!(e, ValidationError::BadSceneAvatar { scene, .. } if scene == "a")), "{errs:?}");
+        t.avatar = Some(crate::avatar::Avatar::with_photo("me.png"));
+        t.scenes[0].avatar = None;
+        assert!(validate(&t).is_ok());
+        t.brand = Some(crate::brand::Brand { avatar: Some(crate::avatar::Avatar::with_photo("")), ..Default::default() });
+        assert!(validate(&t).is_err());
     }
 }

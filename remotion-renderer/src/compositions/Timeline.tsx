@@ -2,6 +2,7 @@ import { Fragment, useContext } from "react";
 import { AbsoluteFill, Audio, Freeze, Sequence, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { AnimatedText } from "../components/AnimatedText";
 import { Subtitles } from "../components/Subtitles";
+import { AvatarInset } from "../components/AvatarInset";
 import { KenBurnsImage, KenBurnsVideo } from "../components/KenBurnsImage";
 import { LayerStack } from "../components/LayerStack";
 import { AssetUrlContext, resolveAsset } from "../assets";
@@ -182,6 +183,15 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
           </Fragment>
         );
       })}
+      {/* The narrator avatar (数字人讲解人) of each scene that has a generated clip, above the
+          scenes and below the logo and subtitles. Absent clips draw nothing, exactly as before. */}
+      {layouts.map(({ scene, from, durationInFrames }) =>
+        scene.avatar_clip ? (
+          <Sequence key={`${scene.id}-avatar`} from={from} durationInFrames={durationInFrames} name={`${scene.id} avatar`}>
+            <AvatarInset clip={scene.avatar_clip} />
+          </Sequence>
+        ) : null,
+      )}
       {/* The brand logo sits above every scene's layers and below the subtitles. */}
       <BrandOverlay timeline={timeline} />
       {timeline.chunk ? (

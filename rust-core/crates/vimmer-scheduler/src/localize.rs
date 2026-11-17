@@ -26,8 +26,8 @@ use crate::run::{SchedulerConfig, SchedulerError};
 pub const STAGE_DIR: &str = "generated/project";
 
 /// Calls `f` on every asset path of the timeline: scene images, audio, video clips, layer
-/// images, icons and clips, sound effects, the music file, voice-over clips, brand fonts and the
-/// logo.
+/// images, icons and clips, sound effects, avatar photos, the music file, voice-over clips, brand fonts,
+/// the logo and the brand's avatar photo.
 pub fn for_each_asset_path(timeline: &mut VideoTimeline, f: &mut dyn FnMut(&mut String)) {
     for scene in &mut timeline.scenes {
         if let Some(image) = &mut scene.image {
@@ -50,12 +50,18 @@ pub fn for_each_asset_path(timeline: &mut VideoTimeline, f: &mut dyn FnMut(&mut 
         for fx in &mut scene.sfx {
             f(&mut fx.src);
         }
+        if let Some(photo) = scene.avatar.as_mut().and_then(|a| a.photo.as_mut()) {
+            f(photo);
+        }
     }
     if let Some(source) = timeline.music.as_mut().and_then(|m| m.source.as_mut()) {
         f(source);
     }
     for clip in &mut timeline.voiceover {
         f(&mut clip.source);
+    }
+    if let Some(avatar) = &mut timeline.avatar {
+        f(&mut avatar.photo);
     }
     if let Some(brand) = &mut timeline.brand {
         for font in [&mut brand.fonts.heading, &mut brand.fonts.body] {
@@ -65,6 +71,9 @@ pub fn for_each_asset_path(timeline: &mut VideoTimeline, f: &mut dyn FnMut(&mut 
         }
         if let Some(logo) = &mut brand.logo {
             f(&mut logo.src);
+        }
+        if let Some(avatar) = &mut brand.avatar {
+            f(&mut avatar.photo);
         }
     }
 }

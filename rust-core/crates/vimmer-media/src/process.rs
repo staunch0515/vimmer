@@ -118,7 +118,7 @@ pub fn run_limited(mut cmd: Command, limits: &Limits) -> Result<Output, MediaErr
 }
 
 /// SIGKILL to the process group led by `pid`.
-fn kill_group(pid: u32) {
+pub(crate) fn kill_group(pid: u32) {
     let _ = Command::new("kill")
         .args(["-KILL", "--", &format!("-{pid}")])
         .stdout(Stdio::null())

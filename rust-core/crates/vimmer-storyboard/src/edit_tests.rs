@@ -2028,3 +2028,31 @@ fn voiceover_unknown_keys_bad_values_and_hostile_paths_are_rejected() {
     );
     assert_ne!(e.stage, Stage::Model, "{e}");
 }
+
+#[test]
+fn avatar_can_be_added_moved_and_turned_off_per_scene() {
+    let out = ok(
+        &small(),
+        json!([{"op": "add", "path": "/avatar", "value": {"photo": "assets/x.png", "corner": "top_left"}},
+               {"op": "add", "path": "/scenes/1/avatar", "value": {"enabled": false}}]),
+    );
+    let t: vimmer_dsl::VideoTimeline = serde_json::from_value(out.timeline).unwrap();
+    assert_eq!(t.avatar.as_ref().unwrap().photo, "assets/x.png");
+    assert!(t.scene_avatar(1).is_none());
+    assert!(t.scene_avatar(0).is_some());
+    let e = err(
+        &small(),
+        json!([{"op": "add", "path": "/scenes/0/avatar_clip", "value": {"src": "x.mp4"}}]),
+    );
+    assert_eq!(e.stage, Stage::Guard, "{e}");
+    let e = err(
+        &small(),
+        json!([{"op": "add", "path": "/avatar", "value": {"photo": "../../me.png"}}]),
+    );
+    assert_ne!(e.stage, Stage::Model, "{e}");
+    let e = err(
+        &small(),
+        json!([{"op": "add", "path": "/avatar", "value": {"photo": "assets/x.png", "size": 2.0}}]),
+    );
+    assert_eq!(e.stage, Stage::Validation, "{e}");
+}

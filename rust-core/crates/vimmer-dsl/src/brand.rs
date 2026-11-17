@@ -165,6 +165,9 @@ pub struct Brand {
     /// own; see [`crate::text_layout`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_layout: Option<crate::text_layout::TextLayout>,
+    /// The brand's default narrator avatar (see [`crate::avatar`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<crate::avatar::Avatar>,
 }
 
 /// The color to use: the element's own, else the brand's, else the built-in one.
@@ -228,6 +231,9 @@ impl Brand {
         }
         if let Some(logo) = &self.logo {
             out.push(("logo", logo.src.as_str()));
+        }
+        if let Some(a) = &self.avatar {
+            out.push(("avatar photo", a.photo.as_str()));
         }
         out
     }
@@ -300,6 +306,9 @@ impl Brand {
                     logo.opacity
                 ));
             }
+        }
+        if let Some(a) = &self.avatar {
+            out.extend(a.problems().into_iter().map(|p| format!("avatar.{p}")));
         }
         out
     }

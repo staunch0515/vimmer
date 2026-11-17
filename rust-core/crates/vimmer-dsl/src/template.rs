@@ -1053,6 +1053,7 @@ mod tests {
                         subtitle_box: None,
                         look: None,
                         voiceover: vec![],
+                        avatar: None,
                     };
                     validate(&t).unwrap_or_else(|e| panic!("{case}: {e:?}"));
                     // Everything stays inside the frame.
@@ -1157,6 +1158,7 @@ mod tests {
                 subtitle_box: None,
                 look: None,
                 voiceover: vec![],
+                avatar: None,
             };
             validate(&t).unwrap_or_else(|e| panic!("{name}: {e:?}"));
         }

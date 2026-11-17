@@ -641,6 +641,10 @@ enum Kind {
     Logo,
     /// `logo.hide_on`: scene ids.
     HideOn,
+    /// The narrator avatar (`avatar`, `brand.avatar`), its `border`, and a scene's override.
+    Avatar,
+    AvatarBorder,
+    SceneAvatar,
     /// A scene's `template` and its `params` (names checked against the template's catalog
     /// entry; see `vimmer_dsl::template`).
     Template,
@@ -665,7 +669,19 @@ impl Kind {
                 ("subtitle_box", SubtitleBox),
                 ("look", Look),
                 ("voiceover", Voiceover),
+                ("avatar", Avatar),
             ],
+            Avatar => &[
+                ("photo", Leaf),
+                ("corner", Leaf),
+                ("size", Leaf),
+                ("margin", Leaf),
+                ("shape", Leaf),
+                ("border", AvatarBorder),
+                ("enabled", Leaf),
+            ],
+            AvatarBorder => &[("color", Leaf), ("width", Leaf)],
+            SceneAvatar => &[("enabled", Leaf), ("photo", Leaf), ("corner", Leaf)],
             VoiceoverClip => &[
                 ("id", Leaf),
                 ("source", Leaf),
@@ -684,6 +700,7 @@ impl Kind {
                 ("logo", Logo),
                 ("text_style", TextStyle),
                 ("text_layout", TextLayout),
+                ("avatar", Avatar),
             ],
             BrandColors => &[
                 ("primary", Leaf),
@@ -723,6 +740,7 @@ impl Kind {
                 ("template", Template),
                 ("sfx", SfxList),
                 ("look", Look),
+                ("avatar", SceneAvatar),
             ],
             Sfx => &[
                 ("src", Leaf),
@@ -866,6 +884,9 @@ impl Kind {
             Kind::BrandFont => "a brand font",
             Kind::Logo => "the brand logo",
             Kind::HideOn => "the logo's hide_on list",
+            Kind::Avatar => "the narrator avatar",
+            Kind::AvatarBorder => "the avatar's border",
+            Kind::SceneAvatar => "a scene's avatar settings",
             Kind::Template => "a scene template",
             Kind::TemplateParams => "template params",
             Kind::ParamList => "a template param list",
@@ -1977,12 +1998,18 @@ fn asset_refs(t: &VideoTimeline) -> Vec<(String, String)> {
         for (k, fx) in s.sfx.iter().enumerate() {
             out.push((format!("scene `{}` sfx {k} src", s.id), fx.src.clone()));
         }
+        if let Some(photo) = s.avatar.as_ref().and_then(|a| a.photo.as_ref()) {
+            out.push((format!("scene `{}` avatar photo", s.id), photo.clone()));
+        }
     }
     if let Some(source) = t.music.as_ref().and_then(|m| m.source.as_ref()) {
         out.push(("music.source".into(), source.clone()));
     }
     for clip in &t.voiceover {
         out.push((format!("voice-over clip `{}` source", clip.id), clip.source.clone()));
+    }
+    if let Some(a) = &t.avatar {
+        out.push(("avatar photo".into(), a.photo.clone()));
     }
     if let Some(b) = &t.brand {
         for (what, src) in b.assets() {

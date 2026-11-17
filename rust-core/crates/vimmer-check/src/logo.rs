@@ -34,9 +34,9 @@ pub const BACKDROP_FRAC: f64 = 0.25;
 pub const MIN_OVERLAP_PX: f64 = 2.0;
 
 /// (left, top, right, bottom).
-type Edges = (f64, f64, f64, f64);
+pub(crate) type Edges = (f64, f64, f64, f64);
 
-fn overlaps(a: Edges, r: Rect) -> bool {
+pub(crate) fn overlaps(a: Edges, r: Rect) -> bool {
     let (l, t, w, h) = r;
     let ow = a.2.min(l + w) - a.0.max(l);
     let oh = a.3.min(t + h) - a.1.max(t);
@@ -56,19 +56,19 @@ fn is_text(layer: &Layer) -> bool {
 }
 
 /// Something the logo may cover on one scene.
-struct Item {
-    scene: usize,
+pub(crate) struct Item {
+    pub(crate) scene: usize,
     /// `None`: the scene text.
     layer: Option<usize>,
     /// Which page of the scene text (index, count); (0, 1) for anything else.
     page: (usize, usize),
-    text: bool,
-    boxes: Vec<Rect>,
+    pub(crate) text: bool,
+    pub(crate) boxes: Vec<Rect>,
     from_ms: u64,
     to_ms: u64,
 }
 
-fn items(t: &VideoTimeline, fonts: &Fonts) -> Vec<Item> {
+pub(crate) fn items(t: &VideoTimeline, fonts: &Fonts) -> Vec<Item> {
     let res = t.resolution;
     let frame_area = f64::from(res.width) * f64::from(res.height);
     let mut out = Vec::new();
@@ -113,7 +113,7 @@ fn items(t: &VideoTimeline, fonts: &Fonts) -> Vec<Item> {
     out
 }
 
-fn corner_name(c: Corner) -> &'static str {
+pub(crate) fn corner_name(c: Corner) -> &'static str {
     match c {
         Corner::TopLeft => "top_left",
         Corner::TopRight => "top_right",

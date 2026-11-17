@@ -1,0 +1,102 @@
+diff --git a/src/modules/dit_talking_head.py b/src/modules/dit_talking_head.py
+index 014561a..2d5c044 100644
+--- a/src/modules/dit_talking_head.py
++++ b/src/modules/dit_talking_head.py
+@@ -389,7 +389,7 @@ class DenoisingNetwork(nn.Module):
+             self.transformer = nn.TransformerDecoder(decoder_layer, num_layers=self.n_layers)
+             if self.align_mask_width > 0:
+                 motion_len = self.n_prev_motions + self.n_motions
+-                alignment_mask = enc_dec_mask(motion_len, motion_len, frame_width=1, expansion=self.align_mask_width - 1)
++                alignment_mask = enc_dec_mask(motion_len, motion_len, frame_width=1, expansion=self.align_mask_width - 1, device=device)
+                 # print(f"alignment_mask: ", alignment_mask.shape)
+                 # alignment_mask = F.pad(alignment_mask, (0, 0, 1, 0), value=False)
+                 self.register_buffer('alignment_mask', alignment_mask)
+diff --git a/src/utils/crop.py b/src/utils/crop.py
+index fd8b8a4..9047a7c 100644
+--- a/src/utils/crop.py
++++ b/src/utils/crop.py
+@@ -169,6 +169,9 @@ def parse_pt2_from_pt_x(pts, use_lip=True):
+         pt2 = parse_pt2_from_pt68(pts, use_lip=use_lip)
+     elif pts.shape[0] == 5:
+         pt2 = parse_pt2_from_pt5(pts, use_lip=use_lip)
++    elif pts.shape[0] == 478:  # TRIAL: MediaPipe face mesh
++        e1 = np.mean(pts[[33, 133, 159, 145]], axis=0); e2 = np.mean(pts[[362, 263, 386, 374]], axis=0)
++        pt2 = np.stack([(e1 + e2) / 2, (pts[13] + pts[14]) / 2], axis=0) if use_lip else np.stack([e1, e2], axis=0)
+     elif pts.shape[0] == 203:
+         pt2 = parse_pt2_from_pt203(pts, use_lip=use_lip)
+     elif pts.shape[0] > 101:
+diff --git a/src/utils/cropper.py b/src/utils/cropper.py
+index 97e26c7..5559248 100644
+--- a/src/utils/cropper.py
++++ b/src/utils/cropper.py
+@@ -1,5 +1,6 @@
+ # coding: utf-8
+ 
++import os
+ import os.path as osp
+ import torch
+ import numpy as np
+@@ -60,13 +61,19 @@ class Cropper(object):
+             except:
+                     device = "cuda"
+                     face_analysis_wrapper_provider = ["CUDAExecutionProvider"]
+-        self.face_analysis_wrapper = FaceAnalysisDIY(
++        self.mp_face = None
++        if os.environ.get('JOYVASA_DETECTOR') == 'mediapipe':  # TRIAL patch
++            from .face_mediapipe import MediaPipeFace
++            self.mp_face = MediaPipeFace(os.environ['JOYVASA_MP_MODEL'])
++            log('TRIAL: using MediaPipe FaceLandmarker instead of InsightFace')
++        else:
++          self.face_analysis_wrapper = FaceAnalysisDIY(
+                     name="buffalo_l",
+                     root=self.crop_cfg.insightface_root,
+                     providers=face_analysis_wrapper_provider,
+                 )
+-        self.face_analysis_wrapper.prepare(ctx_id=device_id, det_size=(512, 512), det_thresh=self.crop_cfg.det_thresh)
+-        self.face_analysis_wrapper.warmup()
++          self.face_analysis_wrapper.prepare(ctx_id=device_id, det_size=(512, 512), det_thresh=self.crop_cfg.det_thresh)
++          self.face_analysis_wrapper.warmup()
+ 
+         self.human_landmark_runner = HumanLandmark(
+             ckpt_path=self.crop_cfg.landmark_ckpt_path,
+@@ -95,7 +102,13 @@ class Cropper(object):
+         img_rgb = img_rgb_.copy()  # copy it
+         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+ 
+-        if self.image_type == "human_face":
++        if self.image_type == "human_face" and self.mp_face is not None:  # TRIAL patch
++            lmk = self.mp_face.lmk203(img_rgb, self.human_landmark_runner)
++            log(f'TRIAL: MediaPipe detect {self.mp_face.last_elapsed:.3f}s')
++            if lmk is None:
++                log("No face detected in the source image.")
++                return None
++        elif self.image_type == "human_face":
+             src_face = self.face_analysis_wrapper.get(
+                 img_bgr,
+                 flag_do_landmark_2d_106=True,
+@@ -152,6 +165,12 @@ class Cropper(object):
+ 
+     def calc_lmk_from_cropped_image(self, img_rgb_, **kwargs):
+         direction = kwargs.get("direction", "large-small")
++        if self.mp_face is not None:  # TRIAL patch
++            lmk = self.mp_face.lmk203(img_rgb_, self.human_landmark_runner)
++            if lmk is None:
++                log("No face detected in the source image.")
++                return None
++            return self.human_landmark_runner.run(img_rgb_, lmk)
+         src_face = self.face_analysis_wrapper.get(
+             contiguous(img_rgb_[..., ::-1]),  # convert to BGR
+             flag_do_landmark_2d_106=True,
+diff --git a/src/utils/helper.py b/src/utils/helper.py
+index 1b756b4..3e2f1b5 100644
+--- a/src/utils/helper.py
++++ b/src/utils/helper.py
+@@ -165,7 +165,7 @@ def load_model(ckpt_path, model_config, device, model_type):
+                                n_prev_motions=model_args.n_prev_motions,
+                                feature_dim=model_args.feature_dim,
+                                audio_model=model_args.audio_model,
+-                               n_diff_steps=model_args.n_diff_steps,)
++                               n_diff_steps=model_args.n_diff_steps, device=device)
+         model_data['model'].pop('denoising_net.TE.pe')
+         model.load_state_dict(model_data['model'], strict=False)
+         model.to(device)
