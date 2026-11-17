@@ -689,7 +689,7 @@ mod tests {
             "{args}"
         );
         assert!(
-            args.contains(&format!("amix=inputs=2:normalize=0")),
+            args.contains("amix=inputs=2:normalize=0"),
             "{args}"
         );
         assert!(
