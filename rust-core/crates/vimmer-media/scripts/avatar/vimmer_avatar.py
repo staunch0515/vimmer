@@ -203,6 +203,10 @@ def main():
     pr.add_argument("--photo", required=True)
     sub.add_parser("selftest")
     a = p.parse_args()
+    # The model code needs the JoyVASA dir as cwd, so make the user's paths absolute first.
+    for k in ("photo", "audio", "out"):
+        if getattr(a, k, None):
+            setattr(a, k, os.path.abspath(getattr(a, k)))
     try:
         return {"generate": cmd_generate, "probe": cmd_probe, "selftest": cmd_selftest}[a.cmd](a)
     except Fail as e:

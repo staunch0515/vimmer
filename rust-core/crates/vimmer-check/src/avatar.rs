@@ -81,7 +81,7 @@ pub fn check(
             "avatar.env_missing",
             format!(
                 "the narrator avatar (数字人) cannot be generated on this machine: {}. Clips that are already generated still show; others are left out.",
-                cap.message()
+                cap.message().trim_end_matches('.')
             ),
             Suggestion::text("generate the avatar on the Apple-silicon Mac that renders videos"),
         ));
