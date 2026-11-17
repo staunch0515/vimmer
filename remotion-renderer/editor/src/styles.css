@@ -685,3 +685,15 @@ textarea { resize: vertical; width: 100%; }
 .voice-old { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 6px; background: rgba(251, 191, 36, 0.08); border: 1px solid rgba(251, 191, 36, 0.35); font-size: 12px; }
 /* A highlighted keyword (关键词高亮) with its remove button. */
 .chip { display: inline-flex; align-items: center; gap: 2px; padding: 0 2px 0 8px; border: 1px solid var(--border, #3f3f46); border-radius: 999px; font-size: 12px; }
+
+/* 数字人讲解人 (AvatarFields.tsx): probe and status lines, colored like the render check. */
+.avatar-status { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+[data-avatar-probe="found"], [data-avatar-generate] .ok, .avatar-status .ok { color: var(--emerald); }
+[data-avatar-probe="no_face"], [data-avatar-probe="missing"] { color: var(--danger); }
+.avatar-status .warn { color: var(--amber); }
+/* Five corner buttons (默认 + 4) in the narrow scene panel: keep each label on one line. */
+[data-avatar-corner] .seg { white-space: nowrap; padding: 4px 8px; }
+/* The render panel's 数字人 warning box carries its level itself. */
+.render-check.avatar-warning.warn strong { color: var(--amber); }
+.render-check.avatar-warning.bad strong { color: var(--danger); }
+.render-check.avatar-warning .row { margin-top: 6px; gap: 6px; }
