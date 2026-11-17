@@ -401,6 +401,8 @@ mod tests {
             keyframes: vec![],
             layers: vec![],
             look: None,
+            avatar: None,
+            avatar_clip: None,
         }
     }
 
@@ -418,6 +420,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         }
     }
 

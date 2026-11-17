@@ -244,6 +244,13 @@ pub struct Scene {
     /// (see [`crate::look`]). Absent: the timeline's look (none when it has none).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<Look>,
+    /// This scene's narrator avatar settings, over the timeline's (see [`crate::avatar`]).
+    /// Absent: the timeline's (or brand's) avatar, and not written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<crate::avatar::SceneAvatar>,
+    /// Render-only: the generated avatar clip this scene shows, set by the scheduler.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_clip: Option<crate::avatar::AvatarClip>,
 }
 
 impl Scene {
@@ -656,6 +663,10 @@ pub struct VideoTimeline {
     /// The voice-over track (旁白音轨, see [`crate::voiceover`]). Empty: none, and not written.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub voiceover: Vec<crate::voiceover::VoiceoverClip>,
+    /// The narrator avatar of this video (see [`crate::avatar`]); replaces the brand's.
+    /// Absent: the brand's, else none, and not written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<crate::avatar::Avatar>,
 }
 
 impl VideoTimeline {
@@ -664,6 +675,21 @@ impl VideoTimeline {
         Look::effective(
             self.look.as_ref(),
             self.scenes.get(index).and_then(|s| s.look.as_ref()),
+        )
+    }
+
+    /// The default narrator avatar: the timeline's, else the brand's.
+    pub fn default_avatar(&self) -> Option<&crate::avatar::Avatar> {
+        self.avatar
+            .as_ref()
+            .or_else(|| self.brand.as_ref().and_then(|b| b.avatar.as_ref()))
+    }
+
+    /// The avatar scene `index` shows (settings only; whether it speaks is decided later).
+    pub fn scene_avatar(&self, index: usize) -> Option<crate::avatar::ResolvedAvatar> {
+        crate::avatar::resolve(
+            self.default_avatar(),
+            self.scenes.get(index).and_then(|s| s.avatar.as_ref()),
         )
     }
 
@@ -997,6 +1023,37 @@ mod tests {
         assert_eq!((l.size, l.paging), (92.0, crate::text_layout::Paging::Off));
         let res = Resolution { width: 1920, height: 1080 };
         assert_eq!(s.text_page_texts(None, res), vec!["One. Two.".to_string()]);
+    }
+
+    #[test]
+    fn old_fixtures_write_no_avatar_and_avatar_round_trips() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../fixtures");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.ends_with(".json") || name.starts_with("brand.") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).unwrap();
+            let t: VideoTimeline = serde_json::from_str(&raw).unwrap();
+            let out = serde_json::to_string(&t).unwrap();
+            assert!(!out.contains("\"avatar"), "{name}");
+            assert_eq!(t.scene_avatar(0), None, "{name}");
+        }
+        let raw = r##"{"fps":30,"resolution":{"width":1920,"height":1080},"scenes":[{"id":"a","duration_ms":1000,"text":"Hi","avatar":{"enabled":false}},{"id":"b","duration_ms":1000,"text":"Yo","avatar":{"photo":"b.png","corner":"top_left"}}],"subtitles":[],"music":null,"brand":{"avatar":{"photo":"brand.png"}},"avatar":{"photo":"me.jpg","size":0.25,"shape":"rounded","border":{"color":"#FF0000"}}}"##;
+        let t: VideoTimeline = serde_json::from_str(raw).unwrap();
+        let out = serde_json::to_string(&t).unwrap();
+        let again: VideoTimeline = serde_json::from_str(&out).unwrap();
+        assert_eq!(again, t);
+        assert!(out.contains(r##""avatar":{"photo":"me.jpg","size":0.25,"shape":"rounded","border":{"color":"#FF0000"}}"##), "{out}");
+        assert_eq!(t.scene_avatar(0), None);
+        let b = t.scene_avatar(1).unwrap();
+        assert_eq!((b.photo.as_str(), b.corner, b.size), ("b.png", crate::brand::Corner::TopLeft, 0.25));
+        assert_eq!(b.border_width, crate::avatar::DEFAULT_BORDER_WIDTH);
+        // Without a timeline avatar the brand's is the default.
+        let mut t2 = t.clone();
+        t2.avatar = None;
+        assert_eq!(t2.default_avatar().unwrap().photo, "brand.png");
     }
 
     #[test]

@@ -113,6 +113,8 @@ pub fn chunk_timeline(timeline: &VideoTimeline, chunk: &Chunk) -> VideoTimeline 
         look: timeline.look.clone(),
         // The voice-over is mixed once, over the joined video, like the music.
         voiceover: vec![],
+        // Scenes carry their resolved `avatar_clip`; the settings ride along for completeness.
+        avatar: timeline.avatar.clone(),
     };
     // Without the music, an `auto` grade could not see the mood: settle it from the full timeline.
     vimmer_dsl::replace_auto_grades(&mut out, vimmer_dsl::auto_preset(timeline));
@@ -207,6 +209,8 @@ mod tests {
             keyframes: vec![],
             layers: vec![],
             look: None,
+            avatar: None,
+            avatar_clip: None,
         }
     }
 
@@ -228,6 +232,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         }
     }
 

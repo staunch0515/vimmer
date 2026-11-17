@@ -1633,6 +1633,8 @@ mod tests {
             keyframes: vec![],
             layers: vec![],
             look: None,
+            avatar: None,
+            avatar_clip: None,
         }
     }
 
@@ -1654,6 +1656,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         };
         t.scenes[0].audio = None; // not narrated by us: ignored
         let cfg = SchedulerConfig::new(
@@ -1715,6 +1718,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         };
         // Words from an earlier text, and times that no longer fit the edited cue.
         t.subtitles[0].words = ["再", "见", "。"]
@@ -1778,6 +1782,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -1840,6 +1845,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -1912,6 +1918,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         };
         let mut clips = narration_clips(
             &t,
@@ -1997,6 +2004,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         };
         let cfg = SchedulerConfig::new(
             PathBuf::from("w"),
@@ -2123,6 +2131,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         };
         let before = t.clone();
         let mut cfg = SchedulerConfig::new(
@@ -2177,6 +2186,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         }
     }
 
@@ -2428,6 +2438,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         }
     }
 
@@ -2605,6 +2616,7 @@ mod tests {
             subtitle_box: None,
             look: None,
             voiceover: vec![],
+            avatar: None,
         }
     }
 
