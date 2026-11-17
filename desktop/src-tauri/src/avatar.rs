@@ -213,6 +213,29 @@ pub async fn generate_in(
     }
 }
 
+/// The job `start_avatar_generate` runs: the render's config for these panel options (so the
+/// speech matches the next render), the project's files first, the user's PATH and avatar home.
+/// The render's output is never written (generate mode stops before the render).
+pub fn generate_setup(
+    options: &PanelOptions,
+    project: Option<PathBuf>,
+    work_dir: &Path,
+) -> Result<(SchedulerConfig, Arc<dyn AudioProbe>, Arc<dyn Speech>), String> {
+    let options = render_options(options, &vimmer_env)?;
+    let mut cfg = options.config(work_dir.to_path_buf(), work_dir.join("avatar-unused.mp4"), default_remotion_dir());
+    if let Some(dir) = project {
+        cfg.asset_dirs = vec![dir];
+        cfg.asset_dirs_first = true;
+    }
+    let path = user_path();
+    cfg.ffmpeg = find_in_path("ffmpeg", &path);
+    cfg.avatar.home = home();
+    let speech: Arc<dyn Speech> = Arc::new(SaySpeech { say: find_in_path("say", &path), ffmpeg: cfg.ffmpeg.clone() });
+    cfg.child_path = Some(path);
+    let probe: Arc<dyn AudioProbe> = Arc::new(FfmpegProbe { binary: cfg.ffmpeg.clone() });
+    Ok((cfg, probe, speech))
+}
+
 #[tauri::command]
 pub fn start_avatar_generate(app: AppHandle, state: State<'_, AvatarState>, args: GenerateArgs) -> Result<(), String> {
     let cap = avatar_capability(home().as_deref());
@@ -227,19 +250,7 @@ pub fn start_avatar_generate(app: AppHandle, state: State<'_, AvatarState>, args
     };
     let cache = app.path().app_cache_dir().map_err(|e| format!("No cache folder: {e}"))?;
     let work_dir = cache.join(format!("avatar-{}", unix_millis()));
-    let options = render_options(&args.options, &vimmer_env)?;
-    let remotion_dir = default_remotion_dir();
-    let mut cfg = options.config(work_dir.clone(), work_dir.join("avatar-unused.mp4"), remotion_dir);
-    if let Some(dir) = &project {
-        cfg.asset_dirs = vec![dir.clone()];
-        cfg.asset_dirs_first = true;
-    }
-    let path = user_path();
-    cfg.ffmpeg = find_in_path("ffmpeg", &path);
-    cfg.avatar.home = home();
-    let speech: Arc<dyn Speech> = Arc::new(SaySpeech { say: find_in_path("say", &path), ffmpeg: cfg.ffmpeg.clone() });
-    cfg.child_path = Some(path);
-    let probe = Arc::new(FfmpegProbe { binary: cfg.ffmpeg.clone() });
+    let (cfg, probe, speech) = generate_setup(&args.options, project, &work_dir)?;
 
     let cancel = Arc::new(CancelHandle::default());
     {

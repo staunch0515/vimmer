@@ -236,3 +236,85 @@ fn render_panel_avatar_modes() {
     assert_eq!(avatar_mode(&panel(Some("off"))), Ok(AvatarMode::Off));
     assert!(avatar_mode(&panel(Some("generate"))).is_err());
 }
+
+/// The desktop command path with the **real** engine, on an Apple-silicon Mac where it is
+/// installed (`cargo test -- --ignored real_engine`). `VIMMER_AVATAR_E2E` names a timeline whose
+/// files are in the repo's public folder. Cancels one generation mid-way (no clip, no partial
+/// file, status still missing), then generates for real (status ready). Leaves the clip in
+/// `public/generated/avatar`, so a render of the same timeline afterwards shows the inset.
+#[test]
+#[ignore = "needs the installed avatar engine (Apple silicon); set VIMMER_AVATAR_E2E=<timeline.json>"]
+fn real_engine_cancel_then_generate() {
+    let file = std::env::var("VIMMER_AVATAR_E2E").expect("VIMMER_AVATAR_E2E=<timeline.json>");
+    let timeline: VideoTimeline = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(avatar_env()["state"], json!("ready"), "{}", avatar_env());
+    let public = crate::assets::public_dir();
+    let options = PanelOptions::default();
+    let files = || -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(public.join("generated/avatar"))
+            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    };
+    let before = status_in(&timeline, &public);
+    println!("status before: {before}");
+    assert_eq!(before["known"], json!(false));
+    let files_before = files();
+
+    // 1. Cancel once 30 frames are done.
+    let work = temp("real-cancel");
+    let (cfg, probe, speech) = generate_setup(&options, None, &work).unwrap();
+    let cancel = Arc::new(CancelHandle::default());
+    let watcher = cancel.clone();
+    let started = std::time::Instant::now();
+    let ctx = RenderContext {
+        cancel: cancel.clone(),
+        progress: Arc::new(move |p| {
+            if let Progress::Stage { name } = p {
+                println!("[{:>5.1}s] {name}", started.elapsed().as_secs_f32());
+                if name.contains(": 30/") {
+                    watcher.cancel();
+                }
+            }
+        }),
+    };
+    let done = tauri::async_runtime::block_on(generate_in(timeline.clone(), cfg, probe, speech, ctx));
+    println!("cancelled after {:.1}s: {:?}", started.elapsed().as_secs_f32(), done.cancelled);
+    assert!(done.cancelled, "{:?}", done.error);
+    let after_cancel = files();
+    println!("generated/avatar after cancel: {after_cancel:?}");
+    assert!(!after_cancel.iter().any(|f| f.contains(".part")), "partial file left: {after_cancel:?}");
+    assert_eq!(
+        after_cancel.iter().filter(|f| f.ends_with(".mp4")).count(),
+        files_before.iter().filter(|f| f.ends_with(".mp4")).count(),
+        "no new clip after cancel"
+    );
+    assert_ne!(status_in(&timeline, &public)["missing_estimate_s"], json!(0));
+    let _ = std::fs::remove_dir_all(&work);
+
+    // 2. Generate for real.
+    let work = temp("real-generate");
+    let (cfg, probe, speech) = generate_setup(&options, None, &work).unwrap();
+    let started = std::time::Instant::now();
+    let ctx = RenderContext {
+        cancel: Arc::new(CancelHandle::default()),
+        progress: Arc::new(move |p| {
+            if let Progress::Stage { name } = p {
+                if !name.contains(" frames") || name.contains("0/") {
+                    println!("[{:>5.1}s] {name}", started.elapsed().as_secs_f32());
+                }
+            }
+        }),
+    };
+    let done = tauri::async_runtime::block_on(generate_in(timeline.clone(), cfg, probe, speech, ctx));
+    println!("generated in {:.1}s: {:?}", started.elapsed().as_secs_f32(), done.runs);
+    assert!(done.ok, "{:?}", done.error);
+    let after = status_in(&timeline, &public);
+    println!("status after: {after}");
+    assert_eq!(after["known"], json!(true));
+    assert_eq!(after["missing_estimate_s"], json!(0));
+    assert!(after["runs"].as_array().unwrap().iter().all(|r| r["ready"] == json!(true)));
+    println!("generated/avatar after: {:?}", files());
+    let _ = std::fs::remove_dir_all(&work);
+}
