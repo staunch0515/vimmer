@@ -123,6 +123,9 @@ pub struct SchedulerConfig {
     pub word_subtitles: WordSubtitleConfig,
     /// Narration engine (`say` unless chosen here or by `$VIMMER_TTS`).
     pub tts: TtsConfig,
+    /// The narrator avatar: show ready clips (default), require them, off, or generate/status
+    /// only (see `avatar.rs`).
+    pub avatar: crate::avatar::AvatarConfig,
 }
 
 impl SchedulerConfig {
@@ -142,6 +145,7 @@ impl SchedulerConfig {
             child_path: None,
             word_subtitles: WordSubtitleConfig::default(),
             tts: TtsConfig::default(),
+            avatar: crate::avatar::AvatarConfig::default(),
         }
     }
 }
@@ -175,6 +179,8 @@ pub struct RunReport {
     pub warnings: Vec<String>,
     /// What the render did that is worth a line in the log (beat sync results).
     pub notes: Vec<String>,
+    /// The narrator avatar's clips (empty without an avatar).
+    pub avatar: Vec<crate::avatar::RunStatus>,
 }
 
 /// Renders a whole timeline to one MP4, without progress reporting or cancellation.
@@ -217,6 +223,8 @@ pub async fn render_timeline_with(
         ));
     }
     validate(&timeline).map_err(SchedulerError::Invalid)?;
+    // Before staging rewrites paths: the same signature `vimmer check` computes.
+    let avatar_signature = vimmer_dsl::avatar_plan_signature(&timeline);
     tokio::fs::create_dir_all(&cfg.work_dir).await?;
     let mut warnings = Vec::new();
     let mut notes = Vec::new();
@@ -342,6 +350,32 @@ pub async fn render_timeline_with(
     // The voice-over track next: it ducks the music like narration. Without one, nothing changes.
     let voiceover_ms = probe_voiceover(&timeline, &cfg, probe.clone(), &mut warnings, &ctx).await?;
     let (voiceover, voiceover_audible) = crate::audio::place_voiceover(&timeline, &voiceover_ms);
+    // The narrator avatar follows the speech: narration and scene audio, and the voice-over.
+    // Without an avatar this does nothing.
+    let speech: Vec<_> = crate::audio::place_scene_audio(&timeline)
+        .into_iter()
+        .chain(voiceover.iter().cloned())
+        .collect();
+    let avatar = crate::avatar::apply(
+        &mut timeline,
+        &speech,
+        avatar_signature.as_deref(),
+        &cfg,
+        &ctx,
+        &mut warnings,
+    )
+    .await?;
+    if cfg.avatar.mode.stops_early() {
+        return Ok(RunReport {
+            output: cfg.output.clone(),
+            chunks: 0,
+            normalized_images,
+            encoded_videos,
+            warnings,
+            notes,
+            avatar,
+        });
+    }
     placements.extend(voiceover);
     clip_ms.extend(voiceover_audible);
     // Sound effects last; only those with `duck_music` count toward ducking.
@@ -406,6 +440,7 @@ pub async fn render_timeline_with(
         encoded_videos,
         warnings,
         notes,
+        avatar,
     })
 }
 

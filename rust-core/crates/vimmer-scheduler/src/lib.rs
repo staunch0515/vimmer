@@ -3,6 +3,7 @@
 
 pub mod align_scenes;
 pub mod audio;
+pub mod avatar;
 pub mod beatsync;
 pub mod control;
 pub mod duck;
@@ -16,6 +17,7 @@ pub mod video;
 pub mod wordsubs;
 
 pub use align_scenes::{align_to_voiceover, Alignment, SceneChange};
+pub use avatar::{AvatarConfig, AvatarMode, RunStatus as AvatarRunStatus};
 pub use control::{CancelHandle, Progress, ProgressFn, RenderContext};
 pub use narrate::{
     preview_error, preview_narration, NarrationPreview, PreviewClip, TtsConfig, PREVIEW_SLOTS,

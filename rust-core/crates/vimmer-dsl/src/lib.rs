@@ -18,7 +18,7 @@ pub mod validation;
 pub mod voiceover;
 
 pub use avatar::{
-    resolve as resolve_avatar, Avatar, AvatarBorder, AvatarClip, AvatarShape, ResolvedAvatar,
+    plan_signature as avatar_plan_signature, resolve as resolve_avatar, Avatar, AvatarBorder, AvatarClip, AvatarShape, ResolvedAvatar,
     SceneAvatar,
 };
 pub use beatsync::{

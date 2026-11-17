@@ -8,6 +8,7 @@ use serde_json::Value;
 pub const USER_MUSIC: &str = "Music";
 pub const USER_BRAND: &str = "Brand";
 pub const USER_VOICEOVER: &str = "Voice-over";
+pub const USER_AVATAR: &str = "Avatar";
 
 /// Calls `f(path, user)` on every asset path: scene images, audio, video clips, layer images,
 /// icons and clips, sound effects, the music file, voice-over clips, brand fonts and the logo.
@@ -35,6 +36,7 @@ pub fn for_each_asset(timeline: &mut Value, f: &mut dyn FnMut(&mut String, &str)
                     visit(fx.get_mut("src"), &user, f);
                 }
             }
+            visit(scene.get_mut("avatar").and_then(|a| a.get_mut("photo")), &user, f);
         }
     }
     visit(timeline.get_mut("music").and_then(|m| m.get_mut("source")), USER_MUSIC, f);
@@ -43,6 +45,7 @@ pub fn for_each_asset(timeline: &mut Value, f: &mut dyn FnMut(&mut String, &str)
             visit(clip.get_mut("source"), USER_VOICEOVER, f);
         }
     }
+    visit(timeline.get_mut("avatar").and_then(|a| a.get_mut("photo")), USER_AVATAR, f);
     if let Some(brand) = timeline.get_mut("brand") {
         if let Some(fonts) = brand.get_mut("fonts") {
             for role in ["heading", "body"] {
@@ -50,6 +53,7 @@ pub fn for_each_asset(timeline: &mut Value, f: &mut dyn FnMut(&mut String, &str)
             }
         }
         visit(brand.get_mut("logo").and_then(|l| l.get_mut("src")), USER_BRAND, f);
+        visit(brand.get_mut("avatar").and_then(|a| a.get_mut("photo")), USER_BRAND, f);
     }
 }
 

@@ -231,6 +231,39 @@ pub fn resolve(default: Option<&Avatar>, own: Option<&SceneAvatar>) -> Option<Re
     }
 }
 
+/// A fingerprint of everything the avatar clips of `t` depend on that is known before the
+/// render (scene lengths, spoken text, voices, audio files, voice-over, avatar settings).
+/// `vimmer avatar` stores clip status under it, so `vimmer check` can say whether the clips of
+/// this timeline are ready without narrating. `None`: no scene can show an avatar.
+pub fn plan_signature(t: &crate::model::VideoTimeline) -> Option<String> {
+    let scenes: Vec<serde_json::Value> = t
+        .scenes
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            serde_json::json!([
+                s.id,
+                s.duration_ms,
+                s.spoken_text(),
+                s.narration,
+                s.audio,
+                t.scene_avatar(i).map(|a| a.photo),
+            ])
+        })
+        .collect();
+    if t.scenes.iter().enumerate().all(|(i, _)| t.scene_avatar(i).is_none()) {
+        return None;
+    }
+    let doc = serde_json::json!([t.fps, scenes, t.voiceover]).to_string();
+    // FNV-1a 64: stable across runs and machines.
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in doc.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    Some(format!("{h:016x}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,6 +297,19 @@ mod tests {
         assert_eq!(resolve(Some(&disabled), Some(&on)).unwrap().photo, "me.png");
         assert!(resolve(None, Some(&on)).is_none());
         assert_eq!(resolve(None, Some(&other)).unwrap().photo, "b.jpg");
+    }
+
+    #[test]
+    fn plan_signature_follows_speech_and_photo_only() {
+        let raw = r#"{"fps":30,"resolution":{"width":1920,"height":1080},"scenes":[{"id":"a","duration_ms":1000,"text":"Hi","narration":{"voice":null}}],"subtitles":[],"music":null}"#;
+        let mut t: crate::model::VideoTimeline = serde_json::from_str(raw).unwrap();
+        assert_eq!(plan_signature(&t), None);
+        t.avatar = Some(Avatar::with_photo("me.png"));
+        let a = plan_signature(&t).unwrap();
+        t.avatar.as_mut().unwrap().corner = Some(Corner::TopLeft); // placement only
+        assert_eq!(plan_signature(&t).unwrap(), a);
+        t.scenes[0].text = Some("Hello".into());
+        assert_ne!(plan_signature(&t).unwrap(), a);
     }
 
     #[test]
