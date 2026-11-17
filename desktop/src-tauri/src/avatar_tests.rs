@@ -262,7 +262,7 @@ fn real_engine_cancel_then_generate() {
     assert_eq!(before["known"], json!(false));
     let files_before = files();
 
-    // 1. Cancel once 30 frames are done.
+    // 1. Cancel at the first frame report (every 25 frames).
     let work = temp("real-cancel");
     let (cfg, probe, speech) = generate_setup(&options, None, &work).unwrap();
     let cancel = Arc::new(CancelHandle::default());
@@ -273,7 +273,7 @@ fn real_engine_cancel_then_generate() {
         progress: Arc::new(move |p| {
             if let Progress::Stage { name } = p {
                 println!("[{:>5.1}s] {name}", started.elapsed().as_secs_f32());
-                if name.contains(": 30/") {
+                if name.contains(": 25/") {
                     watcher.cancel();
                 }
             }
