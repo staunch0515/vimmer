@@ -1,7 +1,7 @@
 // Narrator avatar inset (数字人讲解人): box math and chunk-safe clip frames.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { avatarBox, avatarClipMs } from "../src/avatar.ts";
+import { avatarBox, avatarClipSeconds } from "../src/avatar.ts";
 import type { AvatarClip } from "../src/types/timeline.ts";
 
 const clip = (over: Partial<AvatarClip> = {}): AvatarClip => ({
@@ -32,25 +32,20 @@ test("the box sits in its corner with the logo's margin rule", () => {
   assert.equal(p.left + p.size, Math.round(1080 - 0.04 * 1080));
 });
 
-test("clip frames follow the scene offset and land mid-frame at 25 fps", () => {
-  assert.equal(avatarClipMs(clip(), 0, 25), 20);
-  assert.equal(avatarClipMs(clip(), 1, 25), 60);
-  assert.equal(avatarClipMs(clip({ offset_frames: 50 }), 0, 25), 2020);
-  // 30 fps: frame 6 is 0.2 s = clip frame 5.
-  assert.equal(avatarClipMs(clip(), 6, 30), 220);
-  assert.equal(avatarClipMs(clip(), 5, 30), 180);
+test("clip time follows the scene offset", () => {
+  assert.equal(avatarClipSeconds(clip(), 0, 25), 0);
+  assert.equal(avatarClipSeconds(clip({ offset_frames: 50 }), 0, 25), 2);
+  assert.equal(avatarClipSeconds(clip({ offset_frames: 258 }), 32, 30), 290 / 30);
 });
 
-test("a chunked render shows the same clip frames as a full render", () => {
-  // A run of two scenes at 30 fps: scene A frames 0..89, scene B 90..209. The scheduler gives B
-  // offset_frames 90; a chunk starting at B's cut renders B from its own frame 0.
+test("a chunked render shows the same clip times as a full render", () => {
+  // A run of two scenes at 30 fps: scene A frames 0..257, scene B from 258. The scheduler gives B
+  // offset_frames 258; a chunk starting at B's cut renders B from its own frame 0.
   const fps = 30;
   const a = clip({ offset_frames: 0 });
-  const b = clip({ offset_frames: 90 });
-  for (let g = 0; g < 210; g++) {
-    const full = g < 90 ? avatarClipMs(a, g, fps) : avatarClipMs(b, g - 90, fps);
-    const expected = ((Math.floor((g * 25) / fps + 1e-9) + 0.5) * 1000) / 25;
-    assert.equal(full, expected);
+  const b = clip({ offset_frames: 258 });
+  for (let g = 0; g < 500; g++) {
+    const t = g < 258 ? avatarClipSeconds(a, g, fps) : avatarClipSeconds(b, g - 258, fps);
+    assert.equal(t, g / fps);
   }
-  for (let f = 0; f < 120; f++) assert.equal(avatarClipMs(b, f, fps), avatarClipMs(clip(), 90 + f, fps));
 });

@@ -2,9 +2,6 @@
 // Pure, so test/avatar.test.ts can check it without Remotion.
 import type { AvatarClip } from "./types/timeline";
 
-/** The generated clips run at this rate (vimmer-media/scripts/avatar/vimmer_avatar.py). */
-export const AVATAR_CLIP_FPS = 25;
-
 export type AvatarBox = { left: number; top: number; size: number; radius: number; ring: number };
 
 /**
@@ -24,11 +21,10 @@ export const avatarBox = (clip: AvatarClip, width: number, height: number): Avat
 };
 
 /**
- * The clip time in ms on frame `sceneFrame` of the scene (timeline rate `fps`): the middle of the
- * clip frame showing then, so the decoder lands on that frame whether it rounds or floors. It depends only on the scene-relative frame, and chunks always start at a
- * scene cut, so a chunked render shows exactly the frames of a full render.
+ * The clip time in seconds on frame `sceneFrame` of the scene (timeline rate `fps`), as
+ * AvatarInset plays it (`trimBefore = offset_frames`). It depends only on the scene-relative
+ * frame, and chunks always start at a scene cut, so a chunked render shows exactly the clip
+ * times of a full render.
  */
-export const avatarClipMs = (clip: AvatarClip, sceneFrame: number, fps: number): number => {
-  const clipFrame = Math.floor(((clip.offset_frames + sceneFrame) * AVATAR_CLIP_FPS) / fps + 1e-9);
-  return ((clipFrame + 0.5) * 1000) / AVATAR_CLIP_FPS;
-};
+export const avatarClipSeconds = (clip: AvatarClip, sceneFrame: number, fps: number): number =>
+  (clip.offset_frames + sceneFrame) / fps;
