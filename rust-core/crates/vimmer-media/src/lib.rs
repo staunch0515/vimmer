@@ -2,6 +2,7 @@
 //! synthesize narration (macOS `say` or local Kokoro), and recognize it again to time subtitles word by word.
 
 pub mod align;
+pub mod avatar;
 pub mod audio;
 pub mod beats;
 mod cdp;
@@ -14,6 +15,11 @@ pub mod svg;
 pub mod transcribe;
 pub mod video_norm;
 
+pub use avatar::{
+    avatar_home, capability as avatar_capability, describe_estimate, estimate_seconds as avatar_estimate_seconds,
+    AvatarEngine, AvatarEvent, AvatarSettings, Capability as AvatarCapability, AVATAR_ENGINE_VERSION,
+    AVATAR_FPS, AVATAR_INSTALL_HINT,
+};
 pub use align::{align_words, is_cjk, split_units, AlignedWord, RecognizedToken};
 pub use audio::{has_audio_stream, parse_ffmpeg_duration_ms, AudioProbe, FfmpegProbe};
 pub use beats::{
@@ -57,6 +63,8 @@ pub enum MediaError {
     Transcribe(String),
     #[error("video {path}: {reason}")]
     Video { path: String, reason: String },
+    #[error("narrator avatar: {0}")]
+    Avatar(String),
     #[error("cancelled")]
     Cancelled,
     #[error("timed out after {secs} s")]
