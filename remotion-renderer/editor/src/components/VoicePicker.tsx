@@ -9,6 +9,7 @@ import {
   DEFAULT_KOKORO, KOKORO_VOICES, LANG_LABELS, isSayVoice, kokoroVoice, sampleTimeline, sayToKokoro, textLang,
   type VoiceLang,
 } from "../voices";
+import { AudioClip } from "../audioClip";
 
 type Props = {
   narration: Narration;
@@ -29,7 +30,7 @@ export const VoicePicker = ({ narration, spoken, onChange, audioUrl }: Props) =>
   // The voice the ▶ button plays: the chosen Kokoro voice, else the automatic one.
   const sampleVoice = kokoroVoice(voice) ?? kokoroVoice(DEFAULT_KOKORO[lang])!;
   const [status, setStatus] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
-  const audio = useRef<HTMLAudioElement | null>(null);
+  const audio = useRef<AudioClip | null>(null);
   useEffect(() => () => audio.current?.pause(), []);
 
   const play = async () => {
@@ -50,7 +51,7 @@ export const VoicePicker = ({ narration, spoken, onChange, audioUrl }: Props) =>
       }
       samples.set(sampleVoice.id, source);
     }
-    const a = new Audio(audioUrl(source));
+    const a = new AudioClip(audioUrl(source));
     audio.current = a;
     setStatus({ busy: false, error: null });
     void a.play().catch((e) => setStatus({ busy: false, error: String(e) }));

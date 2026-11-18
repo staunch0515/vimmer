@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Scene } from "../../../src/types/timeline";
 import { clipFor, lengthHint, type HeardClips, type ListenClip, type TtsChoice } from "../narration";
 import { listenNarration } from "../listen";
+import { AudioClip } from "../audioClip";
 
 /** What the scene inspector needs to let the user hear a scene's narration. */
 export type ListenProps = {
@@ -29,7 +30,7 @@ type Status =
 export const ListenButton = ({ scene, listen }: { scene: Scene; listen: ListenProps }) => {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [notes, setNotes] = useState<string[]>([]);
-  const audio = useRef<HTMLAudioElement | null>(null);
+  const audio = useRef<AudioClip | null>(null);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -58,7 +59,7 @@ export const ListenButton = ({ scene, listen }: { scene: Scene; listen: ListenPr
 
   const play = (c: ListenClip) => {
     audio.current?.pause();
-    const el = new Audio(listen.audioUrl(c.source));
+    const el = new AudioClip(listen.audioUrl(c.source));
     el.dataset.source = c.source;
     el.dataset.listen = scene.id;
     el.onended = () => alive.current && audio.current === el && setStatus({ kind: "idle" });

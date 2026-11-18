@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Music, MusicPick } from "../../../src/types/timeline";
 import type { MusicLibrary, PickedTrack } from "../music";
+import { AudioClip } from "../audioClip";
 
 /** File or By mood. Switching to a file keeps the track the mood chose, so nothing jumps. */
 export const MusicModeSwitch = ({
@@ -138,10 +139,10 @@ export const MoodMusicFields = ({
 
 /** Plays a track from the start; press again to stop. */
 const Audition = ({ src }: { src: string }) => {
-  const audio = useRef<HTMLAudioElement | null>(null);
+  const audio = useRef<AudioClip | null>(null);
   const [playing, setPlaying] = useState(false);
   useEffect(() => {
-    const a = new Audio();
+    const a = new AudioClip();
     a.onended = () => setPlaying(false);
     audio.current = a;
     return () => {

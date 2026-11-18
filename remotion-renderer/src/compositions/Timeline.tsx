@@ -10,26 +10,14 @@ import { AudioLengthsContext, clipFrames, clipGain } from "../voiceover";
 import { BUILTIN, brandColor } from "../brand";
 import { BrandContext, BrandOverlay, useBrand } from "../components/Brand";
 import { scenePages } from "../textPages";
-import { layoutScenes, msToFrames, totalFrames, type SceneLayout } from "../layout";
+import { layoutScenes, msToFrames, type SceneLayout } from "../layout";
 import { transitionPose } from "../motion/transitions";
 import { holdWindow, inHoldWindow, type HoldWindow } from "../motion/hold";
 import { DEFAULT_SFX_VOLUME, sfxFrame } from "../motion/sfx";
+import { PreviewAudioContext, musicVolume } from "../audioPlan";
 import { LookedScene } from "../components/Atmosphere";
 import { autoPreset, drawsAnything, effectiveLook, type GradePreset } from "../motion/look";
-import type { Look, Music, Scene, SubtitleCue, Transition, VideoTimeline } from "../types/timeline";
-
-// Gain at a frame: the music volume, faded in and out at the timeline's ends.
-const musicVolume = (music: Music, timeline: VideoTimeline) => {
-  const total = totalFrames(timeline);
-  const fadeIn = msToFrames(music.fade_in_ms, timeline.fps);
-  const fadeOut = msToFrames(music.fade_out_ms, timeline.fps);
-  return (frame: number): number => {
-    const inGain = fadeIn > 0 ? interpolate(frame, [0, fadeIn], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
-    const outGain =
-      fadeOut > 0 ? interpolate(frame, [total - fadeOut, total], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
-    return music.volume * Math.min(inGain, outGain);
-  };
-};
+import type { Look, Scene, SubtitleCue, Transition, VideoTimeline } from "../types/timeline";
 
 // The visual content of one scene, bottom to top: the scene image (or video), layers with z < 0, the scene
 // text, layers with z >= 0 (subtitles are drawn over every scene). No audio, which stays with the
@@ -141,6 +129,8 @@ type ChunkSubtitles = { start_frame: number; subtitles: SubtitleCue[] };
 export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null }> = (timeline) => {
   const assetUrl = useContext(AssetUrlContext);
   const lengths = useContext(AudioLengthsContext);
+  // In the editor's preview the sound is played by a Web Audio mixer instead (audioPlan.ts).
+  const webAudio = useContext(PreviewAudioContext);
   const layouts = layoutScenes(timeline);
   const brand = timeline.brand ?? null;
   const chunkStart = timeline.chunk?.start_frame ?? 0;
@@ -174,7 +164,7 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
               ) : (
                 <SceneVisual scene={scene} durationInFrames={durationInFrames} look={lookAt(from)} />
               )}
-              {scene.audio ? (
+              {scene.audio && !webAudio ? (
                 <Sequence from={msToFrames(scene.audio.offset_ms, timeline.fps)}>
                   <Audio src={resolveAsset(scene.audio.source, assetUrl)} />
                 </Sequence>
@@ -201,7 +191,7 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
       )}
       {/* Sound effects for the preview (renders are muted; the Rust core mixes them). Outside the
           scene Sequences so they ring out past the cut, as in the render. */}
-      {layouts.flatMap(({ scene, from }) =>
+      {!webAudio && layouts.flatMap(({ scene, from }) =>
         (scene.sfx ?? []).map((fx, k) => {
           const at = sfxFrame(fx, scene, timeline.fps);
           return at == null ? null : (
@@ -212,7 +202,7 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
         }),
       )}
       {/* The voice-over track (旁白音轨), for the preview; the render mixes it after joining. */}
-      {(timeline.voiceover ?? []).map((clip) => {
+      {!webAudio && (timeline.voiceover ?? []).map((clip) => {
         const f = clipFrames(clip, timeline.fps, lengths?.[clip.source]);
         if (f.durationInFrames === 0) return null;
         return (
@@ -227,7 +217,7 @@ export const Timeline: React.FC<VideoTimeline & { chunk?: ChunkSubtitles | null 
           </Sequence>
         );
       })}
-      {timeline.music?.source ? (
+      {timeline.music?.source && !webAudio ? (
         // Looped and faded in the preview. The render mixes music in after joining, so chunks omit it.
         <Audio src={resolveAsset(timeline.music.source, assetUrl)} loop volume={musicVolume(timeline.music, timeline)} />
       ) : null}
