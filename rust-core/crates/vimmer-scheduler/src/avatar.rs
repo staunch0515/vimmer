@@ -490,6 +490,14 @@ async fn generate_one(
                 AvatarEvent::Stage(s) => ctx2.emit(Progress::Stage {
                     name: format!("Narrator avatar {}/{n}: {s}", k + 1),
                 }),
+                // The head-pose drift numbers go to the log (CLI stderr / --json progress).
+                AvatarEvent::Info(line) => {
+                    if let Some(text) = info_line(&line) {
+                        ctx2.emit(Progress::Stage {
+                            name: format!("Narrator avatar {}/{n}: {text}", k + 1),
+                        });
+                    }
+                }
                 _ => {}
             },
         )
@@ -503,10 +511,35 @@ async fn generate_one(
     }
 }
 
+/// The runner's pose-drift `info` event as one log line; `None` for other info events.
+pub fn info_line(json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let range = |key: &str| {
+        let a = v.get(key)?.as_array()?;
+        Some(format!("[{}, {}]", a.first()?.as_f64()?, a.get(1)?.as_f64()?))
+    };
+    let (raw, used) = (range("pitch_range_raw")?, range("pitch_range_used")?);
+    Some(format!(
+        "head pose pitch {raw}° raw, {used}° after the drift fix ({} frames)",
+        v["frames"].as_u64().unwrap_or(0)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use vimmer_dsl::{Avatar, Corner, SceneAvatar};
+
+    #[test]
+    fn pose_info_becomes_a_log_line() {
+        let line = r#"{"event":"info","frames":103,"pitch_range_raw":[-0.5,0.4],"pitch_range_used":[-0.7,0.3]}"#;
+        assert_eq!(
+            info_line(line).as_deref(),
+            Some("head pose pitch [-0.5, 0.4]° raw, [-0.7, 0.3]° after the drift fix (103 frames)")
+        );
+        assert_eq!(info_line(r#"{"event":"info","mps":true}"#), None);
+        assert_eq!(info_line("not json"), None);
+    }
 
     fn timeline(n: usize) -> VideoTimeline {
         let scenes: Vec<serde_json::Value> = (0..n)

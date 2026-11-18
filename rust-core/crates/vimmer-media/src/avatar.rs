@@ -383,7 +383,11 @@ impl AvatarEngine {
             std::fs::create_dir_all(dir)?;
         }
         let part = out.with_extension("part.mp4");
+        // The runner's framed photo, `<part>.src.png`. It deletes it itself, except when cancel
+        // kills its process group; then it is removed here, as is the half-written clip.
+        let src_png = PathBuf::from(format!("{}.src.png", part.display()));
         let _ = std::fs::remove_file(&part);
+        let _ = std::fs::remove_file(&src_png);
         let size = settings.size.to_string();
         let seed = settings.seed.to_string();
         let cfg = settings.cfg_scale.to_string();
@@ -416,6 +420,7 @@ impl AvatarEngine {
             Ok(v) => v,
             Err(e) => {
                 let _ = std::fs::remove_file(&part);
+                let _ = std::fs::remove_file(&src_png);
                 return Err(e);
             }
         };
@@ -467,8 +472,10 @@ done
 case "$photo" in *noface*) echo '{"event":"error","code":"no_face","message":"no face"}'; exit 2;; esac
 if [ "$cmd" = probe ]; then echo '{"event":"face","found":true,"width":640,"height":480}'; exit 0; fi
 echo 'some library log line'
+printf 'png' > "$out.src.png"
 echo '{"event":"stage","stage":"render","total":3}'
 case "$photo" in *slow*) sleep 30;; esac
+rm -f "$out.src.png"
 echo '{"event":"progress","done":3,"total":3}'
 printf 'mp4' > "$out"
 echo '{"event":"done","frames":3,"out":"x","seconds":0.1}'
@@ -561,6 +568,16 @@ echo '{"event":"done","frames":3,"out":"x","seconds":0.1}'
         assert!(matches!(err, MediaError::Cancelled), "{err}");
         assert!(started.elapsed() < Duration::from_secs(10));
         assert!(!out.exists());
+        // Killed before its own cleanup: neither the half clip nor the framed photo is left.
+        let left: Vec<_> = std::fs::read_dir(&d)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .collect();
+        assert!(
+            !left.iter().any(|n| n.to_string_lossy().starts_with("c.")),
+            "{left:?}"
+        );
     }
 
     #[test]

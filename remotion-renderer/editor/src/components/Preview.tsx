@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Timeline } from "../../../src/compositions/Timeline";
 import type { Layer, SubtitleBox, VideoTimeline } from "../../../src/types/timeline";
@@ -10,6 +10,7 @@ import { ClipLengthContext, type ClipLength } from "../../../src/components/Clip
 import { assetUrlFor } from "../media";
 import * as gate from "../mediaGate";
 import { usePreviewTimeline } from "../templates";
+import { withPreviewAvatars, type AvatarStatus } from "../avatarUi";
 import { AudioLengthsContext } from "../../../src/voiceover";
 
 type Props = {
@@ -27,6 +28,8 @@ type Props = {
   onMoveSubtitles?: (box: SubtitleBox) => void;
   // Measured audio file lengths: voice-over clips play exactly their trimmed length.
   audioLengths?: Record<string, number>;
+  // 数字人: which clips exist. The inset shows the clip, else the dimmed photo (avatarUi.ts).
+  avatarStatus?: AvatarStatus | null;
 };
 
 // The shown subtitle box, in fractions of the frame: left, top, width, height.
@@ -193,7 +196,7 @@ const useClipLengths = (timeline: VideoTimeline, assetUrl: AssetUrl | null): Cli
 };
 
 // The preview is the real Remotion composition running in the Player, so what you see is what renders.
-export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer, onMoveLayer, subtitlesSelected, onMoveSubtitles, audioLengths }: Props) => {
+export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer, onMoveLayer, subtitlesSelected, onMoveSubtitles, audioLengths, avatarStatus }: Props) => {
   const frameRef = useRef<HTMLDivElement>(null);
   // While the subtitles are dragged, the Player draws them at the dragged place.
   const [dragBox, setDragBox] = useState<SubtitleBox | null>(null);
@@ -236,7 +239,8 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
   }, [playerRef]);
 
   // Template scenes are shown expanded by the Rust code the renderer uses (see templates.ts).
-  const { timeline: expanded, errors: templateErrors } = usePreviewTimeline(timeline);
+  const { timeline: templated, errors: templateErrors } = usePreviewTimeline(timeline);
+  const expanded = useMemo(() => withPreviewAvatars(templated, avatarStatus ?? null), [templated, avatarStatus]);
   const shown = dragBox ? { ...expanded, subtitle_box: dragBox } : expanded;
   const { width, height } = timeline.resolution;
   const assetUrl = assetRoot ? assetUrlFor(assetRoot) : null;

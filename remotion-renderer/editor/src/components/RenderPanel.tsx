@@ -11,6 +11,7 @@ import {
   type RenderDefaults,
   type RenderOptions,
 } from "../renderOptions";
+import { CORNER_LABELS, overTextFix, type AvatarRenderWarning } from "../avatarUi";
 
 type Props = {
   view: RenderView;
@@ -25,6 +26,22 @@ type Props = {
   onCancel: () => void;
   onReveal: (path: string) => void;
   onDismiss: () => void;
+  /** 数字人: missing clips (null: none, or every clip is ready). */
+  avatarWarning?: AvatarRenderWarning;
+  /** Whether the timeline shows an avatar at all (the 「必须带数字人」 option is shown then). */
+  hasAvatar?: boolean;
+  /** 「先生成再渲染」; missing: this Mac cannot generate (the button is left out). */
+  onGenerateThenRender?: () => void;
+  /** 「不带数字人渲染」. */
+  onRenderWithoutAvatar?: () => void;
+  /** A one-click fix of a finding (the avatar's corner); missing: none offered. */
+  onFix?: (f: CheckFinding) => void;
+};
+
+/** The one-click fix's button text, or null when the finding has none. */
+const fixLabel = (f: CheckFinding): string | null => {
+  const fix = overTextFix(f);
+  return fix ? `移到${CORNER_LABELS[fix.corner]}角` : null;
 };
 
 const SEVERITY_LABEL = { error: "Error", warning: "Warning", info: "Info" } as const;
@@ -70,7 +87,7 @@ const NumberField = ({ label, value, placeholder, min, scale = 1, onChange }: {
   );
 };
 
-const Findings = ({ check, onRecheck, onFinding }: Pick<Props, "check" | "onRecheck" | "onFinding">) => {
+const Findings = ({ check, onRecheck, onFinding, onFix }: Pick<Props, "check" | "onRecheck" | "onFinding" | "onFix">) => {
   if (check.status === "idle" || check.status === "running")
     return <div className="render-check dim">Checking the timeline…</div>;
   if (check.status === "failed")
@@ -103,6 +120,9 @@ const Findings = ({ check, onRecheck, onFinding }: Pick<Props, "check" | "onRech
                 {f.suggestion.text && <span className="finding-fix">Fix: {f.suggestion.text}</span>}
                 {f.suggestion.path && <span className="mono dim finding-path">{f.suggestion.path}</span>}
               </button>
+              {onFix && fixLabel(f) && (
+                <button className="btn small" data-finding-fix={f.code} onClick={() => onFix(f)}>{fixLabel(f)}</button>
+              )}
             </li>
           ))}
         </ul>
@@ -174,16 +194,32 @@ const Setup = (p: Props) => {
           </div>
         </details>
 
-        <Findings check={p.check} onRecheck={p.onRecheck} onFinding={p.onFinding} />
+        {p.hasAvatar && (
+          <label className="check">
+            <input type="checkbox" data-require-avatar checked={o.requireAvatar} onChange={(e) => set({ requireAvatar: e.target.checked })} />
+            必须带数字人（没生成就停下，不渲染）
+          </label>
+        )}
+        {p.avatarWarning && (
+          <div className={`render-check avatar-warning ${p.avatarWarning.level === "block" ? "bad" : "warn"}`} data-avatar-warning={p.avatarWarning.level}>
+            <strong>{p.avatarWarning.text}</strong>
+            <div className="row">
+              {p.onGenerateThenRender && <button className="btn small primary" onClick={p.onGenerateThenRender} data-generate-then-render>先生成再渲染</button>}
+              {p.onRenderWithoutAvatar && <button className="btn small" onClick={p.onRenderWithoutAvatar} data-render-without-avatar>不带数字人渲染</button>}
+            </div>
+          </div>
+        )}
+
+        <Findings check={p.check} onRecheck={p.onRecheck} onFinding={p.onFinding} onFix={p.onFix} />
       </div>
 
       <div className="render-foot">
         <span className="spacer" />
         <button className="btn small ghost" onClick={p.onDismiss}>Cancel</button>
-        {blocked ? (
+        {blocked && p.avatarWarning?.level !== "block" ? (
           <button className="btn small danger" onClick={p.onRender}>Render anyway</button>
         ) : (
-          <button className="btn small primary" disabled={!ready} onClick={p.onRender}>Render…</button>
+          <button className="btn small primary" disabled={!ready || p.avatarWarning?.level === "block"} onClick={p.onRender}>Render…</button>
         )}
       </div>
     </>

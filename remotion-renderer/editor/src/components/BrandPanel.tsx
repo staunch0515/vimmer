@@ -11,11 +11,14 @@ import { TextLayoutFields } from "./TextLayoutFields";
 import { withLayoutPart } from "../textLayout";
 import { LookFields } from "./LookFields";
 import { autoPreset } from "../../../src/motion/look";
+import { AvatarSection, type AvatarController } from "./AvatarFields";
 
 type Props = {
   timeline: VideoTimeline;
   selection: Selection;
   dispatch: Dispatch<Action>;
+  /** 数字人讲解人 (engine, status, job); missing: the section is left out. */
+  av?: AvatarController;
 };
 
 const COLORS: { key: keyof BrandColors; label: string; builtin: string; hint: string }[] = [
@@ -47,10 +50,12 @@ const compact = (b: Brand): Brand | null => {
   if (b.logo?.src) out.logo = b.logo;
   if (b.text_style && Object.keys(b.text_style).length) out.text_style = b.text_style;
   if (b.text_layout && Object.keys(b.text_layout).length) out.text_layout = b.text_layout;
+  // Set by the assistant or a loaded brand.json; edited in the 讲解人 section, kept here.
+  if (b.avatar?.photo) out.avatar = b.avatar;
   return Object.keys(out).length ? out : null;
 };
 
-export const BrandEditor = ({ timeline, selection, dispatch }: Props) => {
+export const BrandEditor = ({ timeline, selection, dispatch, av }: Props) => {
   const brand: Brand = timeline.brand ?? {};
   const [error, setError] = useState<string | null>(null);
   const set = (next: Brand) => dispatch({ type: "setBrand", brand: compact(next) });
@@ -175,6 +180,8 @@ export const BrandEditor = ({ timeline, selection, dispatch }: Props) => {
           </Field>
         </>
       )}
+
+      {av && <AvatarSection timeline={timeline} dispatch={dispatch} av={av} />}
 
       <div className="section-title">Text style</div>
       <div className="dim">Default outline, box and shadow of the scene text and text layers; a scene or layer's own style wins, part by part.</div>

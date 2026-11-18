@@ -7,8 +7,8 @@ import type { RenderFinished } from "../render";
 import type { ProjectSummary } from "./types";
 
 /** Starts a render into the project's `renders/` folder (a date-time file name). */
-export const startProjectRender = (projectDir: string, timelineJson: string, options: RenderOptions, defaults: RenderDefaults): Promise<void> =>
-  invoke("start_render", { args: { timelineJson, projectDir, options: toPanelArgs(options, defaults) } });
+export const startProjectRender = (projectDir: string, timelineJson: string, options: RenderOptions, defaults: RenderDefaults, avatarOff = false): Promise<void> =>
+  invoke("start_render", { args: { timelineJson, projectDir, options: toPanelArgs(options, defaults, avatarOff) } });
 
 export const checkProjectBeforeRender = (projectDir: string, timelineJson: string, tts: TtsName): Promise<CheckReport> =>
   invoke<CheckReport>("check_before_render", { args: { timelineJson, tts, projectDir } });

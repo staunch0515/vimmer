@@ -135,6 +135,10 @@ export type AvatarClip = {
   shape: AvatarShape;
   border_width: number;
   border_color: string;
+  // Editor preview only (never saved or rendered): before the clip exists, `src` is empty and
+  // the still photo is drawn dimmed with this badge (「未生成 · 约 N 分钟」).
+  preview_photo?: string;
+  preview_badge?: string;
 };
 
 // ---- Look (画面氛围). Mirrors rust-core/crates/vimmer-dsl/src/look.rs; drawing in

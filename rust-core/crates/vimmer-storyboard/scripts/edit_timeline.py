@@ -136,6 +136,10 @@ def scene_table(timeline):
             # The scene's own look (grade / overlays), only when it has one.
             look = json.dumps(s["look"], ensure_ascii=False, separators=(",", ":"))
             parts.append(f"look={_clip(look, 160)}")
+        if s.get("avatar"):
+            # The scene's own narrator avatar settings (off / corner / photo), only when set.
+            av = json.dumps(s["avatar"], ensure_ascii=False, separators=(",", ":"))
+            parts.append(f"avatar={_clip(av, 100)}")
         lines.append("  ".join(parts))
         start += dur
     return lines, start
@@ -176,6 +180,17 @@ def conversation_block(conversation):
     return out
 
 
+def avatar_summary(timeline):
+    """One line about the narrator avatar (数字人讲解人) and where it is set; none without one."""
+    own = timeline.get("avatar")
+    brand = (timeline.get("brand") or {}).get("avatar")
+    av, path = (own, "/avatar") if own else (brand, "/brand/avatar")
+    if not av:
+        return []
+    settings = json.dumps(av, ensure_ascii=False, separators=(",", ":"))
+    return [f"Narrator avatar (数字人讲解人) at {path}: {_clip(settings, 160)}"]
+
+
 def build_user_message(req):
     timeline = req["timeline"]
     lines, total = scene_table(timeline)
@@ -185,6 +200,7 @@ def build_user_message(req):
         f"{len(timeline.get('subtitles') or [])} subtitle cues, music: "
         f"{'yes' if timeline.get('music') else 'none'}, brand: "
         f"{'yes' if timeline.get('brand') else 'none'}.",
+        *avatar_summary(timeline),
         "Scenes (numbered from 1 as people say them; JSON indices start at 0):",
         *lines,
         "",

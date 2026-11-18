@@ -225,6 +225,25 @@ class EditHelperTest(unittest.TestCase):
         self.assertIn('look={"overlays":[{"kind":"snow","intensity":0.6}]}', lines[1])
         self.assertEqual(lines[0], before[0])
 
+    def test_avatar_summary_only_when_set(self):
+        t = timeline()
+        self.assertEqual(et.avatar_summary(t), [])
+        lines_before, _ = et.scene_table(t)
+        t["brand"] = {"avatar": {"photo": "b.png"}}
+        self.assertEqual(et.avatar_summary(t), ['Narrator avatar (数字人讲解人) at /brand/avatar: {"photo":"b.png"}'])
+        t["avatar"] = {"photo": "me.png", "corner": "top_left"}
+        self.assertEqual(
+            et.avatar_summary(t), ['Narrator avatar (数字人讲解人) at /avatar: {"photo":"me.png","corner":"top_left"}']
+        )
+        t["scenes"][1]["avatar"] = {"enabled": False}
+        lines, _ = et.scene_table(t)
+        self.assertIn('avatar={"enabled":false}', lines[1])
+        self.assertEqual(lines[0], lines_before[0])
+        req = request()
+        self.assertNotIn("Narrator avatar", str(et.build_user_message(req)))
+        req["timeline"]["avatar"] = {"photo": "me.png"}
+        self.assertIn("Narrator avatar (数字人讲解人) at /avatar", str(et.build_user_message(req)))
+
     def test_system_prompt_is_identical_across_requests(self):
         a, b = FakeClient(message("{}")), FakeClient(message("{}"))
         run_main(request(), a)

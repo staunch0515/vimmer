@@ -14,6 +14,8 @@ import { AssistantPanel } from "./AssistantPanel";
 import { LayerPanel } from "./LayerPanel";
 import { TextStyleFields, withPart } from "./TextStyleFields";
 import { BrandEditor, TemplateParams } from "./BrandPanel";
+import { SceneAvatarFields, type AvatarController } from "./AvatarFields";
+import type { CheckFinding } from "../renderOptions";
 import { BeatSyncFields, SfxList, type BeatStatus } from "./SoundPanel";
 import type { DetectedBeats } from "../beats";
 import { MoodMusicFields, MusicModeSwitch } from "./MusicPanel";
@@ -56,6 +58,8 @@ type Props = {
   listen?: ListenProps;
   /** The voice-over track (旁白音轨). Missing: no 旁白 tab. */
   voice?: VoicePanelProps;
+  /** 数字人讲解人: engine, status and job; the latest check's findings for one-click fixes. */
+  avatar?: { av: AvatarController; findings: CheckFinding[]; onCheck?: () => void };
 };
 
 const MOTIONS: Scene["motion"][] = ["static", "zoom_in", "zoom_out", "pan_left", "pan_right"];
@@ -91,7 +95,7 @@ export const Inspector = (props: Props) => {
         {tab === "subtitles" && <SubtitleEditor {...props} />}
         {tab === "music" && <MusicEditor {...props} />}
         {tab === "voice" && props.voice && <VoiceoverPanel {...props} voice={props.voice} />}
-        {tab === "brand" && <BrandEditor timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} />}
+        {tab === "brand" && <BrandEditor timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} av={props.avatar?.av} />}
         {/* Stays mounted so the chat and a pending proposal survive switching tabs. */}
         <div hidden={tab !== "assistant"}>
           <AssistantPanel timeline={props.timeline} selection={props.selection} dispatch={props.dispatch} docKey={props.docKey} />
@@ -101,7 +105,7 @@ export const Inspector = (props: Props) => {
   );
 };
 
-const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, listen, voice }: Props) => {
+const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, listen, voice, avatar }: Props) => {
   if (selection.kind !== "scene" && selection.kind !== "keyframe" && selection.kind !== "layer") {
     return <Empty title="No scene selected" hint="Click a scene block on the timeline to edit it." />;
   }
@@ -284,6 +288,7 @@ const SceneEditor = ({ timeline, selection, playheadMs, dispatch, onSeekMs, list
         autoAs={autoPreset(timeline)}
         onChange={(look) => patch({ look })}
       />
+      <SceneAvatarFields timeline={timeline} index={index} dispatch={dispatch} findings={avatar?.findings ?? []} onCheck={avatar?.onCheck} />
       <LayerPanel
         scene={scene}
         sceneIndex={index}

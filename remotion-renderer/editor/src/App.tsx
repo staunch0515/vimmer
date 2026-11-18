@@ -13,6 +13,8 @@ import { Preview } from "./components/Preview";
 import { Inspector, type InspectorTab } from "./components/Inspector";
 import { EditorTimeline } from "./components/EditorTimeline";
 import { RenderPanel } from "./components/RenderPanel";
+import { useAvatar } from "./components/AvatarFields";
+import { anySceneAvatar, avatarRenderWarning, overTextFix } from "./avatarUi";
 import { StudioLayout } from "./components/layout/StudioLayout";
 import {
   applyProgress,
@@ -33,6 +35,7 @@ import {
   hasOptions,
   loadOptions,
   saveOptions,
+  toPanelArgs,
   type CheckFinding,
   type CheckView,
   type RenderDefaults,
@@ -247,7 +250,9 @@ export const App = () => {
 
   // While the render panel is open, the check follows the timeline and the chosen engine.
   const renderEngine = renderOptions.tts ?? renderDefaults.tts;
-  const wantedCheck = render.status === "setup" ? checkKey(text, renderEngine) : null;
+  // The check also runs after 「检查是否挡住文字」 in the scene's 数字人 section.
+  const [avatarCheck, setAvatarCheck] = useState(false);
+  const wantedCheck = render.status === "setup" || avatarCheck ? checkKey(text, renderEngine) : null;
   const [checkRun, setCheckRun] = useState(0);
   useEffect(() => {
     if (!wantedCheck || !inTauri()) return;
@@ -265,6 +270,25 @@ export const App = () => {
   }, [wantedCheck, checkRun, project?.dir]);
   const currentCheck: CheckView =
     check.status !== "idle" && check.key === wantedCheck ? check : { status: "running", key: wantedCheck ?? "" };
+
+  // 数字人讲解人: engine, clip status (after each edit) and the 「生成数字人」 job. A job started
+  // with 「先生成再渲染」 renders when it succeeds.
+  const afterGenerate = useRef<(() => void) | null>(null);
+  const avatar = useAvatar(
+    timeline,
+    text,
+    () => toPanelArgs(renderOptionsRef.current, renderDefaults),
+    () => {
+      const next = afterGenerate.current;
+      afterGenerate.current = null;
+      next?.();
+    },
+  );
+  const avatarFindings = currentCheck.status === "done" ? currentCheck.report.findings : [];
+  const fixFinding = (f: CheckFinding) => {
+    const fix = overTextFix(f);
+    if (fix) dispatch({ type: "setSceneAvatar", index: fix.index, patch: { corner: fix.corner } });
+  };
 
   // 试听 Listen: narration clips heard so far (made by the render's code into its cache), and
   // whether the preview plays them ("listen to all"). The preview then shows each heard scene as
@@ -618,14 +642,14 @@ export const App = () => {
   };
 
   // From the render panel, after the options and the check.
-  const doStartRender = async () => {
+  const doStartRender = async (avatarOff = false) => {
     // A project renders into its own renders/ folder; a plain file asks where to save.
     const output = project ? null : await pickRenderOutput(`${baseName(path).replace(/\.json$/i, "") || "video"}.mp4`);
     if (!project && !output) return;
     setRender({ status: "running", stage: "Starting" });
     try {
-      if (project) await startProjectRender(project.dir, text, renderOptions, renderDefaults);
-      else await startRender(text, output!, renderOptions, renderDefaults);
+      if (project) await startProjectRender(project.dir, text, renderOptions, renderDefaults, avatarOff);
+      else await startRender(text, output!, renderOptions, renderDefaults, avatarOff);
     } catch (e) {
       setRender({ status: "failed", error: String(e) });
     }
@@ -728,6 +752,20 @@ export const App = () => {
           setCheckRun((n) => n + 1);
         }}
         onFinding={onFinding}
+        onFix={fixFinding}
+        hasAvatar={anySceneAvatar(timeline)}
+        avatarWarning={avatarRenderWarning(timeline, avatar.status, renderOptions.requireAvatar)}
+        onGenerateThenRender={
+          avatar.env?.state === "ready"
+            ? () => {
+                afterGenerate.current = () => void doStartRender();
+                avatar.generate();
+                setRender({ status: "idle" });
+                setTab("brand");
+              }
+            : undefined
+        }
+        onRenderWithoutAvatar={() => void doStartRender(true)}
         onRender={() => void doStartRender()}
         onCancel={() => void cancelRender()}
         onReveal={(p) => void revealInFinder(p).catch((e) => setError(String(e)))}
@@ -777,6 +815,7 @@ export const App = () => {
             playerRef={playerRef}
             onFrame={onPlayerFrame}
             audioLengths={audioLengths}
+            avatarStatus={avatar.status}
             selectedLayer={selectedLayer}
             subtitlesSelected={state.selection.kind === "subtitle"}
             onMoveSubtitles={(box) => dispatch({ type: "setSubtitleBox", box })}
@@ -836,6 +875,7 @@ export const App = () => {
             audioUrl: (path) => resolveAsset(path, assetRoot ? assetUrlFor(assetRoot) : null),
           }}
           voice={voice}
+          avatar={{ av: avatar, findings: avatarFindings, onCheck: inTauri() ? () => setAvatarCheck(true) : undefined }}
         />
         </div>
         }

@@ -24,8 +24,8 @@ export const renderSupported = (): boolean => inTauri();
 export const pickRenderOutput = (defaultName: string): Promise<string | null> =>
   save({ defaultPath: defaultName, filters: [{ name: "MP4 video", extensions: ["mp4"] }] });
 
-export const startRender = (timelineJson: string, output: string, options: RenderOptions, defaults: RenderDefaults): Promise<void> =>
-  invoke("start_render", { args: { timelineJson, output, options: toPanelArgs(options, defaults) } });
+export const startRender = (timelineJson: string, output: string, options: RenderOptions, defaults: RenderDefaults, avatarOff = false): Promise<void> =>
+  invoke("start_render", { args: { timelineJson, output, options: toPanelArgs(options, defaults, avatarOff) } });
 
 /** The engine and job counts a render uses without a choice (from the desktop shell). */
 export const loadRenderDefaults = async (): Promise<RenderDefaults> => {
