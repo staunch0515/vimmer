@@ -213,6 +213,9 @@ pub async fn generate_in(
     }
 }
 
+/// A generation's config, audio probe and fallback speech.
+pub type GenerateJob = (SchedulerConfig, Arc<dyn AudioProbe>, Arc<dyn Speech>);
+
 /// The job `start_avatar_generate` runs: the render's config for these panel options (so the
 /// speech matches the next render), the project's files first, the user's PATH and avatar home.
 /// The render's output is never written (generate mode stops before the render).
@@ -220,7 +223,7 @@ pub fn generate_setup(
     options: &PanelOptions,
     project: Option<PathBuf>,
     work_dir: &Path,
-) -> Result<(SchedulerConfig, Arc<dyn AudioProbe>, Arc<dyn Speech>), String> {
+) -> Result<GenerateJob, String> {
     let options = render_options(options, &vimmer_env)?;
     let mut cfg = options.config(work_dir.to_path_buf(), work_dir.join("avatar-unused.mp4"), default_remotion_dir());
     if let Some(dir) = project {
