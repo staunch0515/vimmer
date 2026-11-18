@@ -43,8 +43,13 @@ class CoreMLSpade:
 
 class FrameSink:
     """Background writer: optional per-frame transform, then raw RGB to ffmpeg (x264, no audio)."""
-    def __init__(self, path, fps=25, transform=None, ffmpeg="ffmpeg", crf=18):
+    def __init__(self, path, fps=25, transform=None, ffmpeg="ffmpeg", crf=18, crop=None, size=None):
+        """crop=(x, y, side): keep only that square of every frame, scaled back up to size x size."""
         self.path, self.fps, self.transform, self.ffmpeg, self.crf = path, fps, transform, ffmpeg, crf
+        self.vf = []
+        if crop is not None:
+            x, y, side = crop
+            self.vf = ["-vf", f"crop={side}:{side}:{x}:{y},scale={size}:{size}:flags=lanczos"]
         self.q = queue.Queue(maxsize=16); self.proc = None; self.err = None; self.n = 0
         self.t = threading.Thread(target=self._run, daemon=True); self.t.start()
 
@@ -65,7 +70,7 @@ class FrameSink:
                     h, w = img.shape[:2]
                     self.proc = subprocess.Popen(
                         [self.ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-                         "-s", f"{w}x{h}", "-r", str(self.fps), "-i", "-", "-an", "-c:v", "libx264",
+                         "-s", f"{w}x{h}", "-r", str(self.fps), "-i", "-", *self.vf, "-an", "-c:v", "libx264",
                          "-crf", str(self.crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart", self.path],
                         stdin=subprocess.PIPE)
                 self.proc.stdin.write(np.ascontiguousarray(img).tobytes()); self.n += 1

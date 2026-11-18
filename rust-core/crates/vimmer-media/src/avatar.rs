@@ -19,7 +19,7 @@ use crate::MediaError;
 pub const ENV_AVATAR_HOME: &str = "VIMMER_AVATAR_HOME";
 pub const DEFAULT_AVATAR_HOME_IN_HOME: &str = ".local/share/vimmer/avatar";
 /// Part of every cache key: bump it when the runner's output changes for the same inputs.
-pub const AVATAR_ENGINE_VERSION: &str = "vimmer-avatar-1";
+pub const AVATAR_ENGINE_VERSION: &str = "vimmer-avatar-2";
 pub const AVATAR_INSTALL_HINT: &str = "install it on the Apple-silicon Mac that renders videos with `sh rust-core/crates/vimmer-media/scripts/avatar/install_avatar.sh` (it reuses ~/vimmer-avatar-trial by copying; ~3 GB in ~/.local/share/vimmer/avatar)";
 /// Measured on the M1 iMac: 0.44 s per 25 fps frame = 11x real time, plus model load and motion.
 pub const SECONDS_PER_AUDIO_SECOND: f64 = 11.0;

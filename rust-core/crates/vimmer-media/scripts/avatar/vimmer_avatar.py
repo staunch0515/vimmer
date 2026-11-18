@@ -2,8 +2,10 @@
 
 JoyVASA (audio -> facial motion) + LivePortrait (photo + motion -> frames), with the Vimmer trial's
 changes: MediaPipe face detector (instead of non-commercial InsightFace), clip-mean expression
-reference, a moving-mean head-pose reference (drift fix), exact MPS speed rewrite, SPADE on the
-Neural Engine (CoreML), and frames streamed to ffmpeg.
+reference with calmer eyes and brows (--expression), lips closed in the pauses of the speech, a
+moving-mean head-pose reference (drift fix), exact MPS speed rewrite, SPADE on the Neural Engine
+(CoreML), and frames streamed to ffmpeg. The clip shows only the part of the frame the photo
+really covers.
 
 Usage (run with the avatar venv's python; VIMMER_AVATAR_HOME = the install dir):
   vimmer_avatar.py generate --photo P --audio A.wav --out OUT.mp4 [--size 512] [--fps 25] [--seed 42]
@@ -98,6 +100,15 @@ def cmd_generate(a):
     h, w = img.shape[:2]
     x0, y0, side = am.square_frame(box, w, h, scale=a.frame_scale)
     framed = cv2.resize(am.crop_padded(img, x0, y0, side), (a.size, a.size), interpolation=cv2.INTER_AREA)
+    # the clip shows only the part of the frame the photo really covers (no made-up border)
+    vx, vy, vside = am.visible_square(box, w, h, (x0, y0, side))
+    k = a.size / float(side)
+    crop = None
+    if vside < side:
+        cs = max(2, int(round(vside * k)) // 2 * 2)
+        crop = (min(max(int(round((vx - x0) * k)), 0), a.size - cs),
+                min(max(int(round((vy - y0) * k)), 0), a.size - cs), cs)
+    emit("info", frame=[x0, y0, side], visible=[vx, vy, vside], crop=crop)
     work = os.path.dirname(os.path.abspath(a.out))
     src_png = os.path.join(work, os.path.basename(a.out) + ".src.png")
     cv2.imwrite(src_png, cv2.cvtColor(framed, cv2.COLOR_RGB2BGR))
@@ -135,6 +146,11 @@ def cmd_generate(a):
     ss = np.stack([np.asarray(m["scale"]).reshape(-1)[0] for m in frames])
     r_ref, t_ref, s_ref = am.pose_refs(rots, ts, ss, a.pose_ref, int(a.pose_window * a.fps))
     exp_ref = torch.from_numpy(np.stack([np.asarray(m["exp"]) for m in frames]).mean(axis=0)).float().to(dev)
+    # lips go back to the photo's own mouth in the pauses of the speech (see avatar_math.pause_gate)
+    import librosa
+    wav, _sr = librosa.load(os.path.abspath(a.audio), sr=16000, mono=True)
+    gate = am.pause_gate(wav, 16000, a.fps, n) if a.close_in_pauses else np.zeros(n)
+    emit("info", pause_frames=int((gate > 0.5).sum()))
     p0, p1 = am.pitch_deg(rots), am.pitch_deg(np.einsum("nij,nkj->nik", rots, r_ref))
     emit("info", frames=n, pitch_range_raw=[round(float(p0.min()), 1), round(float(p0.max()), 1)],
          pitch_range_used=[round(float(p1.min()), 1), round(float(p1.max()), 1)])
@@ -150,21 +166,22 @@ def cmd_generate(a):
     # 5. Animate (whole-image path of LivePortraitPipeline.execute with the default JoyVASA flags:
     #    no stitching, no relative-motion multiplier, driving_multiplier 1.1) and stream to ffmpeg.
     emit("stage", stage="render", total=n)
-    sink = speedpatch.FrameSink(a.out, fps=a.fps, transform=spade)
+    sink = speedpatch.FrameSink(a.out, fps=a.fps, transform=spade, crop=crop, size=a.size)
     try:
         for i in range(n):
             d = dct2device(dict(frames[i]), dev)
             R_d = d["R"] if "R" in d else d["R_d"]
             R_ref = torch.from_numpy(r_ref[i]).float().to(dev).reshape(1, 3, 3)
             R_new = (R_d @ R_ref.permute(0, 2, 1)) @ R_s
-            delta = x_s_info["exp"] + (d["exp"] - exp_ref)
+            delta = x_s_info["exp"] + (d["exp"] - exp_ref) * a.expression
+            g = float(gate[i])
             for j in am.LIP_IDX:
-                delta[:, j, :] = d["exp"][:, j, :]
+                delta[:, j, :] = d["exp"][:, j, :] * (1.0 - g) + x_s_info["exp"][:, j, :] * g
             scale_new = x_s_info["scale"] * (d["scale"] / float(s_ref[i]))
             t_new = x_s_info["t"] + (d["t"] - torch.from_numpy(t_ref[i]).float().to(dev).reshape(d["t"].shape))
             t_new[..., 2].fill_(0)
             x_d = scale_new * (x_c_s @ R_new + delta) + t_new
-            x_d = x_s + (x_d - x_s) * inf.driving_multiplier
+            x_d = x_s + (x_d - x_s) * a.driving_multiplier
             with torch.no_grad():
                 if spade is not None:
                     sink.put(lp.warping_module(f_s, kp_source=x_s, kp_driving=x_d)["out"].float().cpu().numpy())
@@ -197,6 +214,11 @@ def main():
     g.add_argument("--seed", type=int, default=42)
     g.add_argument("--cfg-scale", type=float, default=2.0)
     g.add_argument("--frame-scale", type=float, default=2.4)
+    g.add_argument("--no-close-in-pauses", dest="close_in_pauses", action="store_false",
+                   help="keep the model's own lips in the pauses of the speech")
+    g.add_argument("--expression", type=float, default=0.6,
+                   help="strength of the eye/brow/cheek motion around the photo's own expression (lips excluded)")
+    g.add_argument("--driving-multiplier", type=float, default=1.0)
     g.add_argument("--pose-ref", choices=["frame0", "mean", "window"], default="window")
     g.add_argument("--pose-window", type=float, default=8.0, help="seconds, for --pose-ref window")
     pr = sub.add_parser("probe")
