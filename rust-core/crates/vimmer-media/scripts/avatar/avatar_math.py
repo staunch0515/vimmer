@@ -21,16 +21,83 @@ def square_frame(box, img_w, img_h, scale=2.4, down=0.12):
     return int(round(cx - side / 2)), int(round(cy - side / 2)), max(int(round(side)), 1)
 
 
-def crop_padded(img, x0, y0, side):
-    """Crop a side x side square at (x0, y0) from an HxWxC image, padding by edge replication."""
+def visible_square(box, img_w, img_h, frame, min_share=0.6, down=0.05):
+    """The part of a square_frame worth showing: (x0, y0, side) in photo pixels, inside `frame`.
+
+    The model wants the face small in its input (square_frame), so a photo cut close to the head
+    gets a made-up border. The clip should not show that border: this is the largest square
+    inside both the frame and the photo, placed around the face (its centre `down` x side below
+    the face centre, moved up to keep the hair in as long as the chin keeps some room). It never gets smaller than min_share x the frame, so the face still fits;
+    a photo tighter than that keeps some (softened) border. When the photo covers the whole
+    frame the result is the frame itself."""
+    fx, fy, fside = frame
+    x0, y0, x1, y1 = box
+    side = int(min(fside, max(min(img_w, img_h), int(np.ceil(min_share * fside)))))
+
+    def clamp(p, lo_photo, hi_photo, lo_frame):
+        if hi_photo - lo_photo >= side:
+            p = min(max(p, lo_photo), hi_photo - side)
+        else:  # the photo is narrower than the square: share the border between both sides
+            p = (lo_photo + hi_photo - side) / 2.0
+        return int(round(min(max(p, lo_frame), lo_frame + fside - side)))
+
+    vx = clamp((x0 + x1) / 2.0 - side / 2.0, 0, img_w, fx)
+    fh = y1 - y0
+    vy = (y0 + y1) / 2.0 + down * side - side / 2.0
+    vy = min(vy, y0 - 0.45 * fh)            # keep the hair in (the face box starts at the forehead)
+    vy = max(vy, y1 + 0.08 * side - side)   # but the chin, with room to open the mouth, comes first
+    return vx, clamp(vy, 0, img_h, fy), side
+
+
+def _box_blur(a, r):
+    """Box blur of an HxWxC float array with radius r (edge-clamped), via cumulative sums."""
+    if r < 1:
+        return a
+    for axis in (0, 1):
+        n = a.shape[axis]
+        pad = [(0, 0)] * a.ndim
+        pad[axis] = (r + 1, r)
+        c = np.cumsum(np.pad(a, pad, mode="edge"), axis=axis, dtype=np.float64)
+        hi = np.take(c, np.arange(n) + 2 * r + 1, axis=axis)
+        lo = np.take(c, np.arange(n), axis=axis)
+        a = ((hi - lo) / (2 * r + 1)).astype(np.float32)
+    return a
+
+
+def crop_padded(img, x0, y0, side, soften=0.10, feather=0.02):
+    """Crop a side x side square at (x0, y0) from an HxWxC uint8 image.
+
+    Where the square reaches past the photo, the missing border continues the photo's edge
+    pixels, and that made-up part is blurred: fully from `soften` x side outside the photo,
+    blending in from `feather` x side inside it so no seam shows. Unblurred edge replication
+    (the first version) drew hard streaks below a photo that ends at the shoulders; blurred, the
+    shoulders and the background just carry on softly."""
     h, w = img.shape[:2]
     pad_l, pad_t = max(0, -x0), max(0, -y0)
     pad_r, pad_b = max(0, x0 + side - w), max(0, y0 + side - h)
-    if pad_l or pad_t or pad_r or pad_b:
-        img = np.pad(img, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), mode="edge")
-        x0 += pad_l
-        y0 += pad_t
-    return img[y0:y0 + side, x0:x0 + side]
+    if not (pad_l or pad_t or pad_r or pad_b):
+        return img[y0:y0 + side, x0:x0 + side]
+    padded = np.pad(img, ((pad_t, pad_b), (pad_l, pad_r), (0, 0)), mode="edge")
+    crop = padded[y0 + pad_t:y0 + pad_t + side, x0 + pad_l:x0 + pad_l + side].astype(np.float32)
+    # distance (px) of every pixel from the photo's rectangle, shrunk by the feather on padded sides
+    inset = feather * side
+    ys = np.arange(side, dtype=np.float32)[:, None]
+    xs = np.arange(side, dtype=np.float32)[None, :]
+    dx = np.zeros_like(xs)
+    dy = np.zeros_like(ys)
+    if pad_l:
+        dx = np.maximum(dx, (pad_l + inset) - xs)
+    if pad_r:
+        dx = np.maximum(dx, xs - (side - 1 - pad_r - inset))
+    if pad_t:
+        dy = np.maximum(dy, (pad_t + inset) - ys)
+    if pad_b:
+        dy = np.maximum(dy, ys - (side - 1 - pad_b - inset))
+    t = np.clip(np.hypot(dx, dy) / max(soften * side, 1.0), 0.0, 1.0)
+    t = (t * t * (3 - 2 * t))[:, :, None]  # smoothstep
+    r = max(int(round(0.03 * side)), 1)
+    blurred = _box_blur(_box_blur(_box_blur(crop, r), r), r)
+    return np.clip(np.rint(crop + (blurred - crop) * t), 0, 255).astype(np.uint8)
 
 
 def moving_mean(values, window):
@@ -86,3 +153,35 @@ def pitch_deg(r):
     """Pitch (x-axis rotation) of rotation matrices, degrees; for drift diagnostics only."""
     r = np.asarray(r).reshape(-1, 3, 3)
     return np.degrees(np.arcsin(np.clip(-r[:, 1, 2], -1, 1)))
+
+
+def pause_gate(samples, sr, fps, n_frames, min_pause=3, rel=0.02, ramp=5):
+    """Per-frame weight in 0..1: 1 inside pauses of the speech, 0 while there is sound.
+
+    The motion model leaves the mouth half open in pauses when they are digital silence (as in
+    Kokoro's speech). The runner uses this weight to bring the lips back to the photo's own
+    mouth there. A frame is quiet when its RMS is below `rel` x the clip's loud level (95th
+    percentile); only runs of at least `min_pause` quiet frames count; the edges ramp over `ramp`
+    frames, so the mouth closes just after the sound ends and starts to open just before it
+    resumes."""
+    x = np.asarray(samples, dtype=np.float64).reshape(-1)
+    hop = sr / float(fps)
+    rms = np.zeros(n_frames)
+    for i in range(n_frames):
+        seg = x[int(round(i * hop)):int(round((i + 1) * hop))]
+        rms[i] = np.sqrt(np.mean(seg * seg)) if len(seg) else 0.0
+    loud = np.percentile(rms, 95) if n_frames else 0.0
+    quiet = rms <= rel * loud if loud > 0 else np.ones(n_frames, dtype=bool)
+    gate = np.zeros(n_frames)
+    i = 0
+    while i < n_frames:
+        if quiet[i]:
+            j = i
+            while j < n_frames and quiet[j]:
+                j += 1
+            if j - i >= min_pause:
+                gate[i:j] = 1.0
+            i = j
+        else:
+            i += 1
+    return moving_mean(gate, ramp) if 1 < ramp < n_frames else gate
