@@ -12,6 +12,8 @@ import * as gate from "../mediaGate";
 import { usePreviewTimeline } from "../templates";
 import { withPreviewAvatars, type AvatarStatus } from "../avatarUi";
 import { AudioLengthsContext } from "../../../src/voiceover";
+import { PreviewAudioContext, audioPlan } from "../../../src/audioPlan";
+import { previewMixer } from "../previewMixer";
 
 type Props = {
   timeline: VideoTimeline;
@@ -238,6 +240,48 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
     };
   }, [playerRef]);
 
+  // The preview's sound plays through Web Audio, not media elements (previewMixer.ts says why).
+  // The mixer follows the Player: play, pause, seek, each drawn frame (drift), rate, volume.
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    const m = previewMixer();
+    const frame = () => player.getCurrentFrame();
+    const onPlay = () => m.play(frame());
+    const onPause = () => m.pause(frame());
+    const onSeek = (e: { detail: { frame: number } }) => m.seek(e.detail.frame);
+    const onFrame = (e: { detail: { frame: number } }) => m.frame(e.detail.frame);
+    const onRate = (e: { detail: { playbackRate: number } }) => m.setRate(e.detail.playbackRate);
+    const onVolume = () => m.setVolume(player.getVolume(), player.isMuted());
+    // The context starts at the first click or key press anywhere (a user gesture), and stays running.
+    const unlock = () => m.unlock();
+    player.addEventListener("play", onPlay);
+    player.addEventListener("pause", onPause);
+    player.addEventListener("ended", onPause);
+    player.addEventListener("seeked", onSeek);
+    player.addEventListener("frameupdate", onFrame);
+    player.addEventListener("ratechange", onRate);
+    player.addEventListener("volumechange", onVolume);
+    player.addEventListener("mutechange", onVolume);
+    window.addEventListener("pointerdown", unlock, true);
+    window.addEventListener("keydown", unlock, true);
+    onVolume();
+    if (player.isPlaying()) m.play(frame());
+    return () => {
+      player.removeEventListener("play", onPlay);
+      player.removeEventListener("pause", onPause);
+      player.removeEventListener("ended", onPause);
+      player.removeEventListener("seeked", onSeek);
+      player.removeEventListener("frameupdate", onFrame);
+      player.removeEventListener("ratechange", onRate);
+      player.removeEventListener("volumechange", onVolume);
+      player.removeEventListener("mutechange", onVolume);
+      window.removeEventListener("pointerdown", unlock, true);
+      window.removeEventListener("keydown", unlock, true);
+      m.pause();
+    };
+  }, [playerRef]);
+
   // Template scenes are shown expanded by the Rust code the renderer uses (see templates.ts).
   const { timeline: templated, errors: templateErrors } = usePreviewTimeline(timeline);
   const expanded = useMemo(() => withPreviewAvatars(templated, avatarStatus ?? null), [templated, avatarStatus]);
@@ -245,6 +289,11 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
   const { width, height } = timeline.resolution;
   const assetUrl = assetRoot ? assetUrlFor(assetRoot) : null;
   const clipLength = useClipLengths(timeline, assetUrl);
+  const durationInFrames = frameCount(timeline);
+  // What the composition would play, handed to the mixer (it ignores a plan that sounds the same).
+  useEffect(() => {
+    previewMixer().setPlan(audioPlan(shown, assetUrl, audioLengths ?? null), timeline.fps, durationInFrames);
+  });
   return (
     <div className="canvas-slot">
       <div
@@ -256,18 +305,23 @@ export const Preview = ({ timeline, assetRoot, playerRef, onFrame, selectedLayer
       <AssetUrlContext.Provider value={assetUrl}>
       <ClipLengthContext.Provider value={clipLength}>
       <AudioLengthsContext.Provider value={audioLengths ?? null}>
+      <PreviewAudioContext.Provider value={true}>
       <Player
         ref={playerRef}
         component={Timeline}
         inputProps={shown}
-        durationInFrames={frameCount(timeline)}
+        durationInFrames={durationInFrames}
         fps={timeline.fps}
         compositionWidth={width}
         compositionHeight={height}
         controls
         clickToPlay={false}
         style={{ width: "100%", height: "100%" }}
+        // No pooled <audio> tags: the composition draws none in the preview, and the Player would
+        // otherwise play() these empty tags on every click.
+        numberOfSharedAudioTags={0}
       />
+      </PreviewAudioContext.Provider>
       </AudioLengthsContext.Provider>
       </ClipLengthContext.Provider>
       </AssetUrlContext.Provider>
